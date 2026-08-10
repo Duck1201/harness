@@ -2,7 +2,7 @@
   "schema_version": 2,
   "dataset_id": "harness_2_contract_regressions",
   "dataset_version": "3.0.0",
-  "dataset_digest_sha256": "0bbfa5738022331795897dcc18a962f5991d956bf78dd0b9e6a78d613669794e",
+  "dataset_digest_sha256": "049f2a7dc8406088ecf6de58c6ec2e2c19c87518c3b7286c4975d1e9dd54f284",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -308,27 +308,31 @@
     },
     {
       "id": "mechanical_repeat_guard",
-      "type": "state_machine",
-      "tags": ["loop_guard", "repetition", "mechanical_control"],
+      "type": "executor_automation",
+      "tags": ["loop_guard", "repetition", "mechanical_control", "web_fetch"],
       "origin": "HERANCA section 5: warning guard failed in 27 percent of calls",
       "stimulus": {
-        "generated_calls": [
-          {"name": "web_fetch", "arguments": {"url": "https://example.test/page"}},
-          {"name": "web_fetch", "arguments": {"url": "https://example.test/page"}}
+        "calls": [
+          {"url": "https://example.test/readable", "http_extracted_chars": 160820},
+          {"url": "https://example.test/readable", "http_extracted_chars": 160820}
         ]
       },
       "oracle": {
         "must_call": ["web_fetch"],
-        "must_not_call": [],
-        "max_tool_calls": 1,
+        "must_not_call": ["browser"],
+        "max_tool_calls": 2,
         "typed_assertions": [
           {"operator": "tool_called", "tool": "web_fetch"},
-          {"operator": "max_tool_calls", "maximum": 1}
+          {"operator": "max_tool_calls", "maximum": 2},
+          {"operator": "result_status_is", "status": "success"},
+          {"operator": "result_producer_is", "producer": "web_fetch", "tool_call_id": "bench-0"},
+          {"operator": "result_producer_is", "producer": "web_fetch", "tool_call_id": "bench-1"}
         ],
         "explanation": [
-          "the second identical call is served from the turn cache or mechanically rejected",
-          "no second network effect occurs",
-          "a warning alone is not considered containment"
+          "both calls succeed and both are answered by web_fetch: containment must not turn the repeat into an error or into a browser run",
+          "the second one is served from the turn cache, so the bench records a single request and data_egress_events is 1",
+          "a warning alone is not containment; the count of network effects is what proves it",
+          "run against the executor with a WebAccessGrant, since a call refused for a missing grant never reaches the cache and proves nothing about repetition"
         ]
       }
     },

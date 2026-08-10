@@ -94,6 +94,23 @@ def test_bench_exception_is_refused_on_the_production_route() -> None:
     asyncio.run(scenario())
 
 
+def test_repeated_identical_fetch_produces_one_network_effect() -> None:
+    async def scenario() -> None:
+        runner = BrowserBenchCaseRunner(registry=load_config().tool_registry)
+
+        result = await runner.run_case(_spec(_fixtures()["mechanical_repeat_guard"]))
+
+        assert result.evaluation is not None
+        assert result.evaluation.verdict is TaskVerdict.PASS
+        # Containment is the count of network effects, not a warning: two identical
+        # calls, both successful, one request reaching the bench.
+        assert result.metrics["data_egress_events"] == 1.0
+        assert result.metrics["browser_escalations"] == 0.0
+        assert [item.meta["cache_hit"] for item in result.evidence.tool_results] == [False, True]
+
+    asyncio.run(scenario())
+
+
 @brave_required
 def test_browser_escalation_happens_only_for_the_page_that_needs_it() -> None:
     async def scenario() -> None:

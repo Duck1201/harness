@@ -102,7 +102,7 @@ def test_contract_runner_executes_all_required_deterministic_fixture_types() -> 
             assert result.evaluation is not None
             assert result.evaluation.verdict is not TaskVerdict.NOT_EVALUATED
             verdicts[fixture.id] = result.evaluation.verdict
-        assert verdicts["mechanical_repeat_guard"] is TaskVerdict.FAIL
+        assert set(verdicts.values()) == {TaskVerdict.PASS}
 
     asyncio.run(scenario())
 
