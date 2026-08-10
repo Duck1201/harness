@@ -2,7 +2,7 @@
   "schema_version": 2,
   "dataset_id": "harness_2_contract_regressions",
   "dataset_version": "2.0.0",
-  "dataset_digest_sha256": "f45a456b4bbc57453313bb0933273423ccac97bb6820138b528216a35675ddd4",
+  "dataset_digest_sha256": "f9c67ec1c8800a0a01f45957c8bbdd8b19a1a84824ccba48bbf8e45a750538f9",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -36,11 +36,18 @@
         "must_call": ["write_file"],
         "must_not_call": ["run_shell_command", "code_interpreter"],
         "max_tool_calls": 2,
-        "assertions": [
+        "typed_assertions": [
+          {"operator": "tool_called", "tool": "write_file"},
+          {"operator": "tool_not_called", "tool": "run_shell_command"},
+          {"operator": "max_tool_calls", "maximum": 2},
+          {"operator": "file_exists", "path": "index.html"},
+          {"operator": "path_within_workspace", "path": "index.html"},
+          {"operator": "response_language_pt"}
+        ],
+        "explanation": [
           "file_path equals index.html",
           "file_path is workspace-relative",
-          "content is non-empty",
-          "the final response is in Portuguese"
+          "content is non-empty"
         ]
       }
     },
@@ -228,7 +235,10 @@
         "must_call": [],
         "must_not_call": [],
         "max_tool_calls": 0,
-        "assertions": ["the final response is in Portuguese"]
+        "typed_assertions": [
+          {"operator": "max_tool_calls", "maximum": 0},
+          {"operator": "response_language_pt"}
+        ]
       }
     },
     {

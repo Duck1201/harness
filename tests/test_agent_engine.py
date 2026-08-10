@@ -734,6 +734,58 @@ def test_denied_web_taint_confirmation_blocks_without_writing(tmp_path: Path) ->
     asyncio.run(scenario())
 
 
+def test_a_tool_call_serialized_as_text_is_rejected_instead_of_answered(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        leaked = '```json\n{"content": null, "tool_calls": [{"arguments": {"url": "x"}}]}\n```'
+        runtime = FakeRuntime(
+            [
+                ModelResponse(content=leaked),
+                ModelResponse(content="Encontrei três arquivos Markdown."),
+            ]
+        )
+
+        finished = await engine(store, runtime, FakeToolExecutor(), FakeEventSink()).run(
+            conversation_id, "liste os markdown"
+        )
+
+        assert finished.terminal_outcome is not None
+        assert finished.terminal_outcome.kind is TerminalOutcomeKind.COMPLETED
+        history = await store.list_canonical_history(conversation_id)
+        kinds = [item.kind for item in history]
+        # The leaked payload is kept as a rejected attempt, never as the answer.
+        assert CanonicalHistoryEntryKind.REJECTED_MODEL_ATTEMPT in kinds
+        finals = [
+            item.payload["content"]
+            for item in history
+            if item.kind is CanonicalHistoryEntryKind.FINAL_RESPONSE
+        ]
+        assert finals == ["Encontrei três arquivos Markdown."]
+
+    asyncio.run(scenario())
+
+
+def test_an_answer_that_merely_quotes_json_is_still_a_final_response(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        answer = 'O formato é assim:\n```json\n{"a": 1}\n```\nEspero ter ajudado.'
+        runtime = FakeRuntime([ModelResponse(content=answer)])
+
+        finished = await engine(store, runtime, FakeToolExecutor(), FakeEventSink()).run(
+            conversation_id, "explique o formato"
+        )
+
+        assert finished.terminal_outcome is not None
+        assert finished.terminal_outcome.kind is TerminalOutcomeKind.COMPLETED
+        assert finished.terminal_outcome.reason_code == "final_response"
+
+    asyncio.run(scenario())
+
+
 def test_unvalidated_token_estimator_blocks_readiness_and_runtime(tmp_path: Path) -> None:
     async def scenario() -> None:
         store, conversation_id = await conversation_store(tmp_path)

@@ -33,9 +33,17 @@ from ..domain import (
     ToolResultStatus,
 )
 from ..local_tools import RegistryToolExecutor
-from ..ports import EngineReadiness, ModelRuntime, NullEventSink, TokenEstimator, ToolExecutor
+from ..ports import (
+    EngineReadiness,
+    ModelRuntime,
+    NullEventSink,
+    TokenEstimator,
+    ToolExecutor,
+    ToolSchema,
+)
 from ..web_tools import WebToolExecutor
-from .bench import BENCH_HOSTNAME, BenchEgressGuard, BenchServer
+from .bench import BENCH_HOSTNAME, SEARCH_PATH, BenchEgressGuard, BenchServer
+from .language import PortugueseDetector
 from .models import RegressionFixture
 from .oracles import EvalEvidence, evaluate_oracle
 from .runner import CaseRunner, CaseRunResult, EvalCaseSpec, security_violations
@@ -52,6 +60,10 @@ _STUB_PAGES = {
     "known_url_requires_browser": "/js-only",
 }
 _URL_PATTERN = re.compile(r"https?://\S+")
+
+# Not a credential: the bench never checks it, it only has to be non-empty so the
+# executor takes the configured provider path instead of reporting no credentials.
+_BENCH_SEARCH_KEY = "bench-search-key"
 
 
 def _eval_policy(permissions: Sequence[str] = _ALL_GRANTS) -> SessionPolicy:
@@ -243,6 +255,7 @@ class ModelCaseRunner:
         self._estimator = estimator
         self._runtime_readiness = runtime_readiness or EngineReadiness(ready=True)
         self._browser_guard = browser_guard or BraveEgressGuard()
+        self._language_detector = PortugueseDetector()
 
     def supports(self, fixture_type: str) -> bool:
         return fixture_type in self._SUPPORTED_TYPES
@@ -320,6 +333,7 @@ class ModelCaseRunner:
                 spec.fixture.oracle.typed_assertions,
                 evidence,
                 textual_assertions=spec.fixture.oracle.assertions,
+                language_detector=self._language_detector,
             )
             return CaseRunResult(
                 evidence=evidence,
@@ -333,15 +347,13 @@ class ModelCaseRunner:
                 evaluation=evaluation,
             )
 
-    def _tool_schemas(self, policy: SessionPolicy):
+    def _tool_schemas(self, policy: SessionPolicy) -> tuple[ToolSchema, ...]:
         effective = policy.effective_grants
         return tuple(
             definition.tool_schema()
             for definition in self._config.tool_registry.model_tools
             if definition.status == "enabled"
             and all(grant in effective for grant in definition.required_grants)
-            # web_search needs a Brave key, which a reproducible bench must not depend on.
-            and definition.name != "web_search"
         )
 
     def _executor(self, workspace: Path, policy: SessionPolicy, bench: BenchServer) -> ToolExecutor:
@@ -356,6 +368,10 @@ class ModelCaseRunner:
             registry=registry,
             session_policy=policy,
             egress_guard=guard,
+            # The bench answers the provider endpoint, so web_search is offered and
+            # exercised without the corpus depending on a real Brave key.
+            brave_api_key=_BENCH_SEARCH_KEY,
+            search_endpoint=bench.url(SEARCH_PATH),
             browser_capability=BraveBrowserCapability(
                 egress_guard=guard,
                 guard=self._browser_guard,

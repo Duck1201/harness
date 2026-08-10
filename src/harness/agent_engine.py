@@ -1,6 +1,8 @@
 import asyncio
+import json
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
+from typing import cast
 
 from .context_builder import (
     ContextBudgetExceeded,
@@ -659,6 +661,38 @@ def _validate_response(response: ModelResponse) -> None:
     for call in response.tool_calls:
         if not call.id or not call.name:
             raise MalformedModelResponseError("model response contains an invalid tool call")
+    if response.content is not None and _is_serialized_tool_call(response.content):
+        raise MalformedModelResponseError(
+            "model response body is a serialized tool call, not a final answer"
+        )
+
+
+def _is_serialized_tool_call(content: str) -> bool:
+    """Detects a tool call emitted as prose instead of through the tool channel.
+
+    The model sometimes answers with the wire payload it should have sent as a
+    tool call. Left alone that JSON is persisted as the final response and
+    delivered to the Operator as the answer. Rejecting it here costs one step and
+    gives the model a chance to correct itself.
+
+    Deliberately narrow: only a body that is *entirely* such a payload counts, so
+    an answer that merely quotes JSON is untouched.
+    """
+    stripped = content.strip()
+    if stripped.startswith("```"):
+        without_fence = stripped[3:].partition("\n")[2]
+        stripped = without_fence.rpartition("```")[0].strip() or without_fence.strip()
+    if not stripped.startswith("{"):
+        return False
+    try:
+        parsed = json.loads(stripped)
+    except ValueError:
+        # A truncated payload never closes its braces, and it is still not an answer.
+        return '"tool_calls"' in stripped or '"tool_name"' in stripped
+    if not isinstance(parsed, Mapping):
+        return False
+    keys = cast(Mapping[str, object], parsed).keys()
+    return "tool_calls" in keys or {"name", "arguments"} <= set(keys)
 
 
 def _model_attempt_payload(response: ModelResponse) -> Mapping[str, JsonValue]:

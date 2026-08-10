@@ -1,3 +1,4 @@
+from .language import PortugueseDetector
 from .lease import (
     BenchmarkLease,
     BenchmarkLeaseCanceled,
@@ -112,6 +113,7 @@ __all__ = [
     "OracleDefinition",
     "OracleEvaluation",
     "PathWithinWorkspace",
+    "PortugueseDetector",
     "PromotionGateResult",
     "RegressionDataset",
     "RegressionDraft",

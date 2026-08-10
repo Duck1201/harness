@@ -58,6 +58,11 @@ _BOUNDARY_HTML_TAGS = frozenset(
 )
 
 
+# The provider endpoint is a constructor default so a bench can serve a
+# Brave-shaped response instead of the corpus depending on a real key.
+BRAVE_SEARCH_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
+
+
 class EgressPolicyError(Exception):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
@@ -336,6 +341,7 @@ class WebToolExecutor:
         egress_guard: EgressGuard | None = None,
         http_transport: HttpTransport | None = None,
         brave_api_key: str | None = None,
+        search_endpoint: str = BRAVE_SEARCH_ENDPOINT,
         browser_capability: BrowserCapability | None = None,
         browser_egress_guard: BrowserEgressGuard | None = None,
         max_response_bytes: int = 2 * 1024 * 1024,
@@ -353,6 +359,7 @@ class WebToolExecutor:
         self._egress_guard = egress_guard or EgressGuard()
         self._http_transport = http_transport or AiohttpHttpTransport()
         self._brave_api_key = brave_api_key
+        self._search_endpoint = search_endpoint
         self._browser_capability = browser_capability
         self._browser_egress_guard = browser_egress_guard
         self._max_response_bytes = max_response_bytes
@@ -666,9 +673,7 @@ class WebToolExecutor:
                 retryable=False,
             )
 
-        request_url = "https://api.search.brave.com/res/v1/web/search?" + urlencode(
-            {"q": query, "count": limit}
-        )
+        request_url = self._search_endpoint + "?" + urlencode({"q": query, "count": limit})
         try:
             async with asyncio.timeout(self._timeout_seconds):
                 target = await self._egress_guard.resolve(request_url)

@@ -16,6 +16,7 @@ only declares it, and a fixture asserts the production route never gets it.
 from __future__ import annotations
 
 import asyncio
+import json
 import socket
 from dataclasses import dataclass
 from types import TracebackType
@@ -40,6 +41,29 @@ BROWSER_REQUIRED_PAGE = (
     b"'Conteudo revelado apenas apos a execucao de JavaScript. '.repeat(400);</script>"
     b"</body></html>"
 )
+
+SEARCH_PATH = "/res/v1/web/search"
+
+# Brave-shaped, so web_search exercises the real parser without a real key.
+SEARCH_RESPONSE = json.dumps(
+    {
+        "query": {"more_results_available": False},
+        "web": {
+            "results": [
+                {
+                    "title": "Documentacao oficial do modelo",
+                    "url": "https://bench.harness.test/readable",
+                    "description": "Pagina de referencia servida pela bancada.",
+                },
+                {
+                    "title": "Guia de uso",
+                    "url": "https://bench.harness.test/js-only",
+                    "description": "Segundo resultado da bancada.",
+                },
+            ]
+        },
+    }
+).encode()
 
 BENCH_PAGES: dict[str, bytes] = {
     "/readable": HTTP_READABLE_PAGE,
@@ -94,13 +118,19 @@ class BenchServer:
             method = request_line[0] if request_line else "GET"
             path = request_line[1] if len(request_line) > 1 else "/"
             self._requests.append(BenchRequest(method=method, path=path))
-            body = self._pages.get(path)
+            route = path.split("?", 1)[0]
+            body = SEARCH_RESPONSE if route == SEARCH_PATH else self._pages.get(route)
+            content_type = (
+                b"application/json" if route == SEARCH_PATH else b"text/html; charset=utf-8"
+            )
             status = b"200 OK" if body is not None else b"404 Not Found"
             payload = body if body is not None else b"not found"
             writer.write(
                 b"HTTP/1.1 "
                 + status
-                + b"\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: "
+                + b"\r\nContent-Type: "
+                + content_type
+                + b"\r\nContent-Length: "
                 + str(len(payload)).encode()
                 + b"\r\nConnection: close\r\n\r\n"
                 + payload
