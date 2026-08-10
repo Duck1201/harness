@@ -126,9 +126,7 @@ class ToolExecutor(Protocol):
 
 
 class ToolExecutorFactory(Protocol):
-    async def effective_tool_schemas(
-        self, conversation_id: str
-    ) -> tuple[ToolSchema, ...]: ...
+    async def effective_tool_schemas(self, conversation_id: str) -> tuple[ToolSchema, ...]: ...
 
     async def create(self, conversation_id: str) -> ToolExecutor: ...
 
@@ -148,9 +146,7 @@ class TokenEstimator(Protocol):
     @property
     def validated(self) -> bool: ...
 
-    def estimate(
-        self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]
-    ) -> int: ...
+    def estimate(self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]) -> int: ...
 
 
 class EventSink(Protocol):

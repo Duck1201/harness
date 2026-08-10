@@ -34,9 +34,7 @@ class HuggingFaceTokenEstimator(TokenEstimator):
         try:
             content = path.read_bytes()
         except OSError:
-            self._readiness = EngineReadiness(
-                ready=False, reason_code="tokenizer_file_unreadable"
-            )
+            self._readiness = EngineReadiness(ready=False, reason_code="tokenizer_file_unreadable")
             return
         expected = expected_sha256.removeprefix("sha256:").lower()
         if len(expected) != 64 or any(
@@ -47,9 +45,7 @@ class HuggingFaceTokenEstimator(TokenEstimator):
             )
             return
         if hashlib.sha256(content).hexdigest() != expected:
-            self._readiness = EngineReadiness(
-                ready=False, reason_code="tokenizer_digest_mismatch"
-            )
+            self._readiness = EngineReadiness(ready=False, reason_code="tokenizer_digest_mismatch")
             return
         try:
             self._tokenizer = cast(
@@ -59,9 +55,7 @@ class HuggingFaceTokenEstimator(TokenEstimator):
                 ),
             )
         except Exception:
-            self._readiness = EngineReadiness(
-                ready=False, reason_code="tokenizer_file_invalid"
-            )
+            self._readiness = EngineReadiness(ready=False, reason_code="tokenizer_file_invalid")
             return
         self._readiness = EngineReadiness(ready=True)
 
@@ -73,21 +67,15 @@ class HuggingFaceTokenEstimator(TokenEstimator):
     def readiness(self) -> EngineReadiness:
         return self._readiness
 
-    def estimate(
-        self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]
-    ) -> int:
+    def estimate(self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]) -> int:
         tokenizer = self._tokenizer
         if tokenizer is None:
             raise RuntimeError("token estimator is not validated")
         total = self._base_overhead
         for message in messages:
-            total += self._message_overhead + _encoded_length(
-                tokenizer, _message_payload(message)
-            )
+            total += self._message_overhead + _encoded_length(tokenizer, _message_payload(message))
         for schema in tools:
-            total += self._schema_overhead + _encoded_length(
-                tokenizer, _schema_payload(schema)
-            )
+            total += self._schema_overhead + _encoded_length(tokenizer, _schema_payload(schema))
         return total
 
 

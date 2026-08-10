@@ -82,9 +82,7 @@ class EvalService:
                     Mapping[str, JsonValue],
                     arm.model_dump(mode="json", exclude={"id"}),
                 )
-                await self.store.create_arm(
-                    run.id, arm.id, settings=settings
-                )
+                await self.store.create_arm(run.id, arm.id, settings=settings)
         return run
 
     async def start(self, run_id: str) -> EvalRun:
@@ -133,13 +131,9 @@ class EvalService:
     async def list_reports(self) -> list[EvalReport]:
         return await self.store.list_reports()
 
-    async def create_regression_draft(
-        self, feedback: Feedback, turn: Turn
-    ) -> RegressionDraft:
+    async def create_regression_draft(self, feedback: Feedback, turn: Turn) -> RegressionDraft:
         if feedback.turn_id != turn.id or turn.terminal_outcome is None:
-            raise EvalServiceError(
-                "regression drafts require feedback linked to a finished Turn"
-            )
+            raise EvalServiceError("regression drafts require feedback linked to a finished Turn")
         return await self.store.create_regression_draft(
             source_feedback_sha256=_identifier_digest(feedback.id),
             source_turn_sha256=_identifier_digest(turn.id),
@@ -210,9 +204,7 @@ class EvalService:
                             name=name,
                             value=value,
                         )
-            completed = await self.store.set_run_status(
-                run.id, EvalRunStatus.COMPLETED
-            )
+            completed = await self.store.set_run_status(run.id, EvalRunStatus.COMPLETED)
             await self._save_report(completed)
         except BenchmarkLeaseCanceled:
             await self.store.set_run_status(run.id, EvalRunStatus.CANCELED)
@@ -234,9 +226,7 @@ class EvalService:
         )
         await self._save_report(blocked)
 
-    def _experiment(
-        self, experiment_id: str, tier: EvalTier
-    ) -> ExperimentDefinition | None:
+    def _experiment(self, experiment_id: str, tier: EvalTier) -> ExperimentDefinition | None:
         if tier is EvalTier.CONTRACT:
             if experiment_id not in {
                 "contract_regressions",
@@ -245,20 +235,14 @@ class EvalService:
                 raise EvalServiceError(f"unknown contract experiment: {experiment_id}")
             return None
         experiment = next(
-            (
-                item
-                for item in self.catalog.manifest.experiments
-                if item.id == experiment_id
-            ),
+            (item for item in self.catalog.manifest.experiments if item.id == experiment_id),
             None,
         )
         if experiment is None:
             raise EvalServiceError(f"unknown experiment: {experiment_id}")
         return experiment
 
-    def _fixtures(
-        self, run: EvalRun, runner: CaseRunner
-    ) -> tuple[RegressionFixture, ...]:
+    def _fixtures(self, run: EvalRun, runner: CaseRunner) -> tuple[RegressionFixture, ...]:
         fixtures = self.catalog.dataset.fixtures
         if run.tier is EvalTier.CONTRACT:
             return tuple(item for item in fixtures if runner.supports(item.type))
@@ -266,9 +250,7 @@ class EvalService:
         assert experiment is not None
         tags = frozenset(experiment.fixture_tags)
         return tuple(
-            item
-            for item in fixtures
-            if tags.intersection(item.tags) and runner.supports(item.type)
+            item for item in fixtures if tags.intersection(item.tags) and runner.supports(item.type)
         )
 
     async def _save_report(self, run: EvalRun) -> EvalReport:
@@ -281,9 +263,7 @@ class EvalService:
             arm_cases = [item for item in cases if item.arm_id == arm.id]
             verdicts = [item.verdict for item in arm_cases]
             cases_by_arm[arm.id] = verdicts
-            security_violations += sum(
-                item.security_violations for item in arm_cases
-            )
+            security_violations += sum(item.security_violations for item in arm_cases)
             passed = sum(verdict is TaskVerdict.PASS for verdict in verdicts)
             interval = wilson_interval(passed, len(verdicts))
             summaries.append(

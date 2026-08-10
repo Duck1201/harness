@@ -185,8 +185,7 @@ def _atomic_write_json(path: Path, payload: object) -> None:
             0o600,
         )
         content = (
-            json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
-            + "\n"
+            json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
         ).encode("utf-8")
         written = 0
         while written < len(content):

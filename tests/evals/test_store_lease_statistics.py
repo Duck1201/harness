@@ -69,9 +69,7 @@ def test_eval_store_persists_only_eval_entities_in_a_separate_database(
         assert await reopened.list_metrics(run.id) == [metric]
         assert await reopened.get_report(run.id) == report
         assert database != tmp_path / "conversations.sqlite3"
-        assert report.payload["synthetic_content"] == (
-            "allowed synthetic fixture material"
-        )
+        assert report.payload["synthetic_content"] == ("allowed synthetic fixture material")
 
     asyncio.run(scenario())
 

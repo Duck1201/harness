@@ -62,9 +62,7 @@ def test_host_config_replace_is_atomic_when_the_final_swap_fails(
         allowed_origins=("http://operator.test",),
     )
     store.write(original)
-    updated = original.model_copy(
-        update={"state_dir": (tmp_path / "state-two").resolve()}
-    )
+    updated = original.model_copy(update={"state_dir": (tmp_path / "state-two").resolve()})
 
     def fail_replace(source: Path, destination: Path) -> None:
         del source, destination

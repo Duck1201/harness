@@ -31,9 +31,7 @@ class FakeEstimator:
     validated = True
     readiness = EngineReadiness(ready=True)
 
-    def estimate(
-        self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]
-    ) -> int:
+    def estimate(self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]) -> int:
         return len(messages) + len(tools)
 
 
@@ -52,9 +50,7 @@ class SequenceRuntime:
         return None
 
 
-def _event_schema(
-    event_type: str, *required: str, role: str | None = None
-) -> dict[str, object]:
+def _event_schema(event_type: str, *required: str, role: str | None = None) -> dict[str, object]:
     properties: dict[str, object] = {"type": {"const": event_type}}
     if role is not None:
         properties["role"] = {"const": role}
@@ -76,14 +72,10 @@ EVENT_SCHEMAS: dict[str, dict[str, object]] = {
     "REASONING_MESSAGE_START": _event_schema(
         "REASONING_MESSAGE_START", "messageId", role="reasoning"
     ),
-    "REASONING_MESSAGE_CONTENT": _event_schema(
-        "REASONING_MESSAGE_CONTENT", "messageId", "delta"
-    ),
+    "REASONING_MESSAGE_CONTENT": _event_schema("REASONING_MESSAGE_CONTENT", "messageId", "delta"),
     "REASONING_MESSAGE_END": _event_schema("REASONING_MESSAGE_END", "messageId"),
     "REASONING_END": _event_schema("REASONING_END", "messageId"),
-    "TEXT_MESSAGE_START": _event_schema(
-        "TEXT_MESSAGE_START", "messageId", role="assistant"
-    ),
+    "TEXT_MESSAGE_START": _event_schema("TEXT_MESSAGE_START", "messageId", role="assistant"),
     "TEXT_MESSAGE_CONTENT": _event_schema("TEXT_MESSAGE_CONTENT", "messageId", "delta"),
     "TEXT_MESSAGE_END": _event_schema("TEXT_MESSAGE_END", "messageId"),
     "TOOL_CALL_START": _event_schema("TOOL_CALL_START", "toolCallId", "toolCallName"),
@@ -113,9 +105,9 @@ def _app(tmp_path: Path, responses: Sequence[ModelResponse]) -> FastAPI:
 
 def _create_conversation(client: TestClient, workspace: Path) -> str:
     return str(
-        client.post(
-            "/api/conversations", json={"workspace_root": str(workspace)}
-        ).json()["conversation"]["id"]
+        client.post("/api/conversations", json={"workspace_root": str(workspace)}).json()[
+            "conversation"
+        ]["id"]
     )
 
 
@@ -172,9 +164,7 @@ def test_agent_sse_accepts_run_agent_input_and_projects_documented_events(
             },
         ) as response:
             events = _events(response)
-        snapshot = client.get(
-            "/api/ui/chat", params={"conversation_id": conversation_id}
-        ).json()
+        snapshot = client.get("/api/ui/chat", params={"conversation_id": conversation_id}).json()
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
@@ -219,15 +209,11 @@ def test_agent_sse_accepts_run_agent_input_and_projects_documented_events(
     }
     assert sum(event["type"] in {"RUN_FINISHED", "RUN_ERROR"} for event in events) == 1
     assert events[3]["role"] == "reasoning"
-    assert {events[index]["messageId"] for index in (3, 4, 5)} == {
-        events[3]["messageId"]
-    }
+    assert {events[index]["messageId"] for index in (3, 4, 5)} == {events[3]["messageId"]}
     assert {events[index]["toolCallId"] for index in (7, 8, 9, 10)} == {"call-1"}
     assert events[8]["delta"] == '{"file_path":"note.txt"}'
     assert json.loads(str(events[10]["content"]))["status"] == "success"
-    assert {events[index]["messageId"] for index in (13, 14, 15)} == {
-        events[13]["messageId"]
-    }
+    assert {events[index]["messageId"] for index in (13, 14, 15)} == {events[13]["messageId"]}
     assert events[14]["delta"] == "The note says hello."
     assert events[-2] == {
         "type": "CUSTOM",
@@ -238,17 +224,14 @@ def test_agent_sse_accepts_run_agent_input_and_projects_documented_events(
         },
     }
     assert [
-        item["payload"]["content"]
-        for item in snapshot["history"]
-        if item["kind"] == "user_message"
+        item["payload"]["content"] for item in snapshot["history"] if item["kind"] == "user_message"
     ] == ["read the note"]
     internal_request_id = snapshot["turns"][0]["request_id"]
     assert internal_request_id != "client-run-1"
     assert internal_request_id not in json.dumps(events)
     assert "must not be replayed" not in json.dumps(events)
     assert not any(
-        "reasoning" in json.dumps(item, ensure_ascii=False).lower()
-        for item in snapshot["history"]
+        "reasoning" in json.dumps(item, ensure_ascii=False).lower() for item in snapshot["history"]
     )
 
 
@@ -273,9 +256,7 @@ def test_agent_generates_run_id_and_rejects_inputs_without_a_typed_user_message(
             "/api/agent",
             json={
                 "threadId": conversation_id,
-                "messages": [
-                    {"id": "assistant-1", "role": "assistant", "content": "hello"}
-                ],
+                "messages": [{"id": "assistant-1", "role": "assistant", "content": "hello"}],
             },
         )
         invalid_role = client.post(
@@ -314,9 +295,7 @@ def test_failed_agent_stream_emits_custom_outcome_then_one_run_error(tmp_path: P
             json={
                 "threadId": conversation_id,
                 "runId": "failed-run",
-                "messages": [
-                    {"id": "user-1", "role": "user", "content": "trigger failure"}
-                ],
+                "messages": [{"id": "user-1", "role": "user", "content": "trigger failure"}],
             },
         ) as response:
             events = _events(response)

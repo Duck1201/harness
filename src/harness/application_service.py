@@ -103,9 +103,7 @@ class ApplicationService:
         self.estimator = estimator
         if brave_api_key is not None and not brave_api_key.strip():
             raise ValueError("brave_api_key must not be blank")
-        normalized_brave_key = (
-            brave_api_key.strip() if brave_api_key is not None else None
-        )
+        normalized_brave_key = brave_api_key.strip() if brave_api_key is not None else None
         self._allowed_roots = tuple(roots)
         if (
             benchmark_lease is not None
@@ -113,9 +111,8 @@ class ApplicationService:
             and benchmark_lease is not eval_service.lease
         ):
             raise ValueError("eval_service and ApplicationService must share BenchmarkLease")
-        self.benchmark_lease = (
-            benchmark_lease
-            or (eval_service.lease if eval_service is not None else BenchmarkLease())
+        self.benchmark_lease = benchmark_lease or (
+            eval_service.lease if eval_service is not None else BenchmarkLease()
         )
         self.eval_service = eval_service or _default_eval_service(
             store=store,
@@ -125,23 +122,19 @@ class ApplicationService:
         if Path(self.eval_service.store.database).resolve() == Path(store.database).resolve():
             raise ValueError("EvalStore must be separate from ConversationStore")
         self._workspaces_by_root: dict[Path, WorkspaceInfo] = {}
-        self._runtime_readiness = EngineReadiness(
-            ready=False, reason_code="runtime_not_verified"
-        )
+        self._runtime_readiness = EngineReadiness(ready=False, reason_code="runtime_not_verified")
         self._initialized = False
         self._shutting_down = False
         self._workers: dict[str, asyncio.Task[None]] = {}
         self._stop_signals: dict[str, _CooperativeStopSignal] = {}
         self._worker_lock = asyncio.Lock()
         self._workspace_coordinator = WorkspaceCoordinator(store)
-        self._tool_executor_factory: ToolExecutorFactory = (
-            _ConversationToolExecutorFactory(
-                store=store,
-                registry=config.tool_registry,
-                workspace_root=self.workspace_root,
-                coordinator=self._workspace_coordinator,
-                brave_api_key=normalized_brave_key,
-            )
+        self._tool_executor_factory: ToolExecutorFactory = _ConversationToolExecutorFactory(
+            store=store,
+            registry=config.tool_registry,
+            workspace_root=self.workspace_root,
+            coordinator=self._workspace_coordinator,
+            brave_api_key=normalized_brave_key,
         )
         self._event_bus = _LiveEventBus()
         self._event_sink = _ServiceEventSink(self._event_bus, observability_store)
@@ -192,9 +185,7 @@ class ApplicationService:
             readiness = getattr(self.estimator, "readiness", None)
             if isinstance(readiness, EngineReadiness):
                 return readiness
-            return EngineReadiness(
-                ready=False, reason_code="token_estimator_not_validated"
-            )
+            return EngineReadiness(ready=False, reason_code="token_estimator_not_validated")
         return EngineReadiness(ready=True)
 
     def list_workspaces(self) -> tuple[WorkspaceInfo, ...]:
@@ -236,9 +227,7 @@ class ApplicationService:
     async def get_conversation(self, conversation_id: str) -> Conversation:
         return await self.store.get_conversation(conversation_id)
 
-    async def list_conversations(
-        self, *, include_archived: bool = False
-    ) -> list[Conversation]:
+    async def list_conversations(self, *, include_archived: bool = False) -> list[Conversation]:
         return await self.store.list_conversations(include_archived=include_archived)
 
     async def update_conversation(
@@ -260,9 +249,7 @@ class ApplicationService:
     async def delete_conversation(self, conversation_id: str) -> None:
         await self.store.delete_conversation(conversation_id)
 
-    async def enqueue_request(
-        self, conversation_id: str, content: str
-    ) -> PendingRequest:
+    async def enqueue_request(self, conversation_id: str, content: str) -> PendingRequest:
         conversation = await self.store.get_conversation(conversation_id)
         if conversation.archived_at is not None:
             raise ApplicationServiceError(
@@ -286,9 +273,7 @@ class ApplicationService:
             )
         return await self.store.edit_pending_request(request_id, content)
 
-    async def cancel_pending_request(
-        self, conversation_id: str, request_id: str
-    ) -> PendingRequest:
+    async def cancel_pending_request(self, conversation_id: str, request_id: str) -> PendingRequest:
         request = await self.store.get_request(request_id)
         if request.conversation_id != conversation_id:
             raise ApplicationServiceError(
@@ -423,9 +408,7 @@ class ApplicationService:
     def subscribe(self, conversation_id: str) -> asyncio.Queue[AgentEvent]:
         return self._event_bus.subscribe(conversation_id)
 
-    def unsubscribe(
-        self, conversation_id: str, queue: asyncio.Queue[AgentEvent]
-    ) -> None:
+    def unsubscribe(self, conversation_id: str, queue: asyncio.Queue[AgentEvent]) -> None:
         self._event_bus.unsubscribe(conversation_id, queue)
 
     async def _ensure_worker(self, conversation_id: str) -> None:
@@ -548,9 +531,7 @@ class _ConversationToolExecutorFactory:
         self._coordinator = coordinator
         self._brave_api_key = brave_api_key
 
-    async def effective_tool_schemas(
-        self, conversation_id: str
-    ) -> tuple[ToolSchema, ...]:
+    async def effective_tool_schemas(self, conversation_id: str) -> tuple[ToolSchema, ...]:
         policy = await self._store.get_session_policy(conversation_id)
         effective_grants = policy.effective_grants
         return tuple(
@@ -558,10 +539,7 @@ class _ConversationToolExecutorFactory:
             for definition in self._registry.model_tools
             if definition.status == "enabled"
             and all(grant in effective_grants for grant in definition.required_grants)
-            and (
-                definition.name != "web_search"
-                or self._brave_api_key is not None
-            )
+            and (definition.name != "web_search" or self._brave_api_key is not None)
         )
 
     async def create(self, conversation_id: str) -> ToolExecutor:
@@ -606,9 +584,7 @@ class _CoordinatedToolExecutor:
         return await self._executor.preflight(calls)
 
     async def execute(self, call: ToolCall) -> ToolResult:
-        return await self._coordinator.execute(
-            self._workspace_id, call, self._executor
-        )
+        return await self._coordinator.execute(self._workspace_id, call, self._executor)
 
 
 class _CooperativeStopSignal:
@@ -632,9 +608,7 @@ class _LiveEventBus:
         self._subscribers.setdefault(conversation_id, set()).add(queue)
         return queue
 
-    def unsubscribe(
-        self, conversation_id: str, queue: asyncio.Queue[AgentEvent]
-    ) -> None:
+    def unsubscribe(self, conversation_id: str, queue: asyncio.Queue[AgentEvent]) -> None:
         subscribers = self._subscribers.get(conversation_id)
         if subscribers is None:
             return
@@ -648,9 +622,7 @@ class _LiveEventBus:
 
 
 class _ServiceEventSink:
-    def __init__(
-        self, bus: _LiveEventBus, observability_store: ObservabilityStore
-    ) -> None:
+    def __init__(self, bus: _LiveEventBus, observability_store: ObservabilityStore) -> None:
         self._bus = bus
         self._observability_store = observability_store
 

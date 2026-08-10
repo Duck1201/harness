@@ -27,9 +27,7 @@ def test_loader_accepts_canonical_catalog_and_rejects_dataset_drift(tmp_path: Pa
     )
 
     assert catalog.dataset.dataset_version == "2.0.0"
-    assert catalog.manifest.dataset.dataset_digest_sha256 == (
-        catalog.dataset.dataset_digest_sha256
-    )
+    assert catalog.manifest.dataset.dataset_digest_sha256 == (catalog.dataset.dataset_digest_sha256)
 
     manifest = json.loads((ROOT / "evals/experiments.json").read_text(encoding="utf-8"))
     manifest["dataset"]["dataset_version"] = "2.0.1"
@@ -46,9 +44,7 @@ def test_loader_accepts_canonical_catalog_and_rejects_dataset_drift(tmp_path: Pa
 
 
 def test_loader_rejects_scoped_digest_drift(tmp_path: Path) -> None:
-    dataset = json.loads(
-        (ROOT / "evals/fixtures/regressions.json").read_text(encoding="utf-8")
-    )
+    dataset = json.loads((ROOT / "evals/fixtures/regressions.json").read_text(encoding="utf-8"))
     dataset["fixtures"][0]["tags"].append("drift")
     drifted = tmp_path / "regressions.json"
     drifted.write_text(json.dumps(dataset), encoding="utf-8")
@@ -62,9 +58,7 @@ def test_loader_rejects_scoped_digest_drift(tmp_path: Path) -> None:
 
 
 def test_loader_rejects_unknown_typed_operator(tmp_path: Path) -> None:
-    dataset = json.loads(
-        (ROOT / "evals/fixtures/regressions.json").read_text(encoding="utf-8")
-    )
+    dataset = json.loads((ROOT / "evals/fixtures/regressions.json").read_text(encoding="utf-8"))
     dataset["fixtures"][0]["oracle"]["typed_assertions"] = [
         {"operator": "interpret_this_sentence", "text": "looks good"}
     ]

@@ -3,15 +3,11 @@ import json
 from .domain import JsonValue
 from .ports import AgentEvent, AgentEventKind
 
-_FINISHED_OUTCOMES = frozenset(
-    {"completed", "limit_reached", "cancelled", "blocked", "abandoned"}
-)
+_FINISHED_OUTCOMES = frozenset({"completed", "limit_reached", "cancelled", "blocked", "abandoned"})
 
 
 def project_agent_event(event: AgentEvent, *, run_id: str) -> list[dict[str, JsonValue]]:
-    step_name = (
-        f"step-{event.step_sequence}" if event.step_sequence is not None else None
-    )
+    step_name = f"step-{event.step_sequence}" if event.step_sequence is not None else None
     if event.kind is AgentEventKind.STEP_STARTED:
         return [{"type": "STEP_STARTED", "stepName": step_name}]
     if event.kind is AgentEventKind.STEP_FINISHED:
@@ -134,13 +130,17 @@ def run_error_event(code: str) -> dict[str, JsonValue]:
 
 
 def encode_sse(event: dict[str, JsonValue]) -> str:
-    return "data: " + json.dumps(
-        event,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ) + "\n\n"
+    return (
+        "data: "
+        + json.dumps(
+            event,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        + "\n\n"
+    )
 
 
 def _string(event: AgentEvent, key: str) -> str:

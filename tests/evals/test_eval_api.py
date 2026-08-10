@@ -23,9 +23,7 @@ class FakeEstimator:
     validated = True
     readiness = EngineReadiness(ready=True)
 
-    def estimate(
-        self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]
-    ) -> int:
+    def estimate(self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]) -> int:
         return len(messages) + len(tools)
 
 
@@ -90,9 +88,7 @@ def test_eval_api_blocks_tier_without_runner_and_exports_real_report(
 
     assert health["capabilities"]["eval_runner"] is True
     assert experiments.status_code == 200
-    assert {item["id"] for item in experiments.json()["experiments"]} >= {
-        "thinking_ollama"
-    }
+    assert {item["id"] for item in experiments.json()["experiments"]} >= {"thinking_ollama"}
     assert created.status_code == 201
     assert started.status_code == 202
     assert status is not None
@@ -123,9 +119,7 @@ def test_eval_cancel_endpoint_and_sanitized_regression_draft(tmp_path: Path) -> 
         while monotonic() < deadline:
             chat = cast(
                 dict[str, object],
-                client.get(
-                    "/api/ui/chat", params={"conversation_id": conversation_id}
-                ).json(),
+                client.get("/api/ui/chat", params={"conversation_id": conversation_id}).json(),
             )
             if cast(list[object], chat["turns"]) and chat["active_turn"] is None:
                 break

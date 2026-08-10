@@ -182,9 +182,7 @@ def _evaluate(
 def _selected_results(evidence: EvalEvidence, tool_call_id: str | None) -> tuple[ToolResult, ...]:
     if tool_call_id is None:
         return evidence.tool_results
-    return tuple(
-        result for result in evidence.tool_results if result.tool_call_id == tool_call_id
-    )
+    return tuple(result for result in evidence.tool_results if result.tool_call_id == tool_call_id)
 
 
 def _workspace_path(root: Path | None, relative: str) -> Path | None:

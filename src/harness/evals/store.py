@@ -108,9 +108,7 @@ class EvalStore:
         phase: EvalPhase,
         seeds: tuple[int, ...],
     ) -> EvalRun:
-        return await asyncio.to_thread(
-            self._create_run, experiment_id, tier, phase, seeds
-        )
+        return await asyncio.to_thread(self._create_run, experiment_id, tier, phase, seeds)
 
     async def get_run(self, run_id: str) -> EvalRun:
         return await asyncio.to_thread(self._get_run, run_id)
@@ -125,9 +123,7 @@ class EvalStore:
         *,
         reason_code: str | None = None,
     ) -> EvalRun:
-        return await asyncio.to_thread(
-            self._set_run_status, run_id, status, reason_code
-        )
+        return await asyncio.to_thread(self._set_run_status, run_id, status, reason_code)
 
     async def create_arm(
         self,
@@ -136,9 +132,7 @@ class EvalStore:
         *,
         settings: Mapping[str, JsonValue],
     ) -> EvalArm:
-        return await asyncio.to_thread(
-            self._create_arm, run_id, arm_id, settings
-        )
+        return await asyncio.to_thread(self._create_arm, run_id, arm_id, settings)
 
     async def list_arms(self, run_id: str) -> list[EvalArm]:
         return await asyncio.to_thread(self._list_arms, run_id)
@@ -181,16 +175,12 @@ class EvalStore:
         name: str,
         value: float,
     ) -> EvalMetric:
-        return await asyncio.to_thread(
-            self._record_metric, run_id, arm_id, case_id, name, value
-        )
+        return await asyncio.to_thread(self._record_metric, run_id, arm_id, case_id, name, value)
 
     async def list_metrics(self, run_id: str) -> list[EvalMetric]:
         return await asyncio.to_thread(self._list_metrics, run_id)
 
-    async def save_report(
-        self, run_id: str, payload: Mapping[str, JsonValue]
-    ) -> EvalReport:
+    async def save_report(self, run_id: str, payload: Mapping[str, JsonValue]) -> EvalReport:
         return await asyncio.to_thread(self._save_report, run_id, payload)
 
     async def get_report(self, run_id: str) -> EvalReport:
@@ -339,18 +329,14 @@ class EvalStore:
 
     def _get_run(self, run_id: str) -> EvalRun:
         with self._connect() as connection:
-            row = connection.execute(
-                "SELECT * FROM eval_runs WHERE id = ?", (run_id,)
-            ).fetchone()
+            row = connection.execute("SELECT * FROM eval_runs WHERE id = ?", (run_id,)).fetchone()
         if row is None:
             raise EvalNotFoundError(f"eval run not found: {run_id}")
         return _run_from_row(row)
 
     def _list_runs(self) -> list[EvalRun]:
         with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT * FROM eval_runs ORDER BY created_at, id"
-            ).fetchall()
+            rows = connection.execute("SELECT * FROM eval_runs ORDER BY created_at, id").fetchall()
         return [_run_from_row(row) for row in rows]
 
     def _set_run_status(
@@ -366,9 +352,7 @@ class EvalStore:
                 raise EvalNotFoundError(f"eval run not found: {run_id}")
         return self._get_run(run_id)
 
-    def _create_arm(
-        self, run_id: str, arm_id: str, settings: Mapping[str, JsonValue]
-    ) -> EvalArm:
+    def _create_arm(self, run_id: str, arm_id: str, settings: Mapping[str, JsonValue]) -> EvalArm:
         if not arm_id:
             raise ValueError("arm_id must not be empty")
         now = _utcnow()
@@ -496,13 +480,9 @@ class EvalStore:
             ).fetchall()
         return [_metric_from_row(row) for row in rows]
 
-    def _save_report(
-        self, run_id: str, payload: Mapping[str, JsonValue]
-    ) -> EvalReport:
+    def _save_report(self, run_id: str, payload: Mapping[str, JsonValue]) -> EvalReport:
         now = _utcnow()
-        report = EvalReport(
-            id=str(uuid4()), run_id=run_id, payload=dict(payload), created_at=now
-        )
+        report = EvalReport(id=str(uuid4()), run_id=run_id, payload=dict(payload), created_at=now)
         with self._connect() as connection:
             connection.execute(
                 """
@@ -669,9 +649,7 @@ def _draft_from_row(row: sqlite3.Row) -> RegressionDraft:
         source_turn_sha256=str(row["source_turn_sha256"]),
         rating=int(row["rating"]),
         comment_present=bool(row["comment_present"]),
-        terminal_outcome_kind=TerminalOutcomeKind(
-            str(row["terminal_outcome_kind"])
-        ),
+        terminal_outcome_kind=TerminalOutcomeKind(str(row["terminal_outcome_kind"])),
         terminal_outcome_reason=str(row["terminal_outcome_reason"]),
         created_at=datetime.fromisoformat(str(row["created_at"])),
     )

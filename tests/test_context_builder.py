@@ -20,9 +20,7 @@ from harness import (
 class FakeEstimator:
     validated = True
 
-    def estimate(
-        self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]
-    ) -> int:
+    def estimate(self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]) -> int:
         return sum(len(message.content) for message in messages) + (len(tools) * 5)
 
 

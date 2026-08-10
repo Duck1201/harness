@@ -32,9 +32,7 @@ class FakeEstimator:
     validated = True
     readiness = EngineReadiness(ready=True)
 
-    def estimate(
-        self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]
-    ) -> int:
+    def estimate(self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]) -> int:
         return len(messages) + len(tools)
 
 
@@ -258,9 +256,7 @@ def test_setup_validates_workspace_tokenizer_and_digest_before_writing(
 
     with TestClient(app, client=("127.0.0.1", 50000)) as client:
         missing_root_payload = {**payload, "allowed_workspace_roots": [str(tmp_path / "missing")]}
-        missing_root = client.post(
-            "/api/setup", json=missing_root_payload, headers=headers
-        )
+        missing_root = client.post("/api/setup", json=missing_root_payload, headers=headers)
         digest_mismatch = client.post(
             "/api/setup",
             json={**payload, "tokenizer_digest": "0" * 64},
@@ -273,9 +269,7 @@ def test_setup_validates_workspace_tokenizer_and_digest_before_writing(
             json={
                 **payload,
                 "tokenizer_path": str(invalid_tokenizer_path.resolve()),
-                "tokenizer_digest": hashlib.sha256(
-                    invalid_tokenizer_path.read_bytes()
-                ).hexdigest(),
+                "tokenizer_digest": hashlib.sha256(invalid_tokenizer_path.read_bytes()).hexdigest(),
             },
             headers=headers,
         )
@@ -412,9 +406,7 @@ def test_default_boot_reads_host_config_and_host_origins(
     app = create_app(static_dir=tmp_path / "missing-dist")
 
     with TestClient(app, client=("127.0.0.1", 50000)) as client:
-        status = client.get(
-            "/api/setup/status", headers={"Origin": "http://operator.test"}
-        )
+        status = client.get("/api/setup/status", headers={"Origin": "http://operator.test"})
         health = client.get("/api/health").json()
         workspaces = client.get("/api/workspaces").json()["workspaces"]
         settings = client.get("/api/ui/settings").json()
@@ -466,9 +458,7 @@ def test_environment_overrides_host_runtime_values(
     assert denied_host_origin.status_code == 403
     assert accepted_override.status_code == 200
     assert health["ready"] is True
-    assert workspaces == [
-        {"id": workspaces[0]["id"], "root": str(override_workspace.resolve())}
-    ]
+    assert workspaces == [{"id": workspaces[0]["id"], "root": str(override_workspace.resolve())}]
     assert (override_state / "conversations.sqlite3").is_file()
     assert (
         api_module.load_brave_api_key(
@@ -490,9 +480,7 @@ def test_setup_can_be_explicitly_reopened_and_randomizes_each_boot(
     monkeypatch.setenv("HARNESS_SETUP_REOPEN", "1")
     monkeypatch.setattr(api_module, "OllamaRuntime", FakeRuntime)
 
-    app = create_app(
-        static_dir=tmp_path / "missing-dist", setup_token="reopened-token"
-    )
+    app = create_app(static_dir=tmp_path / "missing-dist", setup_token="reopened-token")
     with TestClient(app, client=("127.0.0.1", 50000)) as client:
         status = client.get("/api/setup/status").json()
 

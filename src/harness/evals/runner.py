@@ -128,9 +128,7 @@ class ContractCaseRunner:
             return CaseRunResult(
                 evidence=evidence,
                 metrics={},
-                security_violations=sum(
-                    _is_security_violation(result) for result in results
-                ),
+                security_violations=sum(_is_security_violation(result) for result in results),
                 evaluation=evaluation,
             )
 
@@ -181,15 +179,9 @@ def _fixture_calls(fixture: RegressionFixture) -> tuple[ToolCall, ...]:
             arguments = (
                 cast(Mapping[str, JsonValue], raw_arguments)
                 if isinstance(raw_arguments, Mapping)
-                else {
-                    key: value
-                    for key, value in attempt.items()
-                    if key not in {"tool", "name"}
-                }
+                else {key: value for key, value in attempt.items() if key not in {"tool", "name"}}
             )
-            calls.append(
-                ToolCall(id=f"eval-{index}", name=name, arguments=arguments)
-            )
+            calls.append(ToolCall(id=f"eval-{index}", name=name, arguments=arguments))
         return tuple(calls)
     raise ValueError(f"deterministic fixture has no executable tool call: {fixture.id}")
 
@@ -209,18 +201,14 @@ def _evidence(
     return EvalEvidence(
         tool_calls=effective_calls,
         tool_results=results,
-        terminal_outcome_kind=(
-            TerminalOutcomeKind.BLOCKED if blocked is not None else None
-        ),
+        terminal_outcome_kind=(TerminalOutcomeKind.BLOCKED if blocked is not None else None),
         terminal_outcome_reason=reason,
         workspace_root=workspace,
         observed_paths=_observed_paths(workspace, calls),
     )
 
 
-async def _run_final_step_contract(
-    base: Path, workspace: Path, seed: int
-) -> EvalEvidence:
+async def _run_final_step_contract(base: Path, workspace: Path, seed: int) -> EvalEvidence:
     store = ConversationStore(base / "c.sqlite3")
     await store.initialize()
     revision = await store.create_workspace(str(workspace))
@@ -236,9 +224,7 @@ async def _run_final_step_contract(
         ),
         system_prompt="contract",
         event_sink=NullEventSink(),
-        tool_schemas=(
-            ToolSchema(name="contract_tool", description="contract", parameters={}),
-        ),
+        tool_schemas=(ToolSchema(name="contract_tool", description="contract", parameters={}),),
         seed=seed,
         model_options={},
         max_model_invocations=1,
@@ -302,9 +288,7 @@ def _run_context_builder_contract() -> EvalEvidence:
             created_at=now,
         ),
     )
-    builder = ContextBuilder(
-        _DeterministicEstimator(), context_window=128, output_budget=32
-    )
+    builder = ContextBuilder(_DeterministicEstimator(), context_window=128, output_budget=32)
     _ = builder.build(
         system="contract",
         tool_schemas=(),
@@ -317,9 +301,7 @@ def _run_context_builder_contract() -> EvalEvidence:
 class _DeterministicEstimator:
     validated = True
 
-    def estimate(
-        self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]
-    ) -> int:
+    def estimate(self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]) -> int:
         return len(messages) + len(tools)
 
 

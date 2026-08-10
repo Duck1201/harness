@@ -26,9 +26,7 @@ class FakeEstimator:
     validated = True
     readiness = EngineReadiness(ready=True)
 
-    def estimate(
-        self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]
-    ) -> int:
+    def estimate(self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]) -> int:
         return len(messages) + len(tools)
 
 
@@ -154,9 +152,7 @@ def test_conversations_can_be_listed_renamed_archived_and_deleted(tmp_path: Path
             f"/api/conversations/{conversation_id}",
             json={"name": "Renamed"},
         ).json()["conversation"]
-        fetched = client.get(f"/api/conversations/{conversation_id}").json()[
-            "conversation"
-        ]
+        fetched = client.get(f"/api/conversations/{conversation_id}").json()["conversation"]
         archived = client.patch(
             f"/api/conversations/{conversation_id}",
             json={"archived": True},
@@ -237,16 +233,12 @@ def test_requests_run_fifo_in_background_with_one_turn_and_editable_queue(
         canceled = client.delete(
             f"/api/conversations/{conversation_id}/requests/{third['id']}"
         ).json()["request"]
-        during = client.get(
-            "/api/ui/chat", params={"conversation_id": conversation_id}
-        ).json()
+        during = client.get("/api/ui/chat", params={"conversation_id": conversation_id}).json()
 
         runtime.release.set()
         deadline = monotonic() + 3
         while monotonic() < deadline:
-            final = client.get(
-                "/api/ui/chat", params={"conversation_id": conversation_id}
-            ).json()
+            final = client.get("/api/ui/chat", params={"conversation_id": conversation_id}).json()
             if final["active_turn"] is None and not final["pending_requests"]:
                 break
             sleep(0.01)
@@ -257,15 +249,11 @@ def test_requests_run_fifo_in_background_with_one_turn_and_editable_queue(
     assert edited["content"] == "second edited"
     assert canceled["status"] == "canceled"
     assert during["active_turn"] is not None
-    assert [item["content"] for item in during["pending_requests"]] == [
-        "second edited"
-    ]
+    assert [item["content"] for item in during["pending_requests"]] == ["second edited"]
     assert runtime.calls == 2
     assert runtime.max_active == 1
     user_messages = [
-        item["payload"]["content"]
-        for item in final["history"]
-        if item["kind"] == "user_message"
+        item["payload"]["content"] for item in final["history"] if item["kind"] == "user_message"
     ]
     assert user_messages == [
         "first",
@@ -316,9 +304,7 @@ def test_revoked_write_grant_is_revalidated_before_the_effect(tmp_path: Path) ->
             json={"content": "write a file"},
         )
         assert runtime.entered.wait(timeout=2)
-        revoked = client.delete(
-            f"/api/conversations/{conversation_id}/grants/{grant['id']}"
-        )
+        revoked = client.delete(f"/api/conversations/{conversation_id}/grants/{grant['id']}")
         runtime.release.set()
 
         deadline = monotonic() + 3
@@ -368,9 +354,7 @@ def test_stop_is_cooperative_and_the_next_pending_request_starts(tmp_path: Path)
         conversation_id = client.post(
             "/api/conversations", json={"workspace_root": str(workspace)}
         ).json()["conversation"]["id"]
-        client.post(
-            f"/api/conversations/{conversation_id}/requests", json={"content": "stop me"}
-        )
+        client.post(f"/api/conversations/{conversation_id}/requests", json={"content": "stop me"})
         assert runtime.entered.wait(timeout=2)
         client.post(
             f"/api/conversations/{conversation_id}/requests",
@@ -414,9 +398,7 @@ def test_feedback_and_ui_snapshots_are_query_projections(tmp_path: Path) -> None
             f"/api/conversations/{conversation_id}/feedback",
             json={"rating": 1, "comment": "useful"},
         )
-        chat = client.get(
-            "/api/ui/chat", params={"conversation_id": conversation_id}
-        ).json()
+        chat = client.get("/api/ui/chat", params={"conversation_id": conversation_id}).json()
         evals = client.get("/api/ui/evals").json()
         settings = client.get("/api/ui/settings").json()
 
@@ -452,15 +434,11 @@ def test_origin_body_limit_and_optional_spa_fallback_are_closed_by_default(
     )
 
     with TestClient(app) as client:
-        denied_origin = client.get(
-            "/api/health", headers={"Origin": "http://attacker.test"}
-        )
-        allowed_origin = client.get(
-            "/api/health", headers={"Origin": "http://operator.test"}
-        )
+        denied_origin = client.get("/api/health", headers={"Origin": "http://attacker.test"})
+        allowed_origin = client.get("/api/health", headers={"Origin": "http://operator.test"})
         oversized = client.post(
             "/api/conversations",
-            content=b'{' + b'"workspace_root":"' + (b"x" * 80) + b'"}',
+            content=b"{" + b'"workspace_root":"' + (b"x" * 80) + b'"}',
             headers={"Content-Type": "application/json"},
         )
         asset = client.get("/assets/app.js")

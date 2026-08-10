@@ -98,9 +98,7 @@ class ContextBuilder:
                 raise ContextBudgetExceeded("system, tool schemas, and current turn exceed budget")
             dropped.append(remaining.pop(0).turn_id)
 
-    def _render(
-        self, system: str, turns: Sequence[ContextTurn]
-    ) -> tuple[ModelMessage, ...]:
+    def _render(self, system: str, turns: Sequence[ContextTurn]) -> tuple[ModelMessage, ...]:
         messages = [ModelMessage(role=ModelRole.SYSTEM, content=system)]
         seen_payloads: dict[str, CanonicalHistoryEntry] = {}
         for turn in turns:
@@ -135,9 +133,7 @@ def _entry_message(
             if original is None:
                 seen_payloads[digest] = entry
             else:
-                rendered["data"] = {
-                    "$ref": {"entry_id": original.id, "sha256": digest}
-                }
+                rendered["data"] = {"$ref": {"entry_id": original.id, "sha256": digest}}
         return ModelMessage(
             role=ModelRole.TOOL,
             content=_json_text(rendered),

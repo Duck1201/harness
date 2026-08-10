@@ -48,9 +48,7 @@ def _catalog():  # pyright: ignore[reportUnknownParameterType, reportMissingRetu
 def test_contract_runner_uses_real_executor_for_deterministic_fixture() -> None:
     async def scenario() -> None:
         fixture = next(
-            item
-            for item in _catalog().dataset.fixtures
-            if item.id == "reject_absolute_file_path"
+            item for item in _catalog().dataset.fixtures if item.id == "reject_absolute_file_path"
         )
         runner = ContractCaseRunner(registry=load_config().tool_registry)
 
@@ -84,9 +82,7 @@ def test_contract_runner_executes_all_required_deterministic_fixture_types() -> 
             "privacy_gate",
         }
         fixtures = [
-            fixture
-            for fixture in _catalog().dataset.fixtures
-            if fixture.type in required_types
+            fixture for fixture in _catalog().dataset.fixtures if fixture.type in required_types
         ]
 
         assert {fixture.type for fixture in fixtures} == required_types
@@ -117,11 +113,7 @@ def test_missing_model_runner_blocks_without_simulated_cases(tmp_path: Path) -> 
             store=EvalStore(tmp_path / "evals.sqlite3"),
             catalog=_catalog(),
             lease=BenchmarkLease(),
-            runners={
-                EvalTier.CONTRACT: ContractCaseRunner(
-                    registry=load_config().tool_registry
-                )
-            },
+            runners={EvalTier.CONTRACT: ContractCaseRunner(registry=load_config().tool_registry)},
         )
         await service.initialize()
         run = await service.create_run(

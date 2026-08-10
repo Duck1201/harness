@@ -34,11 +34,7 @@ def wilson_interval(successes: int, total: int) -> ConfidenceInterval:
     denominator = 1 + z * z / total
     center = (estimate + z * z / (2 * total)) / denominator
     radius = (
-        z
-        * math.sqrt(
-            estimate * (1 - estimate) / total + z * z / (4 * total * total)
-        )
-        / denominator
+        z * math.sqrt(estimate * (1 - estimate) / total + z * z / (4 * total * total)) / denominator
     )
     return ConfidenceInterval(
         estimate=estimate,
@@ -63,8 +59,7 @@ def paired_bootstrap_difference(
     estimate = sum(differences) / pair_count
     generator = random.Random(seed)
     draws = sorted(
-        sum(differences[generator.randrange(pair_count)] for _ in range(pair_count))
-        / pair_count
+        sum(differences[generator.randrange(pair_count)] for _ in range(pair_count)) / pair_count
         for _ in range(samples)
     )
     lower_index = max(0, math.floor(0.025 * (samples - 1)))

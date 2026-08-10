@@ -85,9 +85,7 @@ class ConversationStore:
     async def get_conversation(self, conversation_id: str) -> Conversation:
         return await asyncio.to_thread(self._get_conversation, conversation_id)
 
-    async def list_conversations(
-        self, *, include_archived: bool = False
-    ) -> list[Conversation]:
+    async def list_conversations(self, *, include_archived: bool = False) -> list[Conversation]:
         return await asyncio.to_thread(self._list_conversations, include_archived)
 
     async def rename_conversation(self, conversation_id: str, name: str) -> Conversation:
@@ -96,9 +94,7 @@ class ConversationStore:
     async def set_conversation_archived(
         self, conversation_id: str, *, archived: bool
     ) -> Conversation:
-        return await asyncio.to_thread(
-            self._set_conversation_archived, conversation_id, archived
-        )
+        return await asyncio.to_thread(self._set_conversation_archived, conversation_id, archived)
 
     async def delete_conversation(self, conversation_id: str) -> None:
         await asyncio.to_thread(self._delete_conversation, conversation_id)
@@ -473,9 +469,7 @@ class ConversationStore:
                     "ALTER TABLE conversations ADD COLUMN name TEXT NOT NULL "
                     "DEFAULT 'New conversation'"
                 )
-                connection.execute(
-                    "ALTER TABLE conversations ADD COLUMN archived_at TEXT"
-                )
+                connection.execute("ALTER TABLE conversations ADD COLUMN archived_at TEXT")
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (5, ?)",
                     (_serialize_datetime(_utcnow()),),
@@ -593,9 +587,7 @@ class ConversationStore:
             raise NotFoundError(f"conversation not found: {conversation_id}")
         return _conversation_from_row(row)
 
-    def _set_conversation_archived(
-        self, conversation_id: str, archived: bool
-    ) -> Conversation:
+    def _set_conversation_archived(self, conversation_id: str, archived: bool) -> Conversation:
         now = _utcnow()
         with self._connect() as connection:
             cursor = connection.execute(
@@ -766,9 +758,7 @@ class ConversationStore:
         with self._connect() as connection:
             return _request_from_row(_require_request(connection, request_id))
 
-    def _start_next_turn(
-        self, conversation_id: str, base_seed: int | None
-    ) -> Turn | None:
+    def _start_next_turn(self, conversation_id: str, base_seed: int | None) -> Turn | None:
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -858,9 +848,7 @@ class ConversationStore:
                     """,
                     (_serialize_datetime(now), str(row["id"])),
                 )
-            recovered = [
-                _turn_from_row(_require_turn(connection, str(row["id"]))) for row in rows
-            ]
+            recovered = [_turn_from_row(_require_turn(connection, str(row["id"]))) for row in rows]
             connection.commit()
             return recovered
         except BaseException:
@@ -1354,9 +1342,7 @@ def _conversation_from_row(row: sqlite3.Row) -> Conversation:
         updated_at=_parse_datetime(str(row["updated_at"])),
         last_active_at=_parse_datetime(str(row["last_active_at"])),
         name=str(row["name"]),
-        archived_at=(
-            _parse_datetime(str(archived_at)) if archived_at is not None else None
-        ),
+        archived_at=(_parse_datetime(str(archived_at)) if archived_at is not None else None),
     )
 
 

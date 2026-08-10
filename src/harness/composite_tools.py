@@ -40,9 +40,7 @@ class CompositeToolExecutor:
                     detail="No executor is registered for the requested tool.",
                 )
                 continue
-            child_index = next(
-                index for index, child in enumerate(children) if child is executor
-            )
+            child_index = next(index for index, child in enumerate(children) if child is executor)
             batches[child_index].append(call)
 
         results = await asyncio.gather(

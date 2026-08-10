@@ -64,9 +64,7 @@ class AgentEngine:
             raise ValueError("tool call limits must be positive")
         if max_turn_duration_seconds <= 0:
             raise ValueError("max_turn_duration_seconds must be positive")
-        if seed is not None and (
-            seed < 0 or seed + max_model_invocations - 1 > 2**63 - 1
-        ):
+        if seed is not None and (seed < 0 or seed + max_model_invocations - 1 > 2**63 - 1):
             raise ValueError("seed range must fit in a non-negative signed 64-bit integer")
         if (tool_executor is None) == (tool_executor_factory is None):
             raise ValueError("provide exactly one tool executor or tool executor factory")
@@ -106,9 +104,7 @@ class AgentEngine:
         return turn
 
     async def start_next_turn(self, conversation_id: str) -> Turn | None:
-        turn = await self._store.start_next_turn(
-            conversation_id, base_seed=self._seed
-        )
+        turn = await self._store.start_next_turn(conversation_id, base_seed=self._seed)
         if turn is None:
             return None
         loop = asyncio.get_running_loop()
@@ -168,9 +164,7 @@ class AgentEngine:
             if _deadline_reached(deadline):
                 return await self._finish_time_limit(turn)
             if self._stop_signal.stop_requested:
-                return await self._finish(
-                    turn, TerminalOutcomeKind.CANCELLED, "operator_stop"
-                )
+                return await self._finish(turn, TerminalOutcomeKind.CANCELLED, "operator_stop")
             await self._emit(
                 AgentEvent(
                     kind=AgentEventKind.STEP_STARTED,
@@ -225,9 +219,7 @@ class AgentEngine:
                 continue
 
             if self._stop_signal.stop_requested:
-                return await self._finish(
-                    turn, TerminalOutcomeKind.CANCELLED, "operator_stop"
-                )
+                return await self._finish(turn, TerminalOutcomeKind.CANCELLED, "operator_stop")
             if _deadline_reached(deadline):
                 await self._emit_step_finished(turn, step_sequence)
                 return await self._finish_time_limit(turn)
@@ -302,9 +294,7 @@ class AgentEngine:
 
             calls = response.tool_calls
             if tool_call_count + len(calls) > self._max_tool_calls_per_turn:
-                await self._store.append_agent_step(
-                    turn.id, seed=step_seed, tool_calls=calls
-                )
+                await self._store.append_agent_step(turn.id, seed=step_seed, tool_calls=calls)
                 await self._emit_step_finished(turn, step_sequence)
                 return await self._finish(
                     turn,
@@ -313,12 +303,8 @@ class AgentEngine:
                 )
 
             if _requires_web_taint_confirmation(calls, context):
-                await self._append_blocked_automation(
-                    turn, "web_taint_confirmation_required"
-                )
-                await self._store.append_agent_step(
-                    turn.id, seed=step_seed, tool_calls=calls
-                )
+                await self._append_blocked_automation(turn, "web_taint_confirmation_required")
+                await self._store.append_agent_step(turn.id, seed=step_seed, tool_calls=calls)
                 await self._emit_step_finished(turn, step_sequence)
                 return await self._finalize_blocked(
                     turn,
@@ -329,9 +315,7 @@ class AgentEngine:
 
             tool_executor = await self._tool_executor_factory.create(turn.conversation_id)
             if self._stop_signal.stop_requested:
-                return await self._finish(
-                    turn, TerminalOutcomeKind.CANCELLED, "operator_stop"
-                )
+                return await self._finish(turn, TerminalOutcomeKind.CANCELLED, "operator_stop")
             if _deadline_reached(deadline):
                 return await self._finish_time_limit(turn)
             preflight = await tool_executor.preflight(calls)
@@ -343,9 +327,7 @@ class AgentEngine:
                     preflight.reason_code or "tool_batch_blocked",
                     detail=preflight.detail,
                 )
-                await self._store.append_agent_step(
-                    turn.id, seed=step_seed, tool_calls=calls
-                )
+                await self._store.append_agent_step(turn.id, seed=step_seed, tool_calls=calls)
                 await self._emit_step_finished(turn, step_sequence)
                 return await self._finalize_blocked(
                     turn,
@@ -358,9 +340,7 @@ class AgentEngine:
             results: list[ToolResult] = []
             for call in calls:
                 if self._stop_signal.stop_requested:
-                    return await self._finish(
-                        turn, TerminalOutcomeKind.CANCELLED, "operator_stop"
-                    )
+                    return await self._finish(turn, TerminalOutcomeKind.CANCELLED, "operator_stop")
                 if _deadline_reached(deadline):
                     return await self._finish_time_limit(turn)
                 result = await tool_executor.execute(call)
@@ -422,9 +402,7 @@ class AgentEngine:
             or self._stop_signal.stop_requested
             or _deadline_reached(deadline)
         ):
-            return await self._finish(
-                turn, TerminalOutcomeKind.BLOCKED, reason_code, detail=detail
-            )
+            return await self._finish(turn, TerminalOutcomeKind.BLOCKED, reason_code, detail=detail)
 
         step_sequence = blocked_step_sequence + 1
         step_seed = turn.base_seed + step_sequence - 1
@@ -442,14 +420,10 @@ class AgentEngine:
             context = await self._build_context(turn, ())
         except ContextBudgetExceeded:
             await self._emit_step_finished(turn, step_sequence)
-            return await self._finish(
-                turn, TerminalOutcomeKind.BLOCKED, reason_code, detail=detail
-            )
+            return await self._finish(turn, TerminalOutcomeKind.BLOCKED, reason_code, detail=detail)
         if _deadline_reached(deadline):
             await self._emit_step_finished(turn, step_sequence)
-            return await self._finish(
-                turn, TerminalOutcomeKind.BLOCKED, reason_code, detail=detail
-            )
+            return await self._finish(turn, TerminalOutcomeKind.BLOCKED, reason_code, detail=detail)
 
         request = ModelRequest(
             messages=context.messages,
@@ -470,14 +444,10 @@ class AgentEngine:
             )
             await self._store.append_agent_step(turn.id, seed=step_seed)
             await self._emit_step_finished(turn, step_sequence)
-            return await self._finish(
-                turn, TerminalOutcomeKind.BLOCKED, reason_code, detail=detail
-            )
+            return await self._finish(turn, TerminalOutcomeKind.BLOCKED, reason_code, detail=detail)
         except Exception:
             await self._emit_step_finished(turn, step_sequence)
-            return await self._finish(
-                turn, TerminalOutcomeKind.BLOCKED, reason_code, detail=detail
-            )
+            return await self._finish(turn, TerminalOutcomeKind.BLOCKED, reason_code, detail=detail)
 
         if _deadline_reached(deadline):
             await self._emit_step_finished(turn, step_sequence)
@@ -489,15 +459,11 @@ class AgentEngine:
             CanonicalHistoryEntryKind.MODEL_ATTEMPT,
             _model_attempt_payload(response),
         )
-        await self._store.append_agent_step(
-            turn.id, seed=step_seed, tool_calls=response.tool_calls
-        )
+        await self._store.append_agent_step(turn.id, seed=step_seed, tool_calls=response.tool_calls)
         if response.content is not None:
             await self._append_final_response(turn, step_sequence, response.content)
         await self._emit_step_finished(turn, step_sequence)
-        return await self._finish(
-            turn, TerminalOutcomeKind.BLOCKED, reason_code, detail=detail
-        )
+        return await self._finish(turn, TerminalOutcomeKind.BLOCKED, reason_code, detail=detail)
 
     async def _finish_time_limit(self, turn: Turn) -> Turn:
         return await self._finish(
@@ -524,9 +490,7 @@ class AgentEngine:
             },
         )
 
-    async def _build_context(
-        self, turn: Turn, offered_tools: Sequence[ToolSchema]
-    ) -> ModelContext:
+    async def _build_context(self, turn: Turn, offered_tools: Sequence[ToolSchema]) -> ModelContext:
         history = await self._store.list_canonical_history(turn.conversation_id)
         grouped: dict[str, list[CanonicalHistoryEntry]] = {}
         for entry in history:
@@ -543,9 +507,7 @@ class AgentEngine:
             current_turn=current,
         )
 
-    async def _append_final_response(
-        self, turn: Turn, step_sequence: int, content: str
-    ) -> None:
+    async def _append_final_response(self, turn: Turn, step_sequence: int, content: str) -> None:
         await self._store.append_canonical_history(
             turn.id,
             CanonicalHistoryEntryKind.FINAL_RESPONSE,
@@ -645,9 +607,7 @@ def _tool_call_payload(call: ToolCall) -> Mapping[str, JsonValue]:
     }
 
 
-def _tool_result_payload(
-    call: ToolCall, result: ToolResult
-) -> Mapping[str, JsonValue]:
+def _tool_result_payload(call: ToolCall, result: ToolResult) -> Mapping[str, JsonValue]:
     return {
         "tool_call_id": result.tool_call_id,
         "tool_name": call.name,
@@ -669,9 +629,7 @@ def _malformed_payload(error: MalformedModelResponseError) -> Mapping[str, JsonV
     return payload
 
 
-def _oversized_batch_payload(
-    response: ModelResponse, limit: int
-) -> Mapping[str, JsonValue]:
+def _oversized_batch_payload(response: ModelResponse, limit: int) -> Mapping[str, JsonValue]:
     return {
         **_model_attempt_payload(response),
         "error": {
@@ -707,9 +665,7 @@ def _tool_error_code(result: ToolResult) -> str | None:
     return code if isinstance(code, str) else None
 
 
-def _requires_web_taint_confirmation(
-    calls: Sequence[ToolCall], context: ModelContext
-) -> bool:
+def _requires_web_taint_confirmation(calls: Sequence[ToolCall], context: ModelContext) -> bool:
     return "UntrustedWebTaint" in context.taints and any(
         call.name in {"write_file", "edit"} for call in calls
     )
@@ -720,17 +676,13 @@ def _deadline_reached(deadline: float) -> bool:
 
 
 class _StaticToolExecutorFactory:
-    def __init__(
-        self, executor: ToolExecutor | None, tool_schemas: Sequence[ToolSchema]
-    ) -> None:
+    def __init__(self, executor: ToolExecutor | None, tool_schemas: Sequence[ToolSchema]) -> None:
         if executor is None:
             raise ValueError("tool executor is required")
         self._executor = executor
         self._tool_schemas = tuple(tool_schemas)
 
-    async def effective_tool_schemas(
-        self, conversation_id: str
-    ) -> tuple[ToolSchema, ...]:
+    async def effective_tool_schemas(self, conversation_id: str) -> tuple[ToolSchema, ...]:
         del conversation_id
         return self._tool_schemas
 

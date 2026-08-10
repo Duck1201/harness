@@ -168,11 +168,7 @@ def create_app(
             setup_controller = SetupController(
                 host_store,
                 credential_store=credential_store,
-                reopen=(
-                    _setup_reopen_requested()
-                    if reopen_setup is None
-                    else reopen_setup
-                ),
+                reopen=(_setup_reopen_requested() if reopen_setup is None else reopen_setup),
                 token=setup_token,
                 ttl_seconds=setup_ttl_seconds,
             )
@@ -203,9 +199,7 @@ def create_app(
     app.add_middleware(_OriginAllowlistMiddleware, allowed_origins=origins)
 
     @app.exception_handler(ApplicationServiceError)
-    async def application_error(
-        request: Request, error: ApplicationServiceError
-    ) -> JSONResponse:
+    async def application_error(request: Request, error: ApplicationServiceError) -> JSONResponse:
         del request
         return JSONResponse(
             status_code=error.status_code,
@@ -229,9 +223,7 @@ def create_app(
         )
 
     @app.exception_handler(EvalServiceError)
-    async def eval_service_error(
-        request: Request, error: EvalServiceError
-    ) -> JSONResponse:
+    async def eval_service_error(request: Request, error: EvalServiceError) -> JSONResponse:
         del request
         return JSONResponse(
             status_code=422,
@@ -331,9 +323,7 @@ def create_app(
         conversations = await application_service.list_conversations(
             include_archived=include_archived
         )
-        return {
-            "conversations": [_conversation_json(item) for item in conversations]
-        }
+        return {"conversations": [_conversation_json(item) for item in conversations]}
 
     @app.get("/api/conversations/{conversation_id}")
     async def get_conversation(conversation_id: str) -> dict[str, Any]:
@@ -357,9 +347,7 @@ def create_app(
         return Response(status_code=204)
 
     @app.post("/api/conversations/{conversation_id}/requests", status_code=202)
-    async def enqueue_request(
-        conversation_id: str, payload: RequestContent
-    ) -> dict[str, Any]:
+    async def enqueue_request(conversation_id: str, payload: RequestContent) -> dict[str, Any]:
         pending = await application_service.enqueue_request(conversation_id, payload.content)
         return {"request": _pending_request_json(pending)}
 
@@ -375,9 +363,7 @@ def create_app(
         return {"request": _pending_request_json(pending)}
 
     @app.delete("/api/conversations/{conversation_id}/requests/{request_id}")
-    async def cancel_request(
-        conversation_id: str, request_id: str
-    ) -> dict[str, Any]:
+    async def cancel_request(conversation_id: str, request_id: str) -> dict[str, Any]:
         pending = await application_service.cancel_pending_request(conversation_id, request_id)
         return {"request": _pending_request_json(pending)}
 
@@ -387,15 +373,11 @@ def create_app(
         return {"grants": [_grant_json(grant) for grant in grants]}
 
     @app.post("/api/conversations/{conversation_id}/grants", status_code=201)
-    async def grant(
-        conversation_id: str, payload: GrantRequest
-    ) -> dict[str, Any]:
+    async def grant(conversation_id: str, payload: GrantRequest) -> dict[str, Any]:
         created = await application_service.grant(conversation_id, payload.permission)
         return {"grant": _grant_json(created)}
 
-    @app.delete(
-        "/api/conversations/{conversation_id}/grants/{grant_id}", status_code=204
-    )
+    @app.delete("/api/conversations/{conversation_id}/grants/{grant_id}", status_code=204)
     async def revoke_grant(conversation_id: str, grant_id: str) -> Response:
         await application_service.revoke_grant(conversation_id, grant_id)
         return Response(status_code=204)
@@ -406,9 +388,7 @@ def create_app(
         return {"stop_requested": True}
 
     @app.post("/api/conversations/{conversation_id}/feedback", status_code=201)
-    async def feedback(
-        conversation_id: str, payload: FeedbackRequest
-    ) -> dict[str, Any]:
+    async def feedback(conversation_id: str, payload: FeedbackRequest) -> dict[str, Any]:
         recorded = await application_service.add_feedback(
             conversation_id,
             rating=payload.rating,
@@ -523,9 +503,7 @@ def create_app(
         return {
             "mutable": False,
             "setup_required": status.required if status is not None else False,
-            "restart_required": (
-                status.restart_required if status is not None else False
-            ),
+            "restart_required": (status.restart_required if status is not None else False),
             "default_execution_route": application_service.config.default_execution_route,
             "runtime_profile": application_service.config.runtime_profile.id,
             "loop": application_service.config.loop.model_dump(mode="json"),
@@ -638,11 +616,7 @@ def _default_service(
     state_dir = (
         Path(state_override).expanduser().resolve(strict=False)
         if state_override is not None
-        else (
-            host_config.state_dir
-            if host_config is not None
-            else _default_state_dir()
-        )
+        else (host_config.state_dir if host_config is not None else _default_state_dir())
     )
     state_dir.mkdir(parents=True, exist_ok=True)
     roots_override = os.environ.get("HARNESS_WORKSPACE_ROOTS")
@@ -653,17 +627,13 @@ def _default_service(
             if value
         )
     else:
-        roots = (
-            host_config.allowed_workspace_roots if host_config is not None else ()
-        )
+        roots = host_config.allowed_workspace_roots if host_config is not None else ()
     tokenizer_override = os.environ.get("HARNESS_TOKENIZER_PATH")
     tokenizer_path = (
         Path(tokenizer_override).expanduser().resolve(strict=False)
         if tokenizer_override is not None
         else (
-            host_config.tokenizer_path
-            if host_config is not None
-            else state_dir / "tokenizer.json"
+            host_config.tokenizer_path if host_config is not None else state_dir / "tokenizer.json"
         )
     )
     digest_override = os.environ.get("HARNESS_TOKENIZER_SHA256")
@@ -691,9 +661,7 @@ def _default_service(
         brave_api_key=load_brave_api_key(
             credential_store=selected_credential_store,
             credential_reference=(
-                host_config.brave_credential_ref
-                if host_config is not None
-                else None
+                host_config.brave_credential_ref if host_config is not None else None
             ),
         ),
     )
@@ -709,8 +677,7 @@ def _is_direct_loopback(request: Request) -> bool:
     except ValueError:
         return False
     return not any(
-        header in {"forwarded", "via", "x-real-ip"}
-        or header.startswith("x-forwarded-")
+        header in {"forwarded", "via", "x-real-ip"} or header.startswith("x-forwarded-")
         for header in request.headers
     )
 
@@ -798,9 +765,7 @@ def _conversation_json(conversation: Conversation) -> dict[str, Any]:
     payload["updated_at"] = conversation.updated_at.isoformat()
     payload["last_active_at"] = conversation.last_active_at.isoformat()
     payload["archived_at"] = (
-        conversation.archived_at.isoformat()
-        if conversation.archived_at is not None
-        else None
+        conversation.archived_at.isoformat() if conversation.archived_at is not None else None
     )
     return payload
 
@@ -873,9 +838,7 @@ def _feedback_json(feedback: Feedback) -> dict[str, Any]:
     }
 
 
-async def _eval_run_detail(
-    service: ApplicationService, run_id: str
-) -> dict[str, Any]:
+async def _eval_run_detail(service: ApplicationService, run_id: str) -> dict[str, Any]:
     run = await service.eval_service.status(run_id)
     arms = await service.eval_service.store.list_arms(run_id)
     cases = await service.eval_service.store.list_cases(run_id)
@@ -938,9 +901,7 @@ def _eval_case_json(case: EvalCase) -> dict[str, Any]:
         "order_index": case.order_index,
         "verdict": case.verdict.value,
         "terminal_outcome_kind": (
-            case.terminal_outcome_kind.value
-            if case.terminal_outcome_kind is not None
-            else None
+            case.terminal_outcome_kind.value if case.terminal_outcome_kind is not None else None
         ),
         "terminal_outcome_reason": case.terminal_outcome_reason,
         "security_violations": case.security_violations,
@@ -971,9 +932,7 @@ def _regression_draft_json(draft: RegressionDraft) -> dict[str, Any]:
 
 
 class _OriginAllowlistMiddleware:
-    def __init__(
-        self, app: ASGIApp, *, allowed_origins: frozenset[str]
-    ) -> None:
+    def __init__(self, app: ASGIApp, *, allowed_origins: frozenset[str]) -> None:
         self._app = app
         self._allowed_origins = allowed_origins
 

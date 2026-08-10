@@ -250,9 +250,7 @@ def _chat_request(model: str, request: ModelRequest) -> OllamaChatRequest:
 
 def _message(message: ModelMessage) -> OllamaMessage:
     calls = tuple(
-        OllamaToolCall(
-            function=OllamaFunction(name=call.name, arguments=call.arguments)
-        )
+        OllamaToolCall(function=OllamaFunction(name=call.name, arguments=call.arguments))
         for call in message.tool_calls
     )
     return OllamaMessage(

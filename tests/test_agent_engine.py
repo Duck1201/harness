@@ -33,9 +33,7 @@ from harness import (
 class FakeEstimator:
     validated = True
 
-    def estimate(
-        self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]
-    ) -> int:
+    def estimate(self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]) -> int:
         return len(messages) + len(tools)
 
 
@@ -220,9 +218,7 @@ def test_internal_turn_timeout_is_not_reported_as_cancellation(tmp_path: Path) -
 
 def test_context_budget_exceeded_fails_the_turn(tmp_path: Path) -> None:
     class OversizedEstimator(FakeEstimator):
-        def estimate(
-            self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]
-        ) -> int:
+        def estimate(self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]) -> int:
             del messages, tools
             return 1_000_000
 
@@ -339,8 +335,7 @@ def test_oversized_tool_batch_is_rejected_once_and_can_be_corrected(tmp_path: Pa
     async def scenario() -> None:
         store, conversation_id = await conversation_store(tmp_path)
         oversized = tuple(
-            ToolCall(id=f"call-{index}", name="fake_tool", arguments={})
-            for index in range(5)
+            ToolCall(id=f"call-{index}", name="fake_tool", arguments={}) for index in range(5)
         )
         runtime = FakeRuntime(
             [
@@ -370,8 +365,7 @@ def test_oversized_tool_batch_is_rejected_once_and_can_be_corrected(tmp_path: Pa
         }
         corrective_messages = runtime.requests[1].messages
         assert any(
-            "tool_calls_per_step_limit" in message.content
-            and message.tool_calls == ()
+            "tool_calls_per_step_limit" in message.content and message.tool_calls == ()
             for message in corrective_messages
         )
 
@@ -396,9 +390,9 @@ def test_second_oversized_tool_batch_reaches_rejected_attempt_limit(tmp_path: Pa
         ]
         executor = FakeToolExecutor()
 
-        finished = await engine(
-            store, FakeRuntime(responses), executor, FakeEventSink()
-        ).run(conversation_id, "reject twice")
+        finished = await engine(store, FakeRuntime(responses), executor, FakeEventSink()).run(
+            conversation_id, "reject twice"
+        )
 
         assert finished.terminal_outcome is not None
         assert finished.terminal_outcome.kind is TerminalOutcomeKind.FAILED
@@ -419,9 +413,7 @@ def test_first_malformed_response_on_final_invocation_keeps_limit_outcome(
         store, conversation_id = await conversation_store(tmp_path)
         runtime = FakeRuntime(
             [
-                ModelResponse(
-                    tool_calls=(ToolCall(id="call-1", name="fake_tool", arguments={}),)
-                ),
+                ModelResponse(tool_calls=(ToolCall(id="call-1", name="fake_tool", arguments={}),)),
                 MalformedModelResponseError("invalid final response"),
             ]
         )
@@ -464,8 +456,7 @@ def test_blocked_preflight_finishes_without_executing_any_tool(tmp_path: Path) -
         assert len(runtime.requests) == 2
         assert runtime.requests[-1].tools == ()
         assert any(
-            "write_grant_required" in message.content
-            for message in runtime.requests[-1].messages
+            "write_grant_required" in message.content for message in runtime.requests[-1].messages
         )
         assert finished.terminal_outcome is not None
         assert finished.terminal_outcome.kind is TerminalOutcomeKind.BLOCKED
@@ -557,9 +548,9 @@ def test_blocked_tool_result_gets_one_final_invocation_without_tools(tmp_path: P
             [ModelResponse(tool_calls=(call,)), ModelResponse(content="blocked final")]
         )
 
-        finished = await engine(
-            store, runtime, BlockingExecutor(), FakeEventSink()
-        ).run(conversation_id, "blocked result")
+        finished = await engine(store, runtime, BlockingExecutor(), FakeEventSink()).run(
+            conversation_id, "blocked result"
+        )
 
         assert finished.terminal_outcome is not None
         assert finished.terminal_outcome.kind is TerminalOutcomeKind.BLOCKED
@@ -615,10 +606,7 @@ def test_web_taint_blocks_write_before_executor_and_finalizes_without_tools(
 
         assert finished.terminal_outcome is not None
         assert finished.terminal_outcome.kind is TerminalOutcomeKind.BLOCKED
-        assert (
-            finished.terminal_outcome.reason_code
-            == "web_taint_confirmation_required"
-        )
+        assert finished.terminal_outcome.reason_code == "web_taint_confirmation_required"
         assert executor.preflight_batches == [(web_call,)]
         assert executor.executed == [web_call]
         assert len(runtime.requests) == 3
@@ -677,9 +665,7 @@ def test_tool_executor_is_recreated_each_step_to_observe_revocation(tmp_path: Pa
             self.executors.append(executor)
             return executor
 
-        async def effective_tool_schemas(
-            self, conversation_id: str
-        ) -> tuple[ToolSchema, ...]:
+        async def effective_tool_schemas(self, conversation_id: str) -> tuple[ToolSchema, ...]:
             del conversation_id
             return (ToolSchema("fake_tool", "A fake tool", {"type": "object"}),)
 
@@ -741,9 +727,7 @@ def test_tool_schema_snapshot_observes_grants_activated_and_revoked_between_step
             self.snapshots: list[tuple[str, ...]] = []
             self.executor = FakeToolExecutor()
 
-        async def effective_tool_schemas(
-            self, conversation_id: str
-        ) -> tuple[ToolSchema, ...]:
+        async def effective_tool_schemas(self, conversation_id: str) -> tuple[ToolSchema, ...]:
             del conversation_id
             schemas = [ToolSchema("fake_tool", "read", {"type": "object"})]
             if self.write_allowed:

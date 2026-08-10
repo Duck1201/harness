@@ -35,9 +35,7 @@ class BenchmarkLease:
         async with self._condition:
             if chat_id in self._active_chats:
                 raise BenchmarkLeaseError(f"chat already active: {chat_id}")
-            await self._condition.wait_for(
-                lambda: self._owner is None and not self._waiting
-            )
+            await self._condition.wait_for(lambda: self._owner is None and not self._waiting)
             self._active_chats.add(chat_id)
 
     async def leave_chat(self, chat_id: str) -> None:
@@ -59,11 +57,13 @@ class BenchmarkLease:
             self._condition.notify_all()
             try:
                 await self._condition.wait_for(
-                    lambda: run_id in self._canceled
-                    or (
-                        self._owner is None
-                        and not self._active_chats
-                        and self._waiting[0] == run_id
+                    lambda: (
+                        run_id in self._canceled
+                        or (
+                            self._owner is None
+                            and not self._active_chats
+                            and self._waiting[0] == run_id
+                        )
                     )
                 )
             except asyncio.CancelledError:

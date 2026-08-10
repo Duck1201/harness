@@ -54,9 +54,7 @@ class SetupController:
         if ttl_seconds <= 0:
             raise ValueError("setup token TTL must be positive")
         self._host_store = host_store
-        self._credential_store = credential_store or CredentialStore(
-            host_store.credentials_path
-        )
+        self._credential_store = credential_store or CredentialStore(host_store.credentials_path)
         self._now = now or _utc_now
         current = self._now()
         if current.tzinfo is None:
@@ -65,9 +63,7 @@ class SetupController:
         self._active = reopen or not self._configured
         self._restart_required = False
         self._token = token or secrets.token_urlsafe(32) if self._active else None
-        self._expires_at = (
-            current + timedelta(seconds=ttl_seconds) if self._active else None
-        )
+        self._expires_at = current + timedelta(seconds=ttl_seconds) if self._active else None
         self._lock = Lock()
 
     @property
@@ -115,9 +111,7 @@ class SetupController:
                 "The setup token has expired.",
                 status_code=410,
             )
-        if supplied_token is None or not hmac.compare_digest(
-            supplied_token, self._token
-        ):
+        if supplied_token is None or not hmac.compare_digest(supplied_token, self._token):
             raise SetupError(
                 "invalid_setup_token",
                 "The setup token is invalid.",
@@ -199,9 +193,7 @@ def _validated_config(submission: SetupSubmission) -> tuple[HostConfig, str | No
             tokenizer_digest=expected_digest,
             state_dir=submission.state_dir,
             allowed_origins=origins,
-            brave_credential_ref=(
-                "brave_api_key" if brave_api_key is not None else None
-            ),
+            brave_credential_ref=("brave_api_key" if brave_api_key is not None else None),
         )
     except ValueError as error:
         raise SetupError(
