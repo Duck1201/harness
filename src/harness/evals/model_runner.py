@@ -167,6 +167,7 @@ class BrowserBenchCaseRunner:
         evaluation = evaluate_oracle(
             spec.fixture.oracle.typed_assertions,
             evidence,
+            tool_effects=self._registry.effects_by_tool,
         )
         return CaseRunResult(
             evidence=evidence,
@@ -216,6 +217,7 @@ class BrowserBenchCaseRunner:
         evaluation = evaluate_oracle(
             spec.fixture.oracle.typed_assertions,
             evidence,
+            tool_effects=self._registry.effects_by_tool,
         )
         return CaseRunResult(
             evidence=evidence,
@@ -301,6 +303,8 @@ class ModelCaseRunner:
                     max_model_invocations=self._config.loop.max_steps,
                     max_tool_calls_per_step=self._config.loop.max_tool_calls_per_step,
                     max_tool_calls_per_turn=self._config.loop.max_tool_calls_per_turn,
+                    max_read_calls_per_turn=self._config.loop.max_read_calls_per_turn,
+                    tool_effects=self._config.tool_registry.effects_by_tool,
                     max_turn_duration_seconds=self._config.loop.max_turn_duration_seconds,
                     runtime_readiness=self._runtime_readiness,
                 )
@@ -333,6 +337,7 @@ class ModelCaseRunner:
                 spec.fixture.oracle.typed_assertions,
                 evidence,
                 language_detector=self._language_detector,
+                tool_effects=self._config.tool_registry.effects_by_tool,
             )
             return CaseRunResult(
                 evidence=evidence,

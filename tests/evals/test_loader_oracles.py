@@ -138,6 +138,48 @@ def test_typed_oracles_are_deterministic_and_task_verdict_is_separate(
     assert failed.verdict is TaskVerdict.FAIL
 
 
+def test_max_tool_calls_can_be_scoped_to_one_effect_class() -> None:
+    def success(call_id: str) -> ToolResult:
+        return ToolResult(
+            tool_call_id=call_id,
+            status=ToolResultStatus.SUCCESS,
+            retryable=False,
+            data={"value": call_id},
+            error=None,
+            meta={"producer": "harness", "truncated": False, "taints": []},
+        )
+
+    evidence = EvalEvidence(
+        tool_calls=(
+            ToolCall(id="c1", name="grep_search", arguments={"pattern": "TODO"}),
+            ToolCall(id="c2", name="read_file", arguments={"file_path": "src/app.js"}),
+            ToolCall(id="c3", name="write_file", arguments={"file_path": "out.txt"}),
+        ),
+        tool_results=(success("c1"), success("c2"), success("c3")),
+    )
+    effects = {
+        "grep_search": ("workspace_read",),
+        "read_file": ("workspace_read",),
+        "write_file": ("workspace_write",),
+    }
+
+    # Three calls in total, but only one of them changes anything.
+    reads = [{"operator": "max_tool_calls", "maximum": 2, "effect": "workspace_read"}]
+    writes = [{"operator": "max_tool_calls", "maximum": 1, "effect": "workspace_write"}]
+    assert evaluate_oracle(reads, evidence, tool_effects=effects).verdict is TaskVerdict.PASS
+    assert evaluate_oracle(writes, evidence, tool_effects=effects).verdict is TaskVerdict.PASS
+    assert evaluate_oracle(
+        [{**writes[0], "maximum": 0}], evidence, tool_effects=effects
+    ).verdict is (TaskVerdict.FAIL)
+    # Unscoped still counts everything, which is the loop bound.
+    assert (
+        evaluate_oracle([{"operator": "max_tool_calls", "maximum": 2}], evidence).verdict
+        is TaskVerdict.FAIL
+    )
+    # Effects live in the registry: without it the claim is unreadable, not refuted.
+    assert evaluate_oracle(reads, evidence).verdict is TaskVerdict.INCONCLUSIVE
+
+
 def test_result_data_contains_reads_the_payload_and_not_only_the_envelope() -> None:
     def search_result(matches: list[JsonValue]) -> ToolResult:
         return ToolResult(

@@ -64,6 +64,7 @@
     "max_steps": 15,
     "max_tool_calls_per_step": 4,
     "max_tool_calls_per_turn": 20,
+    "max_read_calls_per_turn": 40,
     "max_turn_duration_seconds": 900,
     "max_output_tokens": 8192,
     "stream_tool_calls": false,

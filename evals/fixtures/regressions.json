@@ -2,7 +2,7 @@
   "schema_version": 2,
   "dataset_id": "harness_2_contract_regressions",
   "dataset_version": "3.0.0",
-  "dataset_digest_sha256": "becbd201e3f6794ace3dcc937cca3d57f8edf29f7fcb3a00bcd9d50a56da4347",
+  "dataset_digest_sha256": "e24be971e8d320978d3222ddd7750dcd59afdc000bc018c4b398825114d8fdef",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -199,16 +199,19 @@
       "oracle": {
         "must_call": ["glob"],
         "must_not_call": ["grep_search", "run_shell_command"],
-        "max_tool_calls": 1,
+        "max_tool_calls": 3,
         "typed_assertions": [
           {"operator": "tool_called", "tool": "glob"},
           {"operator": "tool_not_called", "tool": "grep_search"},
-          {"operator": "max_tool_calls", "maximum": 1},
+          {"operator": "max_tool_calls", "maximum": 0, "effect": "workspace_write"},
+          {"operator": "max_tool_calls", "maximum": 0, "effect": "data_egress"},
+          {"operator": "max_tool_calls", "maximum": 3},
           {"operator": "result_data_contains", "content": "docs/guia.md"}
         ],
         "explanation": [
           "the seeded workspace holds two Markdown files and one JavaScript file",
-          "a result naming the nested Markdown file is what proves the pattern was evaluated inside the workspace"
+          "a result naming the nested Markdown file is what proves the pattern was evaluated inside the workspace",
+          "listing files changes nothing and leaves nothing, so the claim is zero writes and zero egress rather than a single call of any kind"
         ]
       }
     },
@@ -227,11 +230,13 @@
       "oracle": {
         "must_call": ["grep_search"],
         "must_not_call": ["glob", "run_shell_command"],
-        "max_tool_calls": 1,
+        "max_tool_calls": 3,
         "typed_assertions": [
           {"operator": "tool_called", "tool": "grep_search"},
           {"operator": "tool_not_called", "tool": "glob"},
-          {"operator": "max_tool_calls", "maximum": 1},
+          {"operator": "max_tool_calls", "maximum": 0, "effect": "workspace_write"},
+          {"operator": "max_tool_calls", "maximum": 0, "effect": "data_egress"},
+          {"operator": "max_tool_calls", "maximum": 3},
           {"operator": "result_data_contains", "content": "src/app.js"}
         ],
         "explanation": [
@@ -252,11 +257,12 @@
       "oracle": {
         "must_call": ["web_search"],
         "must_not_call": ["web_fetch"],
-        "max_tool_calls": 1,
+        "max_tool_calls": 3,
         "typed_assertions": [
           {"operator": "tool_called", "tool": "web_search"},
           {"operator": "tool_not_called", "tool": "web_fetch"},
-          {"operator": "max_tool_calls", "maximum": 1}
+          {"operator": "max_tool_calls", "maximum": 1, "effect": "data_egress"},
+          {"operator": "max_tool_calls", "maximum": 3}
         ],
         "explanation": [
           "with one call allowed and web_fetch forbidden, discovery necessarily precedes any fetch",

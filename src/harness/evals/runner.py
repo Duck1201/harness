@@ -123,6 +123,7 @@ class ContractCaseRunner:
             evaluation = evaluate_oracle(
                 spec.fixture.oracle.typed_assertions,
                 evidence,
+                tool_effects=self._registry.effects_by_tool,
             )
             return CaseRunResult(
                 evidence=evidence,

@@ -57,8 +57,17 @@ class ToolNotCalled(EvalModel):
 
 
 class MaxToolCalls(EvalModel):
+    """Bounds the calls a Turn spends, optionally only those of one effect class.
+
+    Without ``effect`` this is every effective call, which is the loop bound.
+    With one, it is the budget for that class alone: a read inside the workspace
+    jail is not the same expense as a write or an egress, and a fixture that
+    means "change nothing" should say so instead of counting everything.
+    """
+
     operator: Literal["max_tool_calls"]
     maximum: int = Field(ge=0)
+    effect: str | None = None
 
 
 class TerminalOutcomeIs(EvalModel):

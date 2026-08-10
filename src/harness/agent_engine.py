@@ -63,6 +63,8 @@ class AgentEngine:
         max_model_invocations: int = 15,
         max_tool_calls_per_step: int = 4,
         max_tool_calls_per_turn: int = 20,
+        max_read_calls_per_turn: int = 40,
+        tool_effects: Mapping[str, Sequence[str]] | None = None,
         max_turn_duration_seconds: float = 900,
         runtime_readiness: EngineReadiness | None = None,
         stop_signal: StopSignal | None = None,
@@ -71,6 +73,8 @@ class AgentEngine:
         if max_model_invocations < 1:
             raise ValueError("max_model_invocations must be positive")
         if max_tool_calls_per_step < 1 or max_tool_calls_per_turn < 1:
+            raise ValueError("tool call limits must be positive")
+        if max_read_calls_per_turn < 1:
             raise ValueError("tool call limits must be positive")
         if max_turn_duration_seconds <= 0:
             raise ValueError("max_turn_duration_seconds must be positive")
@@ -93,6 +97,8 @@ class AgentEngine:
         self._max_model_invocations = max_model_invocations
         self._max_tool_calls_per_step = max_tool_calls_per_step
         self._max_tool_calls_per_turn = max_tool_calls_per_turn
+        self._max_read_calls_per_turn = max_read_calls_per_turn
+        self._tool_effects = dict(tool_effects or {})
         self._max_turn_duration_seconds = max_turn_duration_seconds
         self._runtime_readiness = runtime_readiness or EngineReadiness(ready=True)
         self._stop_signal = stop_signal or NeverStopSignal()
@@ -167,12 +173,36 @@ class AgentEngine:
                 detail=f"{type(error).__name__}: {error}",
             )
 
+    def _over_budget(
+        self,
+        calls: Sequence[ToolCall],
+        results: Sequence[ToolResult],
+        pending: Sequence[ToolCall],
+    ) -> bool:
+        """Budgets by effect class: a read is not the expense a write or an egress is.
+
+        Reading inside the workspace jail costs a file handle; writing changes the
+        Operator's files and an egress leaves the machine. One ceiling for both
+        made the cheap thing as scarce as the dangerous one, and the corpus kept
+        catching Turns that spent their whole allowance re-reading what they had
+        already been told.
+        """
+        spent = [*effective_tool_calls(calls, results), *pending]
+        effecting = sum(1 for call in spent if not self._is_read_only(call))
+        reads = len(spent) - effecting
+        return effecting > self._max_tool_calls_per_turn or reads > self._max_read_calls_per_turn
+
+    def _is_read_only(self, call: ToolCall) -> bool:
+        effects = self._tool_effects.get(call.name)
+        # An unknown tool is never read-only: it is about to be refused, and a
+        # refusal that costs nothing is an unlimited retry.
+        return bool(effects) and all(effect == "workspace_read" for effect in effects)
+
     async def _run_active_turn(self, turn: Turn, deadline: float) -> Turn:
         rejected_count = 0
         turn_calls: list[ToolCall] = []
         turn_results: list[ToolResult] = []
         seen_signatures: set[str] = set()
-        tool_call_count = 0
         for step_sequence in range(1, self._max_model_invocations + 1):
             step_seed = turn.base_seed + step_sequence - 1
             if _deadline_reached(deadline):
@@ -311,8 +341,10 @@ class AgentEngine:
             # optimistically: whether it is a repeat depends on the payload, which only
             # exists after it runs. The count is reconciled below, and a Turn can
             # overrun by at most one batch before the next check ends it.
-            fresh = sum(1 for call in calls if tool_call_signature(call) not in seen_signatures)
-            if tool_call_count + fresh > self._max_tool_calls_per_turn:
+            fresh = tuple(
+                call for call in calls if tool_call_signature(call) not in seen_signatures
+            )
+            if self._over_budget(turn_calls, turn_results, fresh):
                 await self._store.append_agent_step(turn.id, seed=step_seed, tool_calls=calls)
                 await self._emit_step_finished(turn, step_sequence)
                 return await self._finish(
@@ -414,8 +446,7 @@ class AgentEngine:
             )
             # A repeat that came back byte-identical bought the Turn nothing, so it
             # does not spend the Turn's budget. The call still ran: nothing is cached.
-            tool_call_count = len(effective_tool_calls(turn_calls, turn_results))
-            if tool_call_count > self._max_tool_calls_per_turn:
+            if self._over_budget(turn_calls, turn_results, ()):
                 # An optimistically admitted repeat came back different, so it was a
                 # real second reading after all. The Turn stops here rather than at
                 # the next batch.

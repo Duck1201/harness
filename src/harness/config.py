@@ -30,6 +30,7 @@ class LoopConfig(ConfigModel):
     max_steps: int
     max_tool_calls_per_step: int
     max_tool_calls_per_turn: int
+    max_read_calls_per_turn: int = 40
     max_turn_duration_seconds: float
     max_output_tokens: int
     offer_tools_on_final_step: bool
@@ -90,6 +91,11 @@ class ToolRegistryConfig(ConfigModel):
     schema_version: int
     registry_version: str
     model_tools: tuple[ToolDefinitionConfig, ...]
+
+    @property
+    def effects_by_tool(self) -> Mapping[str, tuple[str, ...]]:
+        """Effect classes per tool name, for whoever budgets or judges by class."""
+        return {definition.name: definition.effects for definition in self.model_tools}
 
 
 class _HarnessFile(ConfigModel):

@@ -70,9 +70,10 @@ def evaluate_oracle(
     evidence: EvalEvidence,
     *,
     language_detector: LanguageDetector | None = None,
+    tool_effects: Mapping[str, Sequence[str]] | None = None,
 ) -> OracleEvaluation:
     evaluations = [
-        _evaluate(_parse_assertion(assertion), evidence, language_detector)
+        _evaluate(_parse_assertion(assertion), evidence, language_detector, tool_effects)
         for assertion in assertions
     ]
     verdicts = {item.verdict for item in evaluations}
@@ -102,6 +103,7 @@ def _evaluate(
     assertion: TypedAssertion,
     evidence: EvalEvidence,
     detector: LanguageDetector | None,
+    tool_effects: Mapping[str, Sequence[str]] | None = None,
 ) -> AssertionEvaluation:
     passed: bool | None
     detail: str
@@ -115,9 +117,24 @@ def _evaluate(
         # The Turn's budget ignores a repeat that came back byte-identical, and the
         # oracle has to count the same way or it would judge a call the harness
         # never charged for.
-        observed = len(effective_tool_calls(evidence.tool_calls, evidence.tool_results))
+        counted = effective_tool_calls(evidence.tool_calls, evidence.tool_results)
+        scope = "effective"
+        if assertion.effect is not None:
+            if tool_effects is None:
+                # Effects live in the tool registry; without it the claim is not
+                # refuted, it is simply unreadable.
+                return AssertionEvaluation(
+                    operator=assertion.operator,
+                    verdict=TaskVerdict.INCONCLUSIVE,
+                    explanation=f"tool effects unavailable for {assertion.effect}",
+                )
+            counted = tuple(
+                call for call in counted if assertion.effect in tool_effects.get(call.name, ())
+            )
+            scope = assertion.effect
+        observed = len(counted)
         passed = observed <= assertion.maximum
-        detail = f"observed {observed} effective tool calls, maximum {assertion.maximum}"
+        detail = f"observed {observed} {scope} tool calls, maximum {assertion.maximum}"
     elif isinstance(assertion, TerminalOutcomeIs):
         passed = evidence.terminal_outcome_kind is assertion.kind and (
             assertion.reason_code is None
