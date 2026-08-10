@@ -1,3 +1,4 @@
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +14,7 @@ from .models import (
     MaxToolCalls,
     PathWithinWorkspace,
     ResponseLanguagePt,
+    ResultDataContains,
     ResultErrorCodeIs,
     ResultProducerIs,
     ResultStatusIs,
@@ -139,6 +141,13 @@ def _evaluate(
             for result in results
         )
         detail = f"result error code is {assertion.code}"
+    elif isinstance(assertion, ResultDataContains):
+        results = _selected_results(evidence, assertion.tool_call_id)
+        # Any, not all: one call among several answering with the expected finding
+        # is what the fixture claims. Requiring every result to contain it would
+        # make an extra unrelated call flip a correct run to a failure.
+        passed = any(assertion.content in _serialized_data(result) for result in results)
+        detail = f"result data contains expected text: {assertion.content}"
     elif isinstance(assertion, ResultProducerIs):
         results = _selected_results(evidence, assertion.tool_call_id)
         passed = bool(results) and all(
@@ -184,6 +193,10 @@ def _evaluate(
         ),
         explanation=detail,
     )
+
+
+def _serialized_data(result: ToolResult) -> str:
+    return json.dumps(result.data, ensure_ascii=False, sort_keys=True)
 
 
 def _selected_results(evidence: EvalEvidence, tool_call_id: str | None) -> tuple[ToolResult, ...]:

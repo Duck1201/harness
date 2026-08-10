@@ -79,6 +79,20 @@ class ResultErrorCodeIs(EvalModel):
     tool_call_id: str | None = None
 
 
+class ResultDataContains(EvalModel):
+    """Asserts that some ResultPayload actually surfaced the expected finding.
+
+    The other result operators read the envelope — status, error class, producer.
+    This one reads ``data``, which is where a search says which file matched or a
+    read says what it returned. Without it, "the tool was called" is all a fixture
+    can claim, and a tool that answers nothing useful still passes.
+    """
+
+    operator: Literal["result_data_contains"]
+    content: str = Field(min_length=1)
+    tool_call_id: str | None = None
+
+
 class ResultProducerIs(EvalModel):
     """Which engine produced a ResultPayload — "web_fetch" for HTTP, "browser" after escalation."""
 
@@ -120,6 +134,7 @@ type TypedAssertion = Annotated[
     | TerminalOutcomeIs
     | ResultStatusIs
     | ResultErrorCodeIs
+    | ResultDataContains
     | ResultProducerIs
     | FileExists
     | FileContentEquals

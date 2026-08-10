@@ -7,7 +7,7 @@ from typing import cast
 import pytest
 from pydantic import ValidationError
 
-from harness import TerminalOutcomeKind, ToolCall, ToolResult, ToolResultStatus
+from harness import JsonValue, TerminalOutcomeKind, ToolCall, ToolResult, ToolResultStatus
 from harness.evals import (
     DatasetDriftError,
     EvalEvidence,
@@ -136,6 +136,32 @@ def test_typed_oracles_are_deterministic_and_task_verdict_is_separate(
         [{"operator": "path_within_workspace", "path": "../outside.txt"}], outside
     )
     assert failed.verdict is TaskVerdict.FAIL
+
+
+def test_result_data_contains_reads_the_payload_and_not_only_the_envelope() -> None:
+    def search_result(matches: list[JsonValue]) -> ToolResult:
+        return ToolResult(
+            tool_call_id="call-1",
+            status=ToolResultStatus.SUCCESS,
+            retryable=False,
+            data={"matches": matches},
+            error=None,
+            meta={"producer": "harness", "truncated": False, "taints": []},
+        )
+
+    found = EvalEvidence(
+        tool_calls=(ToolCall(id="call-1", name="grep_search", arguments={"pattern": "TODO"}),),
+        tool_results=(search_result([{"file_path": "src/app.js", "line": 2}]),),
+    )
+    assertion = {"operator": "result_data_contains", "content": "src/app.js"}
+
+    assert evaluate_oracle([assertion], found).verdict is TaskVerdict.PASS
+
+    empty_hands = replace(found, tool_results=(search_result([]),))
+    assert evaluate_oracle([assertion], empty_hands).verdict is TaskVerdict.FAIL
+
+    # A tool that was called but produced no result at all cannot satisfy the claim.
+    assert evaluate_oracle([assertion], replace(found, tool_results=())).verdict is TaskVerdict.FAIL
 
 
 def test_text_and_language_without_deterministic_detector_are_inconclusive() -> None:
