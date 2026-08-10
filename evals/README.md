@@ -11,6 +11,28 @@ formato das falhas observadas e os invariantes atuais.
 - [`experiments.json`](experiments.json): braços, fatores fixos, métricas e gates
   para hipóteses ainda abertas.
 
+## Escopo do corpus
+
+O corpus é para regressões de **modelo** e de **executor**: coisas que só um
+RuntimeProfile real, um executor real ou um browser real podem decidir. Duas
+consequências:
+
+1. **Toda fixture precisa de um runner.** Um `type` sem runner é descartado em
+   silêncio por `EvalService._fixtures`, e uma fixture que nunca roda não
+   protege nada. Um teste garante que todo `type` do dataset é suportado.
+2. **Contrato de arquitetura não é fixture.** Fronteira RuntimeProfile/
+   ExecutionRoute, transitoriedade do reasoning, projeção AG-UI e middleware HTTP
+   de autenticação são invariantes de código, cobertos por teste de unidade. Foi
+   a mesma decisão tomada para autenticação (`tests/test_auth.py`) e aplicada
+   depois a `contract_boundary`, `state_projection` e `parser_contract`.
+
+A verificação de página segue a mesma regra: enquanto a automação não estiver no
+caminho de escrita, nenhuma fixture consegue observá-la, e a cobertura vive em
+`tests/test_page_verification.py`. O experimento homônimo permanece como portão
+registrado e, sem fixture alcançável, bloqueia com `no_deterministic_cases` — que
+é o relato honesto de "ainda não mede nada", em vez de um verde emprestado de
+fixtures genéricas de `write_file`.
+
 ## Unidade de avaliação
 
 O resultado principal é a tarefa completa, não apenas a primeira tool call. Cada

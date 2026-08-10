@@ -1,8 +1,8 @@
 {
   "schema_version": 2,
   "dataset_id": "harness_2_contract_regressions",
-  "dataset_version": "2.0.0",
-  "dataset_digest_sha256": "f9c67ec1c8800a0a01f45957c8bbdd8b19a1a84824ccba48bbf8e45a750538f9",
+  "dataset_version": "3.0.0",
+  "dataset_digest_sha256": "88a24cf98edfbdf56516d7d23c461500a4c56e785aa09d30e4698967e7dc4e08",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -296,34 +296,6 @@
       }
     },
     {
-      "id": "page_verification_once_per_page_revision",
-      "type": "executor_automation",
-      "tags": ["page_verification", "page_revision", "write_file"],
-      "origin": "HERANCA section 5: verification tool loop and proposed automatic replacement",
-      "stimulus": {
-        "configured_mode": "automatic_once_per_page_revision",
-        "workspace_id": "workspace-a",
-        "workspace_revision": "revision-7",
-        "verifier_digest": "verifier-sha256-a",
-        "writes": [
-          {"file_path": "index.html", "content_id": "html_a"},
-          {"file_path": "index.html", "content_id": "html_a"},
-          {"file_path": "index.html", "content_id": "html_b"}
-        ]
-      },
-      "oracle": {
-        "must_call": ["write_file"],
-        "must_not_call": ["verify_page", "browser"],
-        "max_tool_calls": 3,
-        "assertions": [
-          "the PageRevision key contains workspace_id, relative_path, html_sha256, workspace_revision and verifier_digest",
-          "the executor runs verification exactly twice: once for each distinct PageRevision",
-          "the model never receives a verification tool",
-          "each verification result is injected at most once"
-        ]
-      }
-    },
-    {
       "id": "web_http_first_browser_by_symptom",
       "type": "executor_automation",
       "tags": ["web_fetch", "browser_escalation", "threshold"],
@@ -380,26 +352,6 @@
       }
     },
     {
-      "id": "runtime_profile_is_not_execution_route",
-      "type": "contract_boundary",
-      "tags": ["thinking", "runtime_profile", "execution_route"],
-      "origin": "HERANCA section 3: incompatible models returned HTTP 400 before first token",
-      "stimulus": {
-        "runtime_profile": "local_mitos_ollama_reproduction",
-        "execution_route": "local_web_tools"
-      },
-      "oracle": {
-        "must_call": [],
-        "must_not_call": [],
-        "assertions": [
-          "RuntimeProfile identifies the installed Ollama model, components and capabilities",
-          "ExecutionRoute selects think=true, model_tools and loop limits",
-          "route policy is not included in profile identity",
-          "changing a route does not claim a new runtime installation"
-        ]
-      }
-    },
-    {
       "id": "web_access_requires_grant_and_taint",
       "type": "privacy_gate",
       "tags": ["web_fetch", "web_access_grant", "web_taint", "privacy"],
@@ -442,21 +394,36 @@
     },
     {
       "id": "edit_preserves_whitespace_round_trip",
-      "type": "parser_contract",
-      "tags": ["edit", "parser", "whitespace"],
+      "type": "model_task",
+      "tags": ["tool_selection", "parser", "edit", "whitespace"],
       "origin": "Qwen3.5 vLLM parser regression case documented in research",
       "stimulus": {
-        "replacement": "\tif (ok) {\n\t  return value;\n\t}\n",
-        "transport": "qwen3_coder_tool_call"
+        "user_request": "Em app.js, troque as linhas 2 a 4 por exatamente este bloco, que usa tabulação e não espaços:\n\tif (ok) {\n\t  return value;\n\t}\n",
+        "workspace": [
+          {
+            "path": "app.js",
+            "content": "function run(ok, value) {\n  if (ok) {\n    return value;\n  }\n}\n"
+          }
+        ]
       },
       "oracle": {
         "must_call": ["edit"],
-        "must_not_call": [],
-        "max_tool_calls": 1,
-        "assertions": [
-          "tabs, indentation and final newline survive byte-for-byte",
-          "the file SHA precondition is checked before applying the edit",
-          "a failed round-trip disables edit for that runtime profile"
+        "must_not_call": ["write_file", "run_shell_command"],
+        "max_tool_calls": 2,
+        "typed_assertions": [
+          {"operator": "tool_called", "tool": "edit"},
+          {"operator": "tool_not_called", "tool": "write_file"},
+          {"operator": "max_tool_calls", "maximum": 2},
+          {
+            "operator": "file_content_equals",
+            "path": "app.js",
+            "content": "function run(ok, value) {\n\tif (ok) {\n\t  return value;\n\t}\n}\n"
+          }
+        ],
+        "explanation": [
+          "the transport is not parsed here: Ollama delivers structured tool calls, so this measures the model plus its runtime, end to end",
+          "edit requires expected_current_sha256, so one read_file before the edit is inside the budget",
+          "tabs, the two-space continuation and the final newline have to survive byte-for-byte"
         ]
       }
     },
@@ -477,26 +444,6 @@
         "assertions": [
           "the harness does not claim vision support while the exact artifact is unverified",
           "no numeric observation is presented as certain"
-        ]
-      }
-    },
-    {
-      "id": "reasoning_is_transient_and_ag_ui_is_projection",
-      "type": "state_projection",
-      "tags": ["canonical_history", "reasoning", "ag_ui", "privacy"],
-      "origin": "Harness 2.0 ADR 0001 and current state contract",
-      "stimulus": {
-        "live_turn_contains": ["reasoning_delta", "tool_call", "final_response"]
-      },
-      "oracle": {
-        "must_call": [],
-        "must_not_call": [],
-        "terminal_outcome": "completed",
-        "assertions": [
-          "AG-UI may project reasoning_delta while the Turn is live",
-          "CanonicalHistory persists the tool call and final response but not reasoning content",
-          "replay is reconstructed from canonical state and contains no reasoning content",
-          "TaskVerdict cannot replace TerminalOutcome"
         ]
       }
     },
