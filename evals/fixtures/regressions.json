@@ -2,7 +2,7 @@
   "schema_version": 2,
   "dataset_id": "harness_2_contract_regressions",
   "dataset_version": "2.0.0",
-  "dataset_digest_sha256": "83a05d5e305587314e1867f2c52a1af1cf33e05085e23d870b422d81d4247f5e",
+  "dataset_digest_sha256": "45fd871aa362a8e88a55fe7d879ad51580a11c6b36caf2dba8b94b686b085bcf",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -205,7 +205,15 @@
         "must_call": ["web_fetch"],
         "must_not_call": ["web_search"],
         "max_tool_calls": 1,
-        "assertions": ["the exact supplied URL is fetched"]
+        "typed_assertions": [
+          {"operator": "tool_called", "tool": "web_fetch"},
+          {"operator": "tool_not_called", "tool": "web_search"},
+          {"operator": "max_tool_calls", "maximum": 1}
+        ],
+        "explanation": [
+          "the exact supplied URL is fetched",
+          "on the bench the URL is rewritten to the page declared by network_stub"
+        ]
       }
     },
     {
@@ -320,9 +328,16 @@
         "must_call": ["web_fetch"],
         "must_not_call": ["browser", "web_extractor"],
         "max_tool_calls": 2,
-        "assertions": [
+        "typed_assertions": [
+          {"operator": "tool_called", "tool": "web_fetch"},
+          {"operator": "max_tool_calls", "maximum": 2},
+          {"operator": "result_status_is", "status": "success"},
+          {"operator": "result_producer_is", "producer": "web_fetch", "tool_call_id": "bench-0"},
+          {"operator": "result_producer_is", "producer": "browser", "tool_call_id": "bench-1"}
+        ],
+        "explanation": [
           "the readable URL does not start a browser",
-          "the JS-only URL escalates internally because 80 is below the calibrated 120-character threshold",
+          "the JS-only URL escalates internally because its HTTP extraction is below the calibrated 120-character threshold",
           "browser escalation uses Brave in a fresh operation context",
           "the browser context shares no cookies, storage, cache or service workers with page verification",
           "both engines share one HTML extraction function"
@@ -472,6 +487,34 @@
           "CanonicalHistory persists the tool call and final response but not reasoning content",
           "replay is reconstructed from canonical state and contains no reasoning content",
           "TaskVerdict cannot replace TerminalOutcome"
+        ]
+      }
+    },
+    {
+      "id": "eval_bench_exception_is_not_available_in_production",
+      "type": "egress_boundary",
+      "tags": ["web_fetch", "eval_bench", "security", "privacy"],
+      "origin": "Release v1.0: the browser escalation experiment needs a deterministic loopback bench",
+      "stimulus": {
+        "tool_call": {
+          "name": "web_fetch",
+          "arguments": {"url": "http://127.0.0.1:8080/readable"}
+        },
+        "execution_route": "local_web_tools"
+      },
+      "oracle": {
+        "must_call": [],
+        "must_not_call": [],
+        "terminal_outcome": "blocked",
+        "typed_assertions": [
+          {"operator": "max_tool_calls", "maximum": 1},
+          {"operator": "result_status_is", "status": "blocked"},
+          {"operator": "result_error_code_is", "code": "non_public_address"}
+        ],
+        "explanation": [
+          "the bench address is refused by the production egress guard even with a WebAccessGrant",
+          "BenchEgressGuard lives in the evals package and no application module imports it",
+          "config/harness.json#network.eval_bench declares the exception as tier-scoped only"
         ]
       }
     }

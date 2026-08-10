@@ -79,6 +79,14 @@ class ResultErrorCodeIs(EvalModel):
     tool_call_id: str | None = None
 
 
+class ResultProducerIs(EvalModel):
+    """Which engine produced a ResultPayload — "web_fetch" for HTTP, "browser" after escalation."""
+
+    operator: Literal["result_producer_is"]
+    producer: str = Field(min_length=1)
+    tool_call_id: str | None = None
+
+
 class FileExists(EvalModel):
     operator: Literal["file_exists"]
     path: str = Field(min_length=1)
@@ -112,6 +120,7 @@ type TypedAssertion = Annotated[
     | TerminalOutcomeIs
     | ResultStatusIs
     | ResultErrorCodeIs
+    | ResultProducerIs
     | FileExists
     | FileContentEquals
     | FileContentContains

@@ -11,6 +11,11 @@ from .loader import (
     load_experiment_manifest,
     load_regression_dataset,
 )
+from .model_runner import (
+    BrowserBenchCaseRunner,
+    CompositeCaseRunner,
+    ModelCaseRunner,
+)
 from .models import (
     EvalCatalog,
     EvalPhase,
@@ -27,6 +32,7 @@ from .models import (
     RegressionFixture,
     ResponseLanguagePt,
     ResultErrorCodeIs,
+    ResultProducerIs,
     ResultStatusIs,
     TaskVerdict,
     TerminalOutcomeIs,
@@ -72,8 +78,10 @@ __all__ = [
     "BenchmarkLease",
     "BenchmarkLeaseCanceled",
     "BenchmarkLeaseError",
+    "BrowserBenchCaseRunner",
     "CaseRunResult",
     "CaseRunner",
+    "CompositeCaseRunner",
     "ConfidenceInterval",
     "ContractCaseRunner",
     "DatasetDriftError",
@@ -100,6 +108,7 @@ __all__ = [
     "FileExists",
     "LanguageDetector",
     "MaxToolCalls",
+    "ModelCaseRunner",
     "OracleDefinition",
     "OracleEvaluation",
     "PathWithinWorkspace",
@@ -109,6 +118,7 @@ __all__ = [
     "RegressionFixture",
     "ResponseLanguagePt",
     "ResultErrorCodeIs",
+    "ResultProducerIs",
     "ResultStatusIs",
     "TaskVerdict",
     "TerminalOutcomeIs",

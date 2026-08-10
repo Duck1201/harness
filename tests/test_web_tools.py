@@ -364,7 +364,7 @@ def test_web_fetch_enforces_body_cap_and_reuses_exact_url_cache() -> None:
     asyncio.run(scenario())
 
 
-def test_web_fetch_short_extraction_and_missing_browser_capability_are_failed() -> None:
+def test_short_extraction_escalates_and_says_so_when_no_browser_is_configured() -> None:
     async def scenario() -> None:
         short_executor = WebToolExecutor(
             registry=load_config().tool_registry,
@@ -384,9 +384,11 @@ def test_web_fetch_short_extraction_and_missing_browser_capability_are_failed() 
         short = await short_executor.execute(
             ToolCall(id="short", name="web_fetch", arguments={"url": "https://example.com/short"})
         )
+        # An extraction under the calibrated threshold is the declared escalation
+        # symptom, so the executor asks for a browser instead of giving up on HTTP.
         assert short.status.value == "failed"
         assert short.error is not None
-        assert short.error["code"] == "empty_extraction"
+        assert short.error["code"] == "browser_escalation_unavailable"
 
         unavailable_executor = WebToolExecutor(
             registry=load_config().tool_registry,

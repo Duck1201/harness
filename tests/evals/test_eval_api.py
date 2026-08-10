@@ -51,7 +51,7 @@ def _app(tmp_path: Path, workspace: Path):  # pyright: ignore[reportUnknownParam
     return create_app(service=service, static_dir=tmp_path / "missing-dist")
 
 
-def test_eval_api_blocks_tier_without_runner_and_exports_real_report(
+def test_eval_api_runs_the_experiment_tier_and_exports_a_real_report(
     tmp_path: Path,
 ) -> None:
     workspace = tmp_path / "workspace"
@@ -63,7 +63,9 @@ def test_eval_api_blocks_tier_without_runner_and_exports_real_report(
         created = client.post(
             "/api/evals/runs",
             json={
-                "experiment_id": "thinking_ollama",
+                # State-machine fixtures only: the experiment tier is exercised
+                # without depending on a model or a browser being installed.
+                "experiment_id": "loop_limit_8_vs_15",
                 "tier": "experiment",
                 "phase": "pilot",
             },
@@ -71,7 +73,7 @@ def test_eval_api_blocks_tier_without_runner_and_exports_real_report(
         run_id = created.json()["run"]["id"]
         started = client.post(f"/api/evals/runs/{run_id}")
 
-        deadline = monotonic() + 2
+        deadline = monotonic() + 30
         status: dict[str, object] | None = None
         while monotonic() < deadline:
             status = cast(
@@ -79,7 +81,7 @@ def test_eval_api_blocks_tier_without_runner_and_exports_real_report(
                 client.get(f"/api/evals/runs/{run_id}").json(),
             )
             status_run = cast(dict[str, object], status["run"])
-            if status_run["status"] == "blocked":
+            if status_run["status"] in {"completed", "blocked", "failed"}:
                 break
             sleep(0.01)
         reports = client.get("/api/evals/reports").json()["reports"]
@@ -88,14 +90,16 @@ def test_eval_api_blocks_tier_without_runner_and_exports_real_report(
 
     assert health["capabilities"]["eval_runner"] is True
     assert experiments.status_code == 200
-    assert {item["id"] for item in experiments.json()["experiments"]} >= {"thinking_ollama"}
+    assert {item["id"] for item in experiments.json()["experiments"]} >= {"loop_limit_8_vs_15"}
     assert created.status_code == 201
     assert started.status_code == 202
     assert status is not None
     status_run = cast(dict[str, object], status["run"])
-    assert status_run["reason_code"] == "runner_not_configured"
-    assert status["cases"] == []
-    assert exported["payload"]["status"] == "blocked"
+    assert status_run["status"] == "completed"
+    assert status_run["reason_code"] is None
+    # Two arms, 15 pilot cases each.
+    assert len(cast(list[object], status["cases"])) == 30
+    assert exported["payload"]["status"] == "completed"
     assert reports == [exported]
     assert snapshot["runs"] == [status_run]
     assert snapshot["reports"] == reports

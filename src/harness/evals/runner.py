@@ -128,7 +128,7 @@ class ContractCaseRunner:
             return CaseRunResult(
                 evidence=evidence,
                 metrics={},
-                security_violations=sum(_is_security_violation(result) for result in results),
+                security_violations=sum(is_security_violation(result) for result in results),
                 evaluation=evaluation,
             )
 
@@ -349,7 +349,7 @@ def _result_error_code(result: ToolResult | None) -> str | None:
     return code if isinstance(code, str) else None
 
 
-def _is_security_violation(result: ToolResult) -> int:
+def is_security_violation(result: ToolResult) -> int:
     return int(
         _result_error_code(result)
         in {

@@ -14,6 +14,7 @@ from .models import (
     PathWithinWorkspace,
     ResponseLanguagePt,
     ResultErrorCodeIs,
+    ResultProducerIs,
     ResultStatusIs,
     TaskVerdict,
     TerminalOutcomeIs,
@@ -138,6 +139,12 @@ def _evaluate(
             for result in results
         )
         detail = f"result error code is {assertion.code}"
+    elif isinstance(assertion, ResultProducerIs):
+        results = _selected_results(evidence, assertion.tool_call_id)
+        passed = bool(results) and all(
+            result.meta.get("producer") == assertion.producer for result in results
+        )
+        detail = f"result producer is {assertion.producer}"
     elif isinstance(assertion, FileExists):
         path = _workspace_path(evidence.workspace_root, assertion.path)
         passed = path is not None and path.is_file()

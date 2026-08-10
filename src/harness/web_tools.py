@@ -521,6 +521,11 @@ class WebToolExecutor:
             artifact_or_error = _response_artifact(response, current_url, producer="web_fetch")
             if isinstance(artifact_or_error, tuple):
                 code, message = artifact_or_error
+                if code == "empty_extraction":
+                    # The declared escalation symptom: HTTP returned a page whose readable
+                    # extraction is below the calibrated threshold, which is what a
+                    # JavaScript-rendered page looks like to an HTTP client.
+                    return await self._browser_escalation(call, current_url, limit=limit)
                 return _web_error(
                     call,
                     ToolResultStatus.FAILED,

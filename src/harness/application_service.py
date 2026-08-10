@@ -22,10 +22,13 @@ from .domain import (
 )
 from .evals import (
     BenchmarkLease,
+    BrowserBenchCaseRunner,
+    CompositeCaseRunner,
     ContractCaseRunner,
     EvalService,
     EvalStore,
     EvalTier,
+    ModelCaseRunner,
     RegressionDraft,
     load_eval_catalog,
 )
@@ -125,6 +128,9 @@ class ApplicationService:
             store=store,
             lease=self.benchmark_lease,
             registry=config.tool_registry,
+            config=config,
+            runtime=runtime,
+            estimator=estimator,
         )
         if Path(self.eval_service.store.database).resolve() == Path(store.database).resolve():
             raise ValueError("EvalStore must be separate from ConversationStore")
@@ -525,6 +531,9 @@ def _default_eval_service(
     store: ConversationStore,
     lease: BenchmarkLease,
     registry: ToolRegistryConfig,
+    config: HarnessConfig,
+    runtime: ModelRuntime,
+    estimator: TokenEstimator,
 ) -> EvalService:
     project_root = Path(__file__).resolve().parents[2]
     catalog = load_eval_catalog(
@@ -536,11 +545,27 @@ def _default_eval_service(
     if conversation_database.name == ":memory:":
         raise ValueError("ConversationStore must use a file when evals are enabled")
     eval_database = conversation_database.with_name("evals.sqlite3")
+    contract = ContractCaseRunner(registry=registry)
+    browser_guard = BraveEgressGuard()
+    model = ModelCaseRunner(
+        config=config,
+        runtime=runtime,
+        estimator=estimator,
+        browser_guard=browser_guard,
+    )
+    bench = BrowserBenchCaseRunner(registry=registry, browser_guard=browser_guard)
+    # An experiment picks its fixtures by tag, so one tier has to cover several
+    # fixture types: the composite routes each one to the runner that can execute it.
+    live = CompositeCaseRunner((contract, bench, model))
     return EvalService(
         store=EvalStore(eval_database),
         catalog=catalog,
         lease=lease,
-        runners={EvalTier.CONTRACT: ContractCaseRunner(registry=registry)},
+        runners={
+            EvalTier.CONTRACT: contract,
+            EvalTier.MODEL_SMOKE: live,
+            EvalTier.EXPERIMENT: live,
+        },
     )
 
 
