@@ -221,6 +221,12 @@ def test_edit_refuses_a_replacement_that_would_weld_the_next_line(tmp_path: Path
         assert welding.error is not None
         assert welding.error["code"] == "replacement_drops_line_break"
         assert welding.retryable is True
+        # One remedy, spelled out: naming a second one made the model extend the
+        # range instead and delete the line it meant to keep.
+        assert (
+            'Send this exact replacement instead: "\\tif (ok) {\\n\\t  return value;\\n\\t}\\n"'
+            in str(welding.error["message"])
+        )
         assert (tmp_path / "app.js").read_bytes() == before
 
         corrected = await executor.execute(

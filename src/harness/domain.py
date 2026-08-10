@@ -226,22 +226,26 @@ def effective_tool_calls(
 ) -> tuple[ToolCall, ...]:
     """Drops repeats that told the Turn nothing it did not already have.
 
-    A call is a repeat when an earlier call in the same Turn had the same name and
-    arguments *and* came back with a byte-identical payload. Nothing is cached to
-    decide this: the tool ran, the filesystem or the network was consulted, and
-    only then did the two payloads turn out to be the same — which keeps
-    ``never_cache_workspace_reads`` intact, TOCTOU included, while refusing to
-    charge a Turn twice for one piece of information.
+    A call is a repeat when an earlier *successful* call in the same Turn had the
+    same name and arguments and came back with a byte-identical payload. Nothing
+    is cached to decide this: the tool ran, the filesystem or the network was
+    consulted, and only then did the two payloads turn out to be the same — which
+    keeps ``never_cache_workspace_reads`` intact, TOCTOU included, while refusing
+    to charge a Turn twice for one piece of information.
 
     Repeats that come back *different* are not repeats: something changed, and
     both readings are real.
+
+    Only success is discounted. A refusal repeated verbatim is not free
+    information, it is a Turn stuck on the same mistake, and making it cost
+    nothing would turn every refusal into an unlimited retry.
     """
     by_id = {result.tool_call_id: result for result in results}
     seen: dict[str, str] = {}
     effective: list[ToolCall] = []
     for call in calls:
         result = by_id.get(call.id)
-        if result is None:
+        if result is None or result.status is not ToolResultStatus.SUCCESS:
             effective.append(call)
             continue
         signature = tool_call_signature(call)

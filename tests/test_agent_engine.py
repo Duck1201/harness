@@ -398,6 +398,43 @@ def test_a_repeat_that_comes_back_different_still_spends_the_budget(tmp_path: Pa
     asyncio.run(scenario())
 
 
+def test_a_refusal_repeated_verbatim_still_spends_the_budget(tmp_path: Path) -> None:
+    """A free refusal is an unlimited retry, which is how a Turn gets stuck."""
+
+    class RefusingExecutor(FakeToolExecutor):
+        async def execute(self, call: ToolCall) -> ToolResult:
+            self.executed.append(call)
+            return ToolResult(
+                tool_call_id=call.id,
+                status=ToolResultStatus.FAILED,
+                retryable=True,
+                data=None,
+                error={"code": "replacement_drops_line_break", "message": "same every time"},
+                meta={"producer": "fake", "truncated": False, "taints": []},
+            )
+
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        same = ToolCall(id="call-1", name="fake_tool", arguments={"value": 1})
+        runtime = FakeRuntime(
+            [
+                ModelResponse(tool_calls=(same,)),
+                ModelResponse(tool_calls=(replace(same, id="call-2"),)),
+                ModelResponse(content="unreachable"),
+            ]
+        )
+
+        finished = await engine(
+            store, runtime, RefusingExecutor(), FakeEventSink(), max_tool_calls_per_turn=1
+        ).run(conversation_id, "insista no mesmo erro")
+
+        assert finished.terminal_outcome is not None
+        assert finished.terminal_outcome.kind is TerminalOutcomeKind.LIMIT_REACHED
+        assert finished.terminal_outcome.reason_code == "tool_calls_per_turn_limit"
+
+    asyncio.run(scenario())
+
+
 def test_two_malformed_model_responses_fail_the_turn(tmp_path: Path) -> None:
     async def scenario() -> None:
         store, conversation_id = await conversation_store(tmp_path)

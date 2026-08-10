@@ -403,7 +403,13 @@ class AgentEngine:
             await self._emit_step_finished(turn, step_sequence)
             turn_calls.extend(calls)
             turn_results.extend(results)
-            seen_signatures.update(tool_call_signature(call) for call in calls)
+            # Only a successful call earns the optimistic admission below: a refusal
+            # repeated verbatim has to keep costing, or refusing becomes a free retry.
+            seen_signatures.update(
+                tool_call_signature(call)
+                for call, result in zip(calls, results, strict=True)
+                if result.status is ToolResultStatus.SUCCESS
+            )
             # A repeat that came back byte-identical bought the Turn nothing, so it
             # does not spend the Turn's budget. The call still ran: nothing is cached.
             tool_call_count = len(effective_tool_calls(turn_calls, turn_results))

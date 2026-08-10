@@ -761,9 +761,9 @@ class RegistryToolExecutor:
                     ToolResultStatus.FAILED,
                     "replacement_drops_line_break",
                     "The replaced range ends with a line break and replacement does not, "
-                    "which would join the next line onto the last replaced one. Append the "
-                    "line break to replacement, or extend end_line to cover the line you "
-                    "mean to join.",
+                    "which would join the next line onto the last replaced one. Send this "
+                    "exact replacement instead: "
+                    f"{_corrected_replacement(removed, replacement)}",
                     retryable=True,
                     mutation=True,
                 )
@@ -1070,6 +1070,17 @@ def _arguments_fingerprint(call: ToolCall) -> str:
         sort_keys=True,
     ).encode("utf-8")
     return sha256(call.name.encode("utf-8") + b"\x00" + serialized).hexdigest()
+
+
+def _corrected_replacement(removed: bytes, replacement: bytes) -> str:
+    """The exact string the call should have carried, quoted so it can be copied.
+
+    An error that names two remedies invites the model to pick the wrong one:
+    told it could extend end_line instead, it extended the range and deleted the
+    line it meant to keep. One remedy, spelled out, leaves nothing to choose.
+    """
+    break_bytes = b"\r\n" if removed.endswith(b"\r\n") else removed[-1:]
+    return json.dumps((replacement + break_bytes).decode("utf-8", errors="replace"))
 
 
 def _drops_trailing_newline(removed: bytes, replacement: bytes, following: bytes) -> bool:
