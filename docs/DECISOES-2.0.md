@@ -35,6 +35,7 @@ O vocabulário canônico está em [`CONTEXT.md`](../CONTEXT.md). Em particular:
 | Perfil ativo | `local_mitos_ollama_reproduction`, digest `aabca1b8777bc4e0a6a491fb5ab7288bcc1537bad35c74ff041879fa11705bff` |
 | Instalação | O perfil instalado foi recriado e está coerente com o `Modelfile` de SHA-256 `fe816f3e5cc37ee82c381d6e5c6ac3cc187e1878f21c0b069f14dfba82559af9` |
 | Componentes | Digest próprio ou evidência discriminada de componente embutido; ausência nunca é convertida em hash inventado |
+| Tokenizer do estimador | `HuggingFaceTokenEstimator` lê um `tokenizer.json` local ao host, fixado por `host.json#tokenizer_digest` e registrado como componente `token_estimator_tokenizer_file`. Vocabulário e merges são idênticos aos do repositório upstream; os sete tokens de áudio/TTS a mais lá não ocorrem em texto, então a contagem é equivalente e os digests não. Como o arquivo não é versionado, esse digest é registro de procedência, não gate de CI |
 | Capacidades | Cada capacidade declara `support`, `evidence` e `gate_status`; declaração de runtime não equivale a gate aprovado |
 | Plataforma | Python 3.13, Linux x86_64 |
 | ExecutionRoute | `local_web_tools`, web-first, sampling local `temperature=0.3`, `presence_penalty=0`, `think=true` |

@@ -94,6 +94,16 @@
           }
         },
         {
+          "id": "token_estimator_tokenizer_file",
+          "evidence": {
+            "kind": "digest_sha256",
+            "subject": "state_dir/tokenizer.json read by HuggingFaceTokenEstimator",
+            "sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+            "provenance": "Host-local file, not versioned; pinned per host by host.json#tokenizer_digest. Vocabulary and merges are identical to huihui-ai/Huihui-Qwen3.5-4B-abliterated, which carries seven additional audio/TTS tokens that never occur in text, so token counts are equivalent and the digests are not.",
+            "verify": "sha256sum \"$(python -c 'import json,pathlib;print(json.loads(pathlib.Path.home().joinpath(\".config/harness-2/host.json\").read_text())[\"tokenizer_path\"])')\""
+          }
+        },
+        {
           "id": "chat_template",
           "evidence": {
             "kind": "embedded_in_profile",
