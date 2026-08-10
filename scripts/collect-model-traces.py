@@ -130,6 +130,7 @@ def _record(
                     else None
                 ),
                 "reason_code": result.evidence.terminal_outcome_reason,
+                "detail": result.evidence.terminal_outcome_detail,
             },
         },
         "harness_refusals": _refusals(result.evidence.tool_results),

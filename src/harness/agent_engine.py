@@ -406,10 +406,11 @@ class AgentEngine:
             turn_results.extend(results)
             # Only a successful call earns the optimistic admission below: a refusal
             # repeated verbatim has to keep costing, or refusing becomes a free retry.
+            call_by_id = {call.id: call for call in calls}
             seen_signatures.update(
-                tool_call_signature(call)
-                for call, result in zip(calls, results, strict=True)
-                if result.status is ToolResultStatus.SUCCESS
+                tool_call_signature(call_by_id[result.tool_call_id])
+                for result in results
+                if result.status is ToolResultStatus.SUCCESS and result.tool_call_id in call_by_id
             )
             # A repeat that came back byte-identical bought the Turn nothing, so it
             # does not spend the Turn's budget. The call still ran: nothing is cached.

@@ -39,6 +39,9 @@ class EvalEvidence:
     tool_results: tuple[ToolResult, ...] = ()
     terminal_outcome_kind: TerminalOutcomeKind | None = None
     terminal_outcome_reason: str | None = None
+    # engine_error carries the exception in detail and nowhere else. Without it a
+    # crash observed once in eighty-one cases leaves nothing to diagnose.
+    terminal_outcome_detail: str | None = None
     workspace_root: Path | None = None
     observed_paths: tuple[Path, ...] = ()
     response: str | None = None

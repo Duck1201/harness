@@ -324,6 +324,7 @@ class ModelCaseRunner:
                 tool_results=results,
                 terminal_outcome_kind=outcome.kind if outcome is not None else None,
                 terminal_outcome_reason=outcome.reason_code if outcome is not None else None,
+                terminal_outcome_detail=outcome.detail if outcome is not None else None,
                 workspace_root=workspace,
                 observed_paths=(),
                 response=response,
