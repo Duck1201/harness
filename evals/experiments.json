@@ -318,6 +318,73 @@
         "One case of edit ended in engine_error. The detail lived in the per-case temporary store and was gone before it could be read; a defensive lookup replaced the one construct that could raise there, and TerminalOutcome detail is now carried into the evidence so a next occurrence is diagnosable.",
         "Zero security violations across 162 cases, and every web result kept its taint."
       ]
+    },
+    {
+      "experiment_id": "model_smoke",
+      "recorded_on": "2026-08-10",
+      "phase": "promotion",
+      "tier": "model_smoke",
+      "status": "completed",
+      "runner": "scripts/run-experiment.py --tier model_smoke --phase promotion",
+      "seeds": [104729, 130363, 155921],
+      "frozen": {
+        "runtime_profile_id": "local_mitos_ollama_reproduction",
+        "runtime_profile_digest": "aabca1b8777bc4e0a6a491fb5ab7288bcc1537bad35c74ff041879fa11705bff",
+        "execution_route_id": "local_web_tools",
+        "dataset_version": "3.0.0",
+        "dataset_digest": "e24be971e8d320978d3222ddd7750dcd59afdc000bc018c4b398825114d8fdef",
+        "harness_digest": "f5053f7c27cb897a7847215473c1071d8ea68fbf65b582bb4877a5c7f9279973",
+        "tool_registry_digest": "39a72a558ebccb2ee7ed812ad27677329d23a0e508df94273f657b7264a3deaa"
+      },
+      "arms": [
+        {
+          "arm_id": "model_smoke",
+          "case_count": 162,
+          "verdict_counts": {"pass": 141, "fail": 21, "inconclusive": 0, "not_evaluated": 0},
+          "wilson_95": {
+            "estimate": 0.8703703703703703,
+            "lower": 0.8099547131927153,
+            "upper": 0.9136279232199479
+          }
+        }
+      ],
+      "security_violations": 0,
+      "promotion_gates": null,
+      "verdict": "measured_after_effect_classed_budgets",
+      "compared_with": "the promotion smoke above, run before effect-classed budgets",
+      "layer_split": {
+        "executor_browser_context_and_egress": {"cases": 81, "pass": 81},
+        "model": {"cases": 81, "pass": 60, "fail": 21}
+      },
+      "fixture_pass_rate": {
+        "glob_for_paths_not_grep": "9/9, was 4/9",
+        "grep_for_content_not_glob": "8/9, was 0/9",
+        "tool_write_required_relative_path": "9/9, was 8/9",
+        "web_search_for_discovery": "8/9",
+        "web_fetch_for_known_url": "8/9, was 9/9",
+        "vision_is_not_silently_available": "0/9",
+        "edit_preserves_whitespace_round_trip": "0/9"
+      },
+      "metric_totals": {
+        "rejected_model_attempts": {"sum": 22, "max": 2, "cases": 81},
+        "steps_to_terminal": {"sum": 196, "max": 5, "cases": 81},
+        "extra_tool_calls": {"sum": 16, "max": 1, "cases": 81},
+        "latency_ms": {"sum": 1051810.9, "max": 123844.2, "cases": 99},
+        "untrusted_web_taint_violations": {"sum": 0.0, "cases": 18}
+      },
+      "environment": {
+        "browser": "Brave Browser 151.1.93.134",
+        "ollama": "0.32.5",
+        "bench": "config/harness.json#network.eval_bench"
+      },
+      "notes": [
+        "grep_for_content_not_glob went from 0/9 to 8/9 and none of it is the model: the traces show the same two calls, grep_search then read_file, in every reading before and after. The oracle stopped charging the verification read, the model never stopped making it. The prompt line telling it not to was already in place for the previous run and changed nothing.",
+        "extra_tool_calls is not independent evidence here: it is computed against each fixture's max_tool_calls, which this change raised. Raw call counts from the trace collection are, and they are what the point above rests on.",
+        "vision is the real behavioural change, from item 5 rather than from this one. Raw calls per case fell from five and seven to one and two, and the model now answers that the workspace holds no image and asks for a path instead of hunting for one or inventing a number.",
+        "vision still scores 0/9 for two separate reasons: it makes one or two read calls to check the workspace, which the fixture forbids outright, and it answers a Portuguese request in English. The second is a genuine defect. The first is now arguably the fixture measuring the wrong thing, and rewriting it after seeing this run would be fitting the ruler to the result, so it is left open.",
+        "rejected_model_attempts fell from 32 to 22 and steps_to_terminal from 214 to 196; neither depends on fixture budgets. Latency rose from 868s to 1052s, which is what a Turn allowed more reads before stopping looks like.",
+        "web_fetch_for_known_url moved 9/9 to 8/9, a single reading, within the noise this corpus has already shown."
+      ]
     }
   ],
   "experiments": [
