@@ -19,7 +19,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .ag_ui import encode_sse, project_agent_event, run_error_event, run_started_event
 from .application_service import ApplicationService, ApplicationServiceError
-from .auth import AuthenticationError, SessionController, hash_password
+from .auth import AuthenticationError, SessionController, hash_password, verify_password
 from .config import load_config
 from .conversation_store import ConversationStore, NotFoundError
 from .domain import (
@@ -83,6 +83,7 @@ class LoginRequest(ApiModel):
 
 class OperatorPasswordRequest(ApiModel):
     password: str
+    current_password: str | None = None
 
 
 class FeedbackRequest(ApiModel):
@@ -167,28 +168,29 @@ def create_app(
     static_dir: str | Path = Path("web/dist"),
     max_body_bytes: int = 1024 * 1024,
     session_controller: SessionController | None = None,
+    credential_store: CredentialStore | None = None,
 ) -> FastAPI:
     if max_body_bytes < 1:
         raise ValueError("max_body_bytes must be positive")
     effective_origins = tuple(allowed_origins or ())
     operator_password_hash: str | None = None
-    credentials: CredentialStore | None = None
+    credentials: CredentialStore | None = credential_store
     if service is None:
         host_store = _host_config_store(host_config_path)
         host_config = host_store.load_optional()
         if allowed_origins is None:
             effective_origins = configured_origins(host_config)
-        credential_store = CredentialStore(host_store.credentials_path)
-        credentials = credential_store
-        operator_password_hash = credential_store.read_operator_password_hash()
+        host_credentials = credential_store or CredentialStore(host_store.credentials_path)
+        credentials = host_credentials
+        operator_password_hash = host_credentials.read_operator_password_hash()
         service = _default_service(
             host_store=host_store,
-            credential_store=credential_store,
+            credential_store=host_credentials,
         )
         if setup_controller is None:
             setup_controller = SetupController(
                 host_store,
-                credential_store=credential_store,
+                credential_store=host_credentials,
                 reopen=(_setup_reopen_requested() if reopen_setup is None else reopen_setup),
                 token=setup_token,
                 ttl_seconds=setup_ttl_seconds,
@@ -348,6 +350,17 @@ def create_app(
                 "credential_store_unavailable",
                 "This app was built without a credential store.",
                 status_code=409,
+            )
+        # A session alone must not rotate the credential: a stolen token would turn
+        # into permanent access and lock the Operator out of their own host.
+        current_hash = credentials.read_operator_password_hash()
+        if current_hash is not None and not verify_password(
+            payload.current_password or "", current_hash
+        ):
+            raise AuthenticationError(
+                "invalid_credentials",
+                "The current Operator password is incorrect.",
+                status_code=401,
             )
         try:
             digest = hash_password(payload.password)

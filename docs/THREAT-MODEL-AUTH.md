@@ -26,6 +26,7 @@ CanonicalHistory com o histórico integral e as credenciais no CredentialStore.
 | Reverse proxy apresentando tráfego remoto como local | `_is_direct_loopback` recusa qualquer requisição que traga `Forwarded`, `Via`, `X-Real-IP` ou `X-Forwarded-*`, então um proxy não consegue se passar por conexão local. |
 | Senha lida do disco por outro processo do host | Só o hash é gravado, em arquivo `0600` com escrita atômica; a senha original nunca é persistida nem devolvida por rota alguma. |
 | Sessão sobrevive à troca de senha | Rotacionar ou remover a credencial invalida todas as sessões abertas. |
+| Sessão roubada vira acesso permanente pela troca de senha | `PUT /api/admin/operator-password` exige `current_password` sempre que já existe credencial gravada, verificada em tempo constante antes da escrita. Uma sessão sozinha não rotaciona a credencial nem tranca o Operator para fora. |
 
 ## Fora do modelo
 

@@ -113,13 +113,23 @@ de rota, e por quê: `GET /api/health` (responde a supervisor antes de haver
 login), `/api/setup*` (guardada pelo token efêmero e restrita a loopback) e
 `POST /api/session` (é o login).
 
-Definir ou rotacionar a senha:
+Definir a primeira senha:
 
 ```bash
 curl -X PUT http://127.0.0.1:8765/api/admin/operator-password \
   -H 'Content-Type: application/json' \
   -H 'Origin: http://127.0.0.1:8765' \
   -d '{"password": "pelo-menos-doze-caracteres"}'
+```
+
+Rotacionar exige a senha atual em `current_password`, além da sessão:
+
+```bash
+curl -X PUT http://127.0.0.1:8765/api/admin/operator-password \
+  -H 'Content-Type: application/json' \
+  -H 'Origin: http://127.0.0.1:8765' \
+  -H "X-Harness-Session: $SESSION" \
+  -d '{"current_password": "a-senha-de-agora", "password": "a-nova-senha"}'
 ```
 
 Trocar a senha invalida todas as sessões abertas. O hash é PBKDF2-HMAC-SHA256

@@ -23,6 +23,7 @@ from harness.auth import (
     hash_password,
     verify_password,
 )
+from harness.host_config import CredentialStore
 
 # With no Operator password configured the server only answers direct loopback,
 # so a test has to say where its request comes from.
@@ -53,7 +54,11 @@ PASSWORD = "operator-password-1"
 REMOTE = ("192.168.1.50", 51000)
 
 
-def _app(tmp_path: Path, sessions: SessionController):
+def _app(
+    tmp_path: Path,
+    sessions: SessionController,
+    credential_store: CredentialStore | None = None,
+):
     workspace = tmp_path / "workspace"
     workspace.mkdir(exist_ok=True)
     service = ApplicationService(
@@ -68,6 +73,7 @@ def _app(tmp_path: Path, sessions: SessionController):
         service=service,
         static_dir=tmp_path / "missing-dist",
         session_controller=sessions,
+        credential_store=credential_store,
     )
 
 
@@ -187,6 +193,50 @@ def test_the_setup_token_cannot_be_used_as_a_session(tmp_path: Path) -> None:
     assert setup_status.status_code == 200
     assert borrowed.status_code == 401
     assert wrong_header.status_code == 401
+
+
+def test_rotating_the_operator_password_requires_the_current_one(tmp_path: Path) -> None:
+    credentials = CredentialStore(tmp_path / "credentials.json")
+    credentials.write_operator_password_hash(hash_password(PASSWORD, iterations=1_000))
+    sessions = SessionController(password_hash=hash_password(PASSWORD, iterations=1_000))
+    app = _app(tmp_path, sessions, credential_store=credentials)
+
+    with TestClient(app, client=REMOTE) as client:
+        token = client.post("/api/session", json={"password": PASSWORD}).json()["session"]
+        headers = {"X-Harness-Session": token}
+        without_current = client.put(
+            "/api/admin/operator-password",
+            json={"password": "operator-password-4"},
+            headers=headers,
+        )
+        wrong_current = client.put(
+            "/api/admin/operator-password",
+            json={"password": "operator-password-4", "current_password": "operator-password-2"},
+            headers=headers,
+        )
+        rotated = client.put(
+            "/api/admin/operator-password",
+            json={"password": "operator-password-4", "current_password": PASSWORD},
+            headers=headers,
+        )
+
+    # A session alone is not enough: the credential itself has to be presented.
+    assert without_current.status_code == 401
+    assert without_current.json()["error"]["code"] == "invalid_credentials"
+    assert wrong_current.status_code == 401
+    assert rotated.status_code == 204
+    assert verify_password("operator-password-4", credentials.read_operator_password_hash() or "")
+
+
+def test_the_first_operator_password_needs_no_current_one(tmp_path: Path) -> None:
+    credentials = CredentialStore(tmp_path / "credentials.json")
+    app = _app(tmp_path, SessionController(password_hash=None), credential_store=credentials)
+
+    with TestClient(app, client=LOOPBACK) as client:
+        created = client.put("/api/admin/operator-password", json={"password": PASSWORD})
+
+    assert created.status_code == 204
+    assert verify_password(PASSWORD, credentials.read_operator_password_hash() or "")
 
 
 def test_readiness_of_the_service_is_unaffected_by_authentication(tmp_path: Path) -> None:
