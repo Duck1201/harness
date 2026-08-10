@@ -19,6 +19,7 @@ import type {
   PendingConfirmation,
   RegressionDraft,
   RunAgentInput,
+  SessionStatus,
   SettingsSnapshot,
   SetupStatus,
   SetupSubmission,
@@ -58,6 +59,7 @@ export class HarnessApiError extends Error {
 
 export class FetchHarnessClient implements HarnessClient {
   readonly mode = "live" as const;
+  private session: string | null = null;
   private readonly baseUrl: string;
   private readonly fetchImplementation: FetchImplementation;
 
@@ -459,6 +461,33 @@ export class FetchHarnessClient implements HarnessClient {
     return payload.conversation;
   }
 
+  async getSessionStatus() {
+    return this.request<SessionStatus>("/session");
+  }
+
+  async login(password: string) {
+    const payload = await this.request<{ session: string; expires_at: string }>(
+      "/session",
+      this.jsonRequest("POST", { password }),
+    );
+    // The token lives in memory only: a reload asks for the password again, and
+    // nothing writes it to storage where a script could read it.
+    this.session = payload.session;
+    return {
+      authentication_required: true,
+      authenticated: true,
+      expires_at: payload.expires_at,
+    };
+  }
+
+  async logout() {
+    try {
+      await this.request("/session", { method: "DELETE" });
+    } finally {
+      this.session = null;
+    }
+  }
+
   async getSetupStatus() {
     return this.request<SetupStatus>("/setup/status");
   }
@@ -475,6 +504,14 @@ export class FetchHarnessClient implements HarnessClient {
     });
   }
 
+  private withSession(init?: RequestInit): RequestInit | undefined {
+    if (this.session === null) return init;
+    return {
+      ...init,
+      headers: { ...(init?.headers ?? {}), "X-Harness-Session": this.session },
+    };
+  }
+
   private jsonRequest(method: string, body: unknown): RequestInit {
     return {
       method,
@@ -484,7 +521,10 @@ export class FetchHarnessClient implements HarnessClient {
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await this.fetchImplementation(`${this.baseUrl}${path}`, init);
+    const response = await this.fetchImplementation(
+      `${this.baseUrl}${path}`,
+      this.withSession(init),
+    );
     if (!response.ok) await this.throwResponseError(response);
     if (response.status === 204) return undefined as T;
     return (await response.json()) as T;

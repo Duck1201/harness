@@ -16,6 +16,7 @@ import type {
   PendingConfirmation,
   RegressionDraft,
   RunAgentInput,
+  SessionStatus,
   SettingsSnapshot,
   SetupStatus,
   SetupSubmission,
@@ -91,6 +92,10 @@ export interface HarnessClient {
   ): Promise<RegressionDraft>;
 
   getSettingsSnapshot(): Promise<SettingsSnapshot>;
+
+  getSessionStatus(): Promise<SessionStatus>;
+  login(password: string): Promise<SessionStatus>;
+  logout(): Promise<void>;
 
   getSetupStatus(): Promise<SetupStatus>;
   completeSetup(token: string, submission: SetupSubmission): Promise<void>;

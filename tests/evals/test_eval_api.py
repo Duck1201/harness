@@ -18,6 +18,10 @@ from harness import (
     load_config,
 )
 
+# With no Operator password configured the server only answers direct loopback,
+# so a test has to say where its request comes from.
+LOOPBACK = ("127.0.0.1", 51000)
+
 
 class FakeEstimator:
     validated = True
@@ -57,7 +61,7 @@ def test_eval_api_runs_the_experiment_tier_and_exports_a_real_report(
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
-    with TestClient(_app(tmp_path, workspace)) as client:
+    with TestClient(_app(tmp_path, workspace), client=LOOPBACK) as client:
         health = client.get("/api/health").json()
         experiments = client.get("/api/evals/experiments")
         created = client.post(
@@ -110,7 +114,7 @@ def test_eval_cancel_endpoint_and_sanitized_regression_draft(tmp_path: Path) -> 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
 
-    with TestClient(_app(tmp_path, workspace)) as client:
+    with TestClient(_app(tmp_path, workspace), client=LOOPBACK) as client:
         conversation_id = client.post(
             "/api/conversations", json={"workspace_root": str(workspace)}
         ).json()["conversation"]["id"]

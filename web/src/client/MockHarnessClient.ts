@@ -14,6 +14,7 @@ import type {
   PendingConfirmation,
   RegressionDraft,
   RunAgentInput,
+  SessionStatus,
   SettingsSnapshot,
   SetupStatus,
   SetupSubmission,
@@ -141,6 +142,12 @@ export class MockHarnessClient implements HarnessClient {
   ];
   private feedback: FeedbackRecord[] = [];
   private confirmations = new Map<string, PendingConfirmation>();
+  private password = "";
+  private sessionStatus: SessionStatus = {
+    authentication_required: false,
+    authenticated: false,
+    expires_at: null,
+  };
   private setupStatus: SetupStatus = {
     configured: true,
     required: false,
@@ -604,6 +611,34 @@ export class MockHarnessClient implements HarnessClient {
         offer_tools_on_final_step: false,
       },
     });
+  }
+
+  async getSessionStatus() {
+    return clone(this.sessionStatus);
+  }
+
+  async login(password: string) {
+    if (password !== this.password) throw new Error("invalid_credentials");
+    this.sessionStatus = {
+      authentication_required: true,
+      authenticated: true,
+      expires_at: now,
+    };
+    return clone(this.sessionStatus);
+  }
+
+  async logout() {
+    this.sessionStatus = { ...this.sessionStatus, authenticated: false, expires_at: null };
+  }
+
+  /** Puts the mock behind a login, the way a host with a password behaves. */
+  seedAuthenticationRequired(password: string) {
+    this.password = password;
+    this.sessionStatus = {
+      authentication_required: true,
+      authenticated: false,
+      expires_at: null,
+    };
   }
 
   async getSetupStatus() {

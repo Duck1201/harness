@@ -53,6 +53,7 @@ import type {
   Grant,
   JsonValue,
   PendingConfirmation,
+  SessionStatus,
   SettingsSnapshot,
   SetupStatus,
   ToolCall,
@@ -92,24 +93,22 @@ export function App({ client = harnessClient }: AppProps) {
   const [data, setData] = useState<AppData | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
+  const [session, setSession] = useState<SessionStatus | null>(null);
 
+  // Setup comes first: on an unconfigured host every other endpoint is useless,
+  // and a host behind a password answers nothing else until the Operator logs in.
   useEffect(() => {
     let active = true;
     setLoadError(null);
 
-    // Setup comes first: on an unconfigured host every other endpoint is useless.
     client
       .getSetupStatus()
       .then(async (status) => {
         if (!active) return;
         setSetupStatus(status);
         if (status.required) return;
-        const [chat, evals, settings] = await Promise.all([
-          client.getChatSnapshot(),
-          client.getEvalsSnapshot(),
-          client.getSettingsSnapshot(),
-        ]);
-        if (active) setData({ chat, evals, settings });
+        const current = await client.getSessionStatus();
+        if (active) setSession(current);
       })
       .catch((error: unknown) => {
         if (active) setLoadError(errorMessage(error));
@@ -120,8 +119,39 @@ export function App({ client = harnessClient }: AppProps) {
     };
   }, [client]);
 
+  const gateOpen =
+    setupStatus !== null &&
+    !setupStatus.required &&
+    session !== null &&
+    (!session.authentication_required || session.authenticated);
+
+  useEffect(() => {
+    if (!gateOpen || data !== null) return;
+    let active = true;
+
+    Promise.all([
+      client.getChatSnapshot(),
+      client.getEvalsSnapshot(),
+      client.getSettingsSnapshot(),
+    ])
+      .then(([chat, evals, settings]) => {
+        if (active) setData({ chat, evals, settings });
+      })
+      .catch((error: unknown) => {
+        if (active) setLoadError(errorMessage(error));
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [client, gateOpen, data]);
+
   if (setupStatus?.required) {
     return <SetupArea client={client} status={setupStatus} onDone={setSetupStatus} />;
+  }
+
+  if (session?.authentication_required && !session.authenticated) {
+    return <LoginArea client={client} onAuthenticated={setSession} />;
   }
 
   if (setupStatus?.restart_required) {
@@ -202,6 +232,69 @@ export function App({ client = harnessClient }: AppProps) {
           </>
         )}
       </main>
+    </div>
+  );
+}
+
+function LoginArea({
+  client,
+  onAuthenticated,
+}: {
+  client: HarnessClient;
+  onAuthenticated: (status: SessionStatus) => void;
+}) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    void client
+      .login(password)
+      .then(onAuthenticated)
+      .catch((cause: unknown) => setError(errorMessage(cause)))
+      .finally(() => {
+        setBusy(false);
+        setPassword("");
+      });
+  };
+
+  return (
+    <div className="setup-page">
+      <form className="setup-card" onSubmit={submit}>
+        <header>
+          <span className="loading-mark">H2</span>
+          <h1>Entrar no Harness</h1>
+          <p>
+            Este host exige a senha de Operator. A sessão vive só nesta aba: recarregar
+            a página pede a senha de novo.
+          </p>
+        </header>
+
+        <label className="setup-field">
+          <span>Senha de Operator</span>
+          <input
+            type="password"
+            value={password}
+            required
+            aria-label="Senha de Operator"
+            autoComplete="current-password"
+            onChange={(event) => setPassword(event.target.value)}
+          />
+        </label>
+
+        {error && (
+          <div className="action-error setup-error" role="alert">
+            {error}
+          </div>
+        )}
+
+        <button className="primary-button" type="submit" disabled={busy}>
+          {busy ? "Entrando…" : "Entrar"}
+        </button>
+      </form>
     </div>
   );
 }

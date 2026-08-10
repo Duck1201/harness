@@ -19,6 +19,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .ag_ui import encode_sse, project_agent_event, run_error_event, run_started_event
 from .application_service import ApplicationService, ApplicationServiceError
+from .auth import AuthenticationError, SessionController, hash_password
 from .config import load_config
 from .conversation_store import ConversationStore, NotFoundError
 from .domain import (
@@ -72,6 +73,14 @@ class GrantRequest(ApiModel):
 
 class ConfirmationDecisionRequest(ApiModel):
     approved: bool
+
+
+class LoginRequest(ApiModel):
+    password: str
+
+
+class OperatorPasswordRequest(ApiModel):
+    password: str
 
 
 class FeedbackRequest(ApiModel):
@@ -155,16 +164,21 @@ def create_app(
     reopen_setup: bool | None = None,
     static_dir: str | Path = Path("web/dist"),
     max_body_bytes: int = 1024 * 1024,
+    session_controller: SessionController | None = None,
 ) -> FastAPI:
     if max_body_bytes < 1:
         raise ValueError("max_body_bytes must be positive")
     effective_origins = tuple(allowed_origins or ())
+    operator_password_hash: str | None = None
+    credentials: CredentialStore | None = None
     if service is None:
         host_store = _host_config_store(host_config_path)
         host_config = host_store.load_optional()
         if allowed_origins is None:
             effective_origins = _configured_origins(host_config)
         credential_store = CredentialStore(host_store.credentials_path)
+        credentials = credential_store
+        operator_password_hash = credential_store.read_operator_password_hash()
         service = _default_service(
             host_store=host_store,
             credential_store=credential_store,
@@ -182,6 +196,7 @@ def create_app(
                 print(message, file=sys.stderr)
     origins = frozenset(effective_origins)
     application_service = service
+    sessions = session_controller or SessionController(password_hash=operator_password_hash)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -200,11 +215,20 @@ def create_app(
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Accept", "X-Harness-Setup-Token"],
     )
+    app.add_middleware(_OperatorAuthenticationMiddleware, sessions=sessions)
     app.add_middleware(_BodyLimitMiddleware, max_body_bytes=max_body_bytes)
     app.add_middleware(_OriginAllowlistMiddleware, allowed_origins=origins)
 
     @app.exception_handler(ApplicationServiceError)
     async def application_error(request: Request, error: ApplicationServiceError) -> JSONResponse:
+        del request
+        return JSONResponse(
+            status_code=error.status_code,
+            content={"error": {"code": error.code, "message": str(error)}},
+        )
+
+    @app.exception_handler(AuthenticationError)
+    async def authentication_error(request: Request, error: AuthenticationError) -> JSONResponse:
         del request
         return JSONResponse(
             status_code=error.status_code,
@@ -292,6 +316,45 @@ def create_app(
         setup_controller.complete(supplied_token, payload)
         return JSONResponse(content={"restart_required": True})
 
+    @app.get("/api/session")
+    async def session_status(request: Request) -> dict[str, Any]:
+        status = sessions.status(request.headers.get("x-harness-session"))
+        return {
+            "authentication_required": status.authentication_required,
+            "authenticated": status.authenticated,
+            "expires_at": (
+                status.expires_at.isoformat() if status.expires_at is not None else None
+            ),
+        }
+
+    @app.post("/api/session", status_code=201)
+    async def login(payload: LoginRequest) -> dict[str, Any]:
+        token, expires_at = sessions.login(payload.password)
+        return {"session": token, "expires_at": expires_at.isoformat()}
+
+    @app.delete("/api/session", status_code=204)
+    async def logout(request: Request) -> Response:
+        sessions.logout(request.headers.get("x-harness-session"))
+        return Response(status_code=204)
+
+    @app.put("/api/admin/operator-password", status_code=204)
+    async def set_operator_password(payload: OperatorPasswordRequest) -> Response:
+        # Reachable without a session only while none is configured, and only from
+        # loopback: the authentication middleware enforces both.
+        if credentials is None:
+            raise AuthenticationError(
+                "credential_store_unavailable",
+                "This app was built without a credential store.",
+                status_code=409,
+            )
+        try:
+            digest = hash_password(payload.password)
+        except ValueError as error:
+            raise SetupError("weak_operator_password", str(error), status_code=422) from error
+        credentials.write_operator_password_hash(digest)
+        sessions.set_password_hash(digest)
+        return Response(status_code=204)
+
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
         readiness = application_service.readiness
@@ -300,7 +363,8 @@ def create_app(
             "reason_code": readiness.reason_code,
             "capabilities": {
                 "settings_mutation": False,
-                "admin": False,
+                "admin": credentials is not None,
+                "authentication_required": sessions.authentication_required,
                 "ag_ui_sse": True,
                 "eval_runner": True,
                 "static_spa": Path(static_dir).is_dir(),
@@ -996,6 +1060,46 @@ class _OriginAllowlistMiddleware:
                     )
                     await response(scope, receive, send)
                     return
+        await self._app(scope, receive, send)
+
+
+class _OperatorAuthenticationMiddleware:
+    """Fail-closed network exposure (ADR-0005).
+
+    With no Operator password configured the server answers only direct loopback
+    connections; with one configured every API route needs a session. The
+    exceptions are the routes that must work before a login exists.
+    """
+
+    _OPEN_PATHS = frozenset({"/api/health", "/api/session", "/api/setup", "/api/setup/status"})
+
+    def __init__(self, app: ASGIApp, *, sessions: SessionController) -> None:
+        self._app = app
+        self._sessions = sessions
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+        path = str(scope.get("path", ""))
+        if path.startswith("/api/") and path not in self._OPEN_PATHS:
+            request = Request(scope)
+            try:
+                if self._sessions.authentication_required:
+                    self._sessions.authorize(request.headers.get("x-harness-session"))
+                elif not _is_direct_loopback(request):
+                    raise AuthenticationError(
+                        "authentication_required",
+                        "This host has no Operator password, so only loopback is served.",
+                        status_code=401,
+                    )
+            except AuthenticationError as error:
+                response = JSONResponse(
+                    status_code=error.status_code,
+                    content={"error": {"code": error.code, "message": str(error)}},
+                )
+                await response(scope, receive, send)
+                return
         await self._app(scope, receive, send)
 
 

@@ -43,7 +43,29 @@ def test_credential_store_keeps_brave_secret_separate_and_private(tmp_path: Path
     assert store.read("brave_api_key") == "brave-secret"
     assert stat.S_IMODE(store.path.stat().st_mode) == 0o600
     payload = json.loads(store.path.read_text(encoding="utf-8"))
-    assert payload == {"schema_version": 1, "brave_api_key": "brave-secret"}
+    assert payload == {
+        "schema_version": 1,
+        "brave_api_key": "brave-secret",
+        "operator_password_hash": None,
+    }
+
+
+def test_credentials_are_written_one_at_a_time_without_dropping_the_other(
+    tmp_path: Path,
+) -> None:
+    store = CredentialStore(tmp_path / "credentials.json")
+
+    store.write_brave_api_key("brave-secret")
+    store.write_operator_password_hash("pbkdf2_sha256$1$00$11")
+
+    assert store.read("brave_api_key") == "brave-secret"
+    assert store.read_operator_password_hash() == "pbkdf2_sha256$1$00$11"
+
+    store.write_brave_api_key("rotated-secret")
+
+    assert store.read("brave_api_key") == "rotated-secret"
+    assert store.read_operator_password_hash() == "pbkdf2_sha256$1$00$11"
+    assert CredentialStore(tmp_path / "missing.json").read_operator_password_hash() is None
 
 
 def test_host_config_replace_is_atomic_when_the_final_swap_fails(

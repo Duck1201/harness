@@ -26,6 +26,10 @@ from harness import (
 )
 from harness.ag_ui import project_agent_event
 
+# With no Operator password configured the server only answers direct loopback,
+# so a test has to say where its request comes from.
+LOOPBACK = ("127.0.0.1", 51000)
+
 
 class FakeEstimator:
     validated = True
@@ -139,7 +143,7 @@ def test_agent_sse_accepts_run_agent_input_and_projects_documented_events(
         ),
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, client=LOOPBACK) as client:
         conversation_id = _create_conversation(client, tmp_path / "workspace")
         with client.stream(
             "POST",
@@ -241,7 +245,7 @@ def test_agent_generates_run_id_and_rejects_inputs_without_a_typed_user_message(
     app = _app(tmp_path, (ModelResponse(content="ok"),))
     run_input_schema = app.openapi()["components"]["schemas"]["RunAgentInput"]
 
-    with TestClient(app) as client:
+    with TestClient(app, client=LOOPBACK) as client:
         conversation_id = _create_conversation(client, tmp_path / "workspace")
         with client.stream(
             "POST",
@@ -287,7 +291,7 @@ def test_agent_generates_run_id_and_rejects_inputs_without_a_typed_user_message(
 def test_failed_agent_stream_emits_custom_outcome_then_one_run_error(tmp_path: Path) -> None:
     app = _app(tmp_path, ())
 
-    with TestClient(app) as client:
+    with TestClient(app, client=LOOPBACK) as client:
         conversation_id = _create_conversation(client, tmp_path / "workspace")
         with client.stream(
             "POST",

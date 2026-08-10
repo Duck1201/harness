@@ -288,6 +288,12 @@ export interface SettingsSnapshot {
   loop: LoopSettings;
 }
 
+export interface SessionStatus {
+  authentication_required: boolean;
+  authenticated: boolean;
+  expires_at: string | null;
+}
+
 export interface SetupStatus {
   configured: boolean;
   required: boolean;

@@ -725,7 +725,8 @@ const adrFiles = fs
   .readdirSync(adrDirectory)
   .filter((name) => /^\d{4}-.*\.md$/.test(name))
   .sort();
-check(adrFiles.length === 4, "docs/adr deve conter os quatro ADRs fundacionais");
+const foundationalAdrs = adrFiles.filter((name) => /^000[1-4]-/.test(name));
+check(foundationalAdrs.length === 4, "docs/adr deve conter os quatro ADRs fundacionais");
 for (const adrFile of adrFiles) {
   const content = fs.readFileSync(path.join(adrDirectory, adrFile), "utf8");
   check(/^# .+/m.test(content), `${adrFile}: título ausente`);

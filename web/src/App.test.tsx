@@ -141,6 +141,30 @@ describe("App", () => {
     ).toBeInTheDocument();
   });
 
+  it("pede a senha antes de qualquer área quando o host exige autenticação", async () => {
+    const user = userEvent.setup();
+    const client = new MockHarnessClient();
+    client.seedAuthenticationRequired("operator-password-1");
+    const chat = vi.spyOn(client, "getChatSnapshot");
+    const login = vi.spyOn(client, "login");
+    render(<App client={client} />);
+
+    expect(await screen.findByRole("heading", { name: "Entrar no Harness" })).toBeInTheDocument();
+    expect(chat).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText("Senha de Operator"), "wrong-password");
+    await user.click(screen.getByRole("button", { name: "Entrar" }));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Senha de Operator"), "operator-password-1");
+    await user.click(screen.getByRole("button", { name: "Entrar" }));
+
+    await waitFor(() => expect(login).toHaveBeenCalledWith("operator-password-1"));
+    expect(
+      await screen.findByRole("heading", { name: "Refinar retenção por conversa" }),
+    ).toBeInTheDocument();
+  });
+
   it("envia RunAgentInput, chama Stop e aborta o stream no unmount", async () => {
     const user = userEvent.setup();
     const client = new MockHarnessClient();

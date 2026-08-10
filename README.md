@@ -101,10 +101,59 @@ com escrita atômica e permissão privada.
 
 ### Exposição de rede
 
-A v1 assume **loopback**. Não há autenticação de sessão; a única defesa contra
-outra origem é a allowlist de `Origin`, e a única credencial é o token efêmero de
-setup. Não publique este servidor numa LAN ou na internet sem autenticação à
-frente dele.
+A exposição é derivada da credencial, não de uma flag:
+
+| Estado | Comportamento |
+|---|---|
+| Sem senha de Operator | Só conexões de loopback direto são atendidas. Qualquer outra recebe `401 authentication_required`. |
+| Com senha de Operator | Toda rota da API exige o header `X-Harness-Session` obtido em `POST /api/session`. |
+
+Não existe configuração que abra a porta para a rede sem autenticação. Exceções
+de rota, e por quê: `GET /api/health` (responde a supervisor antes de haver
+login), `/api/setup*` (guardada pelo token efêmero e restrita a loopback) e
+`POST /api/session` (é o login).
+
+Definir ou rotacionar a senha:
+
+```bash
+curl -X PUT http://127.0.0.1:8765/api/admin/operator-password \
+  -H 'Content-Type: application/json' \
+  -H 'Origin: http://127.0.0.1:8765' \
+  -d '{"password": "pelo-menos-doze-caracteres"}'
+```
+
+Trocar a senha invalida todas as sessões abertas. O hash é PBKDF2-HMAC-SHA256
+com 600.000 iterações; a senha original nunca é gravada nem devolvida.
+
+O modelo de ameaça está em [`docs/THREAT-MODEL-AUTH.md`](docs/THREAT-MODEL-AUTH.md).
+
+### Reverse proxy
+
+Para publicar além do loopback, configure a senha e coloque um proxy com TLS à
+frente. O harness recusa qualquer requisição que traga `Forwarded`, `Via`,
+`X-Real-IP` ou `X-Forwarded-*` como se fosse local, então o proxy nunca consegue
+se passar por conexão direta — mas você precisa incluir a origem pública em
+`HARNESS_ALLOWED_ORIGINS`:
+
+```nginx
+server {
+  listen 443 ssl;
+  server_name harness.example;
+
+  location / {
+    proxy_pass http://127.0.0.1:8765;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_http_version 1.1;
+    proxy_buffering off;              # o stream AG-UI é SSE
+    proxy_read_timeout 930s;          # acima de loop.max_turn_duration_seconds
+  }
+}
+```
+
+```bash
+HARNESS_ALLOWED_ORIGINS=https://harness.example harness
+```
 
 ## Uso
 

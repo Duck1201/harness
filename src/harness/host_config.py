@@ -91,7 +91,8 @@ class _CredentialFile(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal[1] = 1
-    brave_api_key: SecretStr
+    brave_api_key: SecretStr | None = None
+    operator_password_hash: str | None = None
 
 
 class CredentialStore:
@@ -99,17 +100,50 @@ class CredentialStore:
         self.path = Path(path).expanduser().resolve(strict=False)
 
     def write_brave_api_key(self, value: str) -> None:
-        normalized = _normalize_secret(value)
-        _atomic_write_json(
-            self.path,
-            {"schema_version": 1, "brave_api_key": normalized},
-        )
+        self._write(brave_api_key=_normalize_secret(value))
+
+    def write_operator_password_hash(self, value: str) -> None:
+        self._write(operator_password_hash=_normalize_secret(value))
 
     def read(self, reference: str) -> str:
         if reference != "brave_api_key":
             raise ValueError("unknown credential reference")
-        credentials = _CredentialFile.model_validate_json(_read_private_file(self.path))
-        return credentials.brave_api_key.get_secret_value()
+        key = self._load().brave_api_key
+        if key is None:
+            raise ValueError("credential is not configured")
+        return key.get_secret_value()
+
+    def read_operator_password_hash(self) -> str | None:
+        try:
+            return self._load().operator_password_hash
+        except (OSError, ValueError):
+            return None
+
+    def _load(self) -> _CredentialFile:
+        return _CredentialFile.model_validate_json(_read_private_file(self.path))
+
+    def _write(self, **fields: str) -> None:
+        # Read, modify, write: each credential is set on its own, and writing one
+        # must not silently drop the other.
+        payload: dict[str, object] = {
+            "schema_version": 1,
+            "brave_api_key": None,
+            "operator_password_hash": None,
+        }
+        try:
+            stored = self._load()
+            payload["brave_api_key"] = self._existing_brave_key()
+            payload["operator_password_hash"] = stored.operator_password_hash
+        except (OSError, ValueError):
+            pass
+        payload.update(fields)
+        _atomic_write_json(self.path, payload)
+
+    def _existing_brave_key(self) -> str | None:
+        try:
+            return self.read("brave_api_key")
+        except (OSError, ValueError):
+            return None
 
 
 def default_host_config_path(environ: Mapping[str, str] | None = None) -> Path:

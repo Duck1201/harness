@@ -21,6 +21,10 @@ from harness import (
 )
 from harness.api import load_brave_api_key
 
+# With no Operator password configured the server only answers direct loopback,
+# so a test has to say where its request comes from.
+LOOPBACK = ("127.0.0.1", 51000)
+
 
 class FakeEstimator:
     validated = True
@@ -106,7 +110,7 @@ def test_health_and_conversation_creation_enforce_server_workspace_allowlist(
         static_dir=tmp_path / "missing-dist",
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, client=LOOPBACK) as client:
         health = client.get("/api/health").json()
         workspaces = client.get("/api/workspaces").json()["workspaces"]
         relative = client.post(
@@ -141,7 +145,7 @@ def test_conversations_can_be_listed_renamed_archived_and_deleted(tmp_path: Path
         static_dir=tmp_path / "missing-dist",
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, client=LOOPBACK) as client:
         created = client.post(
             "/api/conversations",
             json={"workspace_root": str(workspace), "name": "Initial"},
@@ -209,7 +213,7 @@ def test_requests_run_fifo_in_background_with_one_turn_and_editable_queue(
         static_dir=tmp_path / "missing-dist",
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, client=LOOPBACK) as client:
         conversation_id = client.post(
             "/api/conversations", json={"workspace_root": str(workspace)}
         ).json()["conversation"]["id"]
@@ -291,7 +295,7 @@ def test_revoked_write_grant_is_revalidated_before_the_effect(tmp_path: Path) ->
         static_dir=tmp_path / "missing-dist",
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, client=LOOPBACK) as client:
         conversation_id = client.post(
             "/api/conversations", json={"workspace_root": str(workspace)}
         ).json()["conversation"]["id"]
@@ -350,7 +354,7 @@ def test_stop_is_cooperative_and_the_next_pending_request_starts(tmp_path: Path)
         static_dir=tmp_path / "missing-dist",
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, client=LOOPBACK) as client:
         conversation_id = client.post(
             "/api/conversations", json={"workspace_root": str(workspace)}
         ).json()["conversation"]["id"]
@@ -390,7 +394,7 @@ def test_feedback_and_ui_snapshots_are_query_projections(tmp_path: Path) -> None
         static_dir=tmp_path / "missing-dist",
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, client=LOOPBACK) as client:
         conversation_id = client.post(
             "/api/conversations", json={"workspace_root": str(workspace)}
         ).json()["conversation"]["id"]
@@ -425,7 +429,7 @@ def test_confirmation_is_absent_until_required_and_cannot_be_answered_blindly(
         static_dir=tmp_path / "missing-dist",
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, client=LOOPBACK) as client:
         conversation_id = client.post(
             "/api/conversations", json={"workspace_root": str(workspace)}
         ).json()["conversation"]["id"]
@@ -463,7 +467,7 @@ def test_origin_body_limit_and_optional_spa_fallback_are_closed_by_default(
         max_body_bytes=64,
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, client=LOOPBACK) as client:
         denied_origin = client.get("/api/health", headers={"Origin": "http://attacker.test"})
         allowed_origin = client.get("/api/health", headers={"Origin": "http://operator.test"})
         oversized = client.post(

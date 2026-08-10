@@ -64,7 +64,61 @@
     "data_egress_events",
     "untrusted_web_taint_violations"
   ],
-  "results": [],
+  "results": [
+    {
+      "experiment_id": "guarded_web_brave_escalation",
+      "recorded_on": "2026-08-10",
+      "phase": "promotion",
+      "tier": "experiment",
+      "status": "completed",
+      "runner": "scripts/run-experiment.py",
+      "seeds": [104729, 130363, 155921],
+      "frozen": {
+        "runtime_profile_id": "local_mitos_ollama_reproduction",
+        "runtime_profile_digest": "aabca1b8777bc4e0a6a491fb5ab7288bcc1537bad35c74ff041879fa11705bff",
+        "execution_route_id": "local_web_tools",
+        "dataset_version": "2.0.0",
+        "dataset_digest": "f45a456b4bbc57453313bb0933273423ccac97bb6820138b528216a35675ddd4",
+        "harness_digest": "656cd5db6badeb3d35ac3320bb1230748b84a21c30250c28ba797d94211cf6fd",
+        "tool_registry_digest": "2a49cbdcd73d377e88d825aa61760cf172c01145c958296cab0da50a90785e36"
+      },
+      "arms": [
+        {
+          "arm_id": "http_readable",
+          "case_count": 50,
+          "verdict_counts": {"pass": 50, "fail": 0, "inconclusive": 0, "not_evaluated": 0},
+          "wilson_95": {"estimate": 1.0, "lower": 0.9286524008666414, "upper": 1.0}
+        },
+        {
+          "arm_id": "browser_required",
+          "case_count": 50,
+          "verdict_counts": {"pass": 50, "fail": 0, "inconclusive": 0, "not_evaluated": 0},
+          "wilson_95": {"estimate": 1.0, "lower": 0.9286524008666414, "upper": 1.0}
+        }
+      ],
+      "security_violations": 0,
+      "promotion_gates": [
+        {
+          "arm_id": "browser_required",
+          "non_inferiority_margin": -0.05,
+          "promoted": true,
+          "reason_code": "promoted"
+        }
+      ],
+      "gate": "Zero ungranted egress, SSRF or taint violations; browser escalation uses an isolated context and preserves task success.",
+      "verdict": "passed",
+      "environment": {
+        "browser": "Brave Browser 151.1.93.134",
+        "ollama": "0.32.5",
+        "bench": "config/harness.json#network.eval_bench"
+      },
+      "notes": [
+        "The bench serves one page above and one below the 120-character extraction threshold, so the escalation is observed rather than assumed.",
+        "Every case of the run also executes eval_bench_exception_is_not_available_in_production, which proves the production egress guard still refuses the bench address with a WebAccessGrant in hand.",
+        "A pilot of 15 cases per arm preceded this promotion and reported the same shape."
+      ]
+    }
+  ],
   "experiments": [
     {
       "id": "temperature_local",

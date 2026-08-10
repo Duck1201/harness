@@ -6,6 +6,13 @@ from .application_service import (
     OperatorConfirmationGate,
     WorkspaceInfo,
 )
+from .auth import (
+    AuthenticationError,
+    SessionController,
+    SessionStatus,
+    hash_password,
+    verify_password,
+)
 from .brave_browser import (
     BraveBrowserCapability,
     BraveBrowserError,
@@ -204,6 +211,7 @@ __all__ = [
     "ApplicationService",
     "ApplicationServiceError",
     "AssertionEvaluation",
+    "AuthenticationError",
     "BenchmarkLease",
     "BenchmarkLeaseCanceled",
     "BenchmarkLeaseError",
@@ -324,7 +332,9 @@ __all__ = [
     "ResultProducerIs",
     "ResultStatusIs",
     "RuntimeProfileConfig",
+    "SessionController",
     "SessionPolicy",
+    "SessionStatus",
     "SetupController",
     "SetupError",
     "SetupStatus",
@@ -363,10 +373,12 @@ __all__ = [
     "evaluate_oracle",
     "evaluate_promotion_gate",
     "find_brave_executable",
+    "hash_password",
     "load_config",
     "load_eval_catalog",
     "load_experiment_manifest",
     "load_regression_dataset",
     "paired_bootstrap_difference",
+    "verify_password",
     "wilson_interval",
 ]
