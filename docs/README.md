@@ -13,14 +13,16 @@ runtimes e modelos citados na pesquisa não pertencem automaticamente ao roadmap
 3. [Pendências da primeira release](RELEASE-PENDING.md) — exclusões, motivos,
    gates e limitações residuais.
 4. [ADRs](adr/) — fronteiras arquiteturais difíceis de reverter.
-5. [Pesquisa técnica completa](research/QWEN35_4B_PESQUISA.md) — fatos,
+5. [Modelo de ameaça da autenticação](THREAT-MODEL-AUTH.md) — ativos, ameaças,
+   mitigações e o que fica fora do modelo na primeira release.
+6. [Pesquisa técnica completa](research/QWEN35_4B_PESQUISA.md) — fatos,
    inferências, limitações, backends, memória, segurança, lacunas e fontes.
-6. [Cruzamento com a herança do 1.0](research/CRUZAMENTO_HERANCA_QWEN35_4B.md)
+7. [Cruzamento com a herança do 1.0](research/CRUZAMENTO_HERANCA_QWEN35_4B.md)
    — confronto entre documentação oficial e cerca de 240 turnos locais,
    convergências, contradições, limites de generalização e decisões.
-7. [Comparativo histórico Qwen3.5-4B versus Qwen2.5-Coder-7B](research/COMPARATIVO_QWEN35_4B_VS_QWEN25_CODER_7B.md)
+8. [Comparativo histórico Qwen3.5-4B versus Qwen2.5-Coder-7B](research/COMPARATIVO_QWEN35_4B_VS_QWEN25_CODER_7B.md)
    — evidência preservada; Qwen2.5 foi removido do roadmap.
-8. [Guia histórico de arquitetura](HARNESS_QWEN35_4B.md) e
+9. [Guia histórico de arquitetura](HARNESS_QWEN35_4B.md) e
    [guia histórico de tools](TOOLS_PARA_QWEN35.md) — pesquisa que explica a
    origem das decisões, sem competir com os contratos vigentes.
 

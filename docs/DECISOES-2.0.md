@@ -52,6 +52,8 @@ O vocabulário canônico está em [`CONTEXT.md`](../CONTEXT.md). Em particular:
 | Stores | Dois bancos separados: estado canônico e telemetria sem conteúdo |
 | Retenção | Uma policy global remove Conversation inteira; nunca cria buracos no histórico |
 | UI | AG-UI é projeção do estado, não fonte canônica; UX e evals são web-first |
+| Acesso | Sem senha de Operator, só loopback direto é atendido; com senha, toda rota exige sessão. Não há terceira opção |
+| Confirmação | Escrita sob UntrustedWebTaint exige decisão do Operator para aquela chamada; aprovar não cria grant nem amplia acesso |
 | Roadmap | Qwen2.5 está fora do roadmap; pesquisa comparativa permanece histórica |
 
 ## Estado, projeções e persistência
