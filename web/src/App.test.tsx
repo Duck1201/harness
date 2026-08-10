@@ -64,6 +64,83 @@ describe("App", () => {
     );
   });
 
+  it("aprova a escrita com dado da web só depois da decisão do Operator", async () => {
+    const user = userEvent.setup();
+    const client = new MockHarnessClient();
+    client.seedConfirmation({
+      id: "turn-1-confirmation-2",
+      conversation_id: "chat-128",
+      turn_id: "turn-1",
+      step_sequence: 2,
+      reason_code: "web_taint_confirmation_required",
+      tool_calls: [
+        {
+          id: "write-1",
+          name: "write_file",
+          arguments: { file_path: "relatorio.md", content: "vindo da web" },
+        },
+      ],
+    });
+    const resolve = vi.spyOn(client, "resolveConfirmation");
+    render(<App client={client} />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Escrita com dado da web" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("write_file")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Aprovar esta escrita" }));
+
+    await waitFor(() =>
+      expect(resolve).toHaveBeenCalledWith("chat-128", "turn-1-confirmation-2", true),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("heading", { name: "Escrita com dado da web" })).toBeNull(),
+    );
+  });
+
+  it("exige o setup antes de qualquer outra área e pede reinício ao concluir", async () => {
+    const user = userEvent.setup();
+    const client = new MockHarnessClient();
+    client.seedSetupRequired();
+    const complete = vi.spyOn(client, "completeSetup");
+    const chat = vi.spyOn(client, "getChatSnapshot");
+    render(<App client={client} />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Configurar este host" }),
+    ).toBeInTheDocument();
+    expect(chat).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText("Token de setup"), "token-do-stderr");
+    await user.type(
+      screen.getByLabelText("Raízes de Workspace autorizadas"),
+      "/workspaces/harness-2",
+    );
+    await user.type(screen.getByLabelText("Diretório de estado"), "/var/lib/harness-2");
+    await user.type(
+      screen.getByLabelText("Caminho do tokenizer.json"),
+      "/var/lib/harness-2/tokenizer.json",
+    );
+    await user.type(screen.getByLabelText("SHA-256 do tokenizer"), "a".repeat(64));
+    await user.type(screen.getByLabelText("Origins autorizadas"), "http://127.0.0.1:8765");
+    await user.click(screen.getByRole("button", { name: "Concluir setup" }));
+
+    await waitFor(() =>
+      expect(complete).toHaveBeenCalledWith("token-do-stderr", {
+        allowed_workspace_roots: ["/workspaces/harness-2"],
+        state_dir: "/var/lib/harness-2",
+        tokenizer_path: "/var/lib/harness-2/tokenizer.json",
+        tokenizer_digest: "a".repeat(64),
+        allowed_origins: ["http://127.0.0.1:8765"],
+        brave_api_key: null,
+      }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Configuração gravada" }),
+    ).toBeInTheDocument();
+  });
+
   it("envia RunAgentInput, chama Stop e aborta o stream no unmount", async () => {
     const user = userEvent.setup();
     const client = new MockHarnessClient();

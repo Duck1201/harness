@@ -13,9 +13,12 @@ import type {
   FeedbackRecord,
   Grant,
   HealthSnapshot,
+  PendingConfirmation,
   RegressionDraft,
   RunAgentInput,
   SettingsSnapshot,
+  SetupStatus,
+  SetupSubmission,
   Workspace,
 } from "../types";
 
@@ -51,6 +54,14 @@ export interface HarnessClient {
   listGrants(conversationId: string): Promise<Grant[]>;
   addGrant(conversationId: string, permission: string): Promise<Grant>;
   revokeGrant(conversationId: string, grantId: string): Promise<void>;
+  getPendingConfirmation(
+    conversationId: string,
+  ): Promise<PendingConfirmation | null>;
+  resolveConfirmation(
+    conversationId: string,
+    confirmationId: string,
+    approved: boolean,
+  ): Promise<void>;
   stop(conversationId: string): Promise<void>;
   addFeedback(
     conversationId: string,
@@ -80,4 +91,7 @@ export interface HarnessClient {
   ): Promise<RegressionDraft>;
 
   getSettingsSnapshot(): Promise<SettingsSnapshot>;
+
+  getSetupStatus(): Promise<SetupStatus>;
+  completeSetup(token: string, submission: SetupSubmission): Promise<void>;
 }

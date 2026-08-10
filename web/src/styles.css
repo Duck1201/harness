@@ -3264,3 +3264,146 @@ details[open] > summary .summary-chevron {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Operator confirmation for a write that carries UntrustedWebTaint */
+.confirmation-card {
+  max-width: 720px;
+  margin: 16px auto 0;
+  padding: 14px 16px;
+  border: 1px solid #ead7a4;
+  border-radius: var(--radius);
+  background: var(--amber-soft);
+  box-shadow: var(--shadow-soft);
+}
+
+.confirmation-card header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--amber);
+}
+
+.confirmation-card h2 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.confirmation-card p {
+  margin: 8px 0 10px;
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.confirmation-calls {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.confirmation-calls li {
+  padding: 9px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+}
+
+.confirmation-calls code {
+  font-size: 10px;
+  font-weight: 680;
+}
+
+.confirmation-calls pre {
+  margin: 6px 0 0;
+  overflow-x: auto;
+  color: var(--muted);
+  font-size: 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.confirmation-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* First-boot setup */
+.setup-page {
+  display: flex;
+  min-height: 100vh;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 20px;
+  background:
+    radial-gradient(circle at 73% -20%, rgb(109 61 245 / 8%), transparent 34%),
+    var(--wash);
+}
+
+.setup-card {
+  display: grid;
+  width: min(560px, 100%);
+  gap: 14px;
+  padding: 24px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--paper);
+  box-shadow: var(--shadow-soft);
+}
+
+.setup-card header h1 {
+  margin: 12px 0 4px;
+  font-size: 22px;
+  font-weight: 720;
+  letter-spacing: -0.04em;
+}
+
+.setup-card header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.setup-field {
+  display: grid;
+  gap: 5px;
+}
+
+.setup-field > span {
+  font-size: 10px;
+  font-weight: 680;
+}
+
+.setup-field input,
+.setup-field textarea {
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+  resize: vertical;
+}
+
+.setup-field small {
+  color: var(--soft);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.setup-error {
+  position: static;
+  max-width: none;
+  box-shadow: none;
+}
+
+.setup-footnote {
+  margin: 0;
+  color: var(--soft);
+  font-size: 10px;
+}

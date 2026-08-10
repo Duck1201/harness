@@ -95,6 +95,19 @@ export interface FeedbackRecord {
   created_at: string;
 }
 
+export interface PendingConfirmation {
+  id: string;
+  conversation_id: string;
+  turn_id: string;
+  step_sequence: number;
+  reason_code: string;
+  tool_calls: Array<{
+    id: string;
+    name: string;
+    arguments: Record<string, JsonValue>;
+  }>;
+}
+
 export interface ApiChatSnapshot {
   conversation: Conversation;
   pending_requests: ApiPendingRequest[];
@@ -102,6 +115,7 @@ export interface ApiChatSnapshot {
   active_turn: Turn | null;
   turns: Turn[];
   feedback: FeedbackRecord[];
+  pending_confirmation: PendingConfirmation | null;
 }
 
 export interface WorkspaceGroup {
@@ -188,6 +202,7 @@ export interface ChatSnapshot {
   activeTurn: Turn | null;
   turns: Turn[];
   feedback: FeedbackRecord[];
+  pendingConfirmation: PendingConfirmation | null;
   execution?: ExecutionSnapshot;
 }
 
@@ -271,6 +286,22 @@ export interface SettingsSnapshot {
   default_execution_route: string;
   runtime_profile: string;
   loop: LoopSettings;
+}
+
+export interface SetupStatus {
+  configured: boolean;
+  required: boolean;
+  restart_required: boolean;
+  token_expires_at: string | null;
+}
+
+export interface SetupSubmission {
+  allowed_workspace_roots: string[];
+  tokenizer_path: string;
+  tokenizer_digest: string;
+  state_dir: string;
+  allowed_origins: string[];
+  brave_api_key?: string | null;
 }
 
 export interface RunAgentMessage {

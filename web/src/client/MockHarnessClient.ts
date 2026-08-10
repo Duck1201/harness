@@ -11,9 +11,12 @@ import type {
   FeedbackRecord,
   Grant,
   HealthSnapshot,
+  PendingConfirmation,
   RegressionDraft,
   RunAgentInput,
   SettingsSnapshot,
+  SetupStatus,
+  SetupSubmission,
   Workspace,
 } from "../types";
 
@@ -137,6 +140,13 @@ export class MockHarnessClient implements HarnessClient {
     },
   ];
   private feedback: FeedbackRecord[] = [];
+  private confirmations = new Map<string, PendingConfirmation>();
+  private setupStatus: SetupStatus = {
+    configured: true,
+    required: false,
+    restart_required: false,
+    token_expires_at: null,
+  };
   private runs = clone(initialRuns);
   private reports = clone(initialReports);
   private drafts: RegressionDraft[] = [];
@@ -311,6 +321,7 @@ export class MockHarnessClient implements HarnessClient {
       feedback: selected
         ? this.feedback.filter((item) => item.conversation_id === selected.id)
         : [],
+      pendingConfirmation: selected ? this.confirmations.get(selected.id) ?? null : null,
       execution: {
         defaultExecutionRoute: "local_web_tools",
         runtimeProfile: "local_mitos_ollama_reproduction",
@@ -445,7 +456,30 @@ export class MockHarnessClient implements HarnessClient {
     );
   }
 
+  async getPendingConfirmation(conversationId: string) {
+    this.requireConversation(conversationId);
+    return clone(this.confirmations.get(conversationId) ?? null);
+  }
+
+  async resolveConfirmation(
+    conversationId: string,
+    confirmationId: string,
+    _approved: boolean,
+  ) {
+    const pending = this.confirmations.get(conversationId);
+    if (!pending || pending.id !== confirmationId) {
+      throw new Error("confirmation_not_pending");
+    }
+    this.confirmations.delete(conversationId);
+  }
+
+  /** Seeds a pending confirmation so the demo mode can exercise the approval card. */
+  seedConfirmation(confirmation: PendingConfirmation) {
+    this.confirmations.set(confirmation.conversation_id, confirmation);
+  }
+
   async stop(_conversationId: string) {
+    this.confirmations.delete(_conversationId);
     return undefined;
   }
 
@@ -570,6 +604,30 @@ export class MockHarnessClient implements HarnessClient {
         offer_tools_on_final_step: false,
       },
     });
+  }
+
+  async getSetupStatus() {
+    return clone(this.setupStatus);
+  }
+
+  async completeSetup(token: string, _submission: SetupSubmission) {
+    if (!token) throw new Error("setup_token_required");
+    this.setupStatus = {
+      configured: true,
+      required: false,
+      restart_required: true,
+      token_expires_at: null,
+    };
+  }
+
+  /** Puts the mock back in the state a first boot presents. */
+  seedSetupRequired(tokenExpiresAt: string | null = null) {
+    this.setupStatus = {
+      configured: false,
+      required: true,
+      restart_required: false,
+      token_expires_at: tokenExpiresAt,
+    };
   }
 
   private requireConversation(conversationId: string) {

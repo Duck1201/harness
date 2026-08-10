@@ -16,9 +16,12 @@ import type {
   Grant,
   HealthSnapshot,
   JsonValue,
+  PendingConfirmation,
   RegressionDraft,
   RunAgentInput,
   SettingsSnapshot,
+  SetupStatus,
+  SetupSubmission,
   ToolCall,
   Turn,
   Workspace,
@@ -140,6 +143,7 @@ export class FetchHarnessClient implements HarnessClient {
         activeTurn: null,
         turns: [],
         feedback: [],
+        pendingConfirmation: null,
         execution: toExecutionSnapshot(settings),
       };
     }
@@ -175,6 +179,7 @@ export class FetchHarnessClient implements HarnessClient {
       activeTurn: snapshot.active_turn,
       turns: snapshot.turns,
       feedback: snapshot.feedback,
+      pendingConfirmation: snapshot.pending_confirmation,
       execution: toExecutionSnapshot(settings),
     };
   }
@@ -298,6 +303,26 @@ export class FetchHarnessClient implements HarnessClient {
     await this.request<void>(
       `/conversations/${encodeURIComponent(conversationId)}/grants/${encodeURIComponent(grantId)}`,
       { method: "DELETE" },
+    );
+  }
+
+  async getPendingConfirmation(conversationId: string) {
+    const payload = await this.request<{ confirmation: PendingConfirmation | null }>(
+      `/conversations/${encodeURIComponent(conversationId)}/confirmation`,
+    );
+    return payload.confirmation;
+  }
+
+  async resolveConfirmation(
+    conversationId: string,
+    confirmationId: string,
+    approved: boolean,
+  ) {
+    await this.request(
+      `/conversations/${encodeURIComponent(conversationId)}/confirmation/${encodeURIComponent(
+        confirmationId,
+      )}`,
+      this.jsonRequest("POST", { approved }),
     );
   }
 
@@ -432,6 +457,22 @@ export class FetchHarnessClient implements HarnessClient {
       this.jsonRequest("PATCH", update),
     );
     return payload.conversation;
+  }
+
+  async getSetupStatus() {
+    return this.request<SetupStatus>("/setup/status");
+  }
+
+  async completeSetup(token: string, submission: SetupSubmission) {
+    // The setup token is ephemeral and travels in its own header, never in the body.
+    await this.request("/setup", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Harness-Setup-Token": token,
+      },
+      body: JSON.stringify(submission),
+    });
   }
 
   private jsonRequest(method: string, body: unknown): RequestInit {

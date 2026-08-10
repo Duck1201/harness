@@ -19,6 +19,7 @@ import {
   Plus,
   Search,
   Settings as SettingsIcon,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Square,
@@ -51,7 +52,9 @@ import type {
   FeedbackRecord,
   Grant,
   JsonValue,
+  PendingConfirmation,
   SettingsSnapshot,
+  SetupStatus,
   ToolCall,
   WorkspaceGroup,
 } from "./types";
@@ -88,17 +91,24 @@ export function App({ client = harnessClient }: AppProps) {
   const [area, setArea] = useState<AppArea>("chat");
   const [data, setData] = useState<AppData | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
 
   useEffect(() => {
     let active = true;
     setLoadError(null);
 
-    Promise.all([
-      client.getChatSnapshot(),
-      client.getEvalsSnapshot(),
-      client.getSettingsSnapshot(),
-    ])
-      .then(([chat, evals, settings]) => {
+    // Setup comes first: on an unconfigured host every other endpoint is useless.
+    client
+      .getSetupStatus()
+      .then(async (status) => {
+        if (!active) return;
+        setSetupStatus(status);
+        if (status.required) return;
+        const [chat, evals, settings] = await Promise.all([
+          client.getChatSnapshot(),
+          client.getEvalsSnapshot(),
+          client.getSettingsSnapshot(),
+        ]);
         if (active) setData({ chat, evals, settings });
       })
       .catch((error: unknown) => {
@@ -109,6 +119,24 @@ export function App({ client = harnessClient }: AppProps) {
       active = false;
     };
   }, [client]);
+
+  if (setupStatus?.required) {
+    return <SetupArea client={client} status={setupStatus} onDone={setSetupStatus} />;
+  }
+
+  if (setupStatus?.restart_required) {
+    return (
+      <div className="setup-page">
+        <div className="setup-card" role="status">
+          <header>
+            <span className="loading-mark">H2</span>
+            <h1>Configuração gravada</h1>
+            <p>Reinicie o servidor para que ela entre em vigor e recarregue esta página.</p>
+          </header>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -174,6 +202,161 @@ export function App({ client = harnessClient }: AppProps) {
           </>
         )}
       </main>
+    </div>
+  );
+}
+
+const setupFields = [
+  {
+    name: "allowed_workspace_roots",
+    label: "Raízes de Workspace autorizadas",
+    hint: "Caminhos absolutos, um por linha. Nada fora daqui é legível ou gravável.",
+    multiline: true,
+    required: true,
+  },
+  {
+    name: "state_dir",
+    label: "Diretório de estado",
+    hint: "Onde ficam o CanonicalHistory, a telemetria e o tokenizer.",
+    multiline: false,
+    required: true,
+  },
+  {
+    name: "tokenizer_path",
+    label: "Caminho do tokenizer.json",
+    hint: "Arquivo HuggingFace usado para o orçamento de contexto.",
+    multiline: false,
+    required: true,
+  },
+  {
+    name: "tokenizer_digest",
+    label: "SHA-256 do tokenizer",
+    hint: "sha256sum do arquivo acima. O harness recusa qualquer outro conteúdo.",
+    multiline: false,
+    required: true,
+  },
+  {
+    name: "allowed_origins",
+    label: "Origins autorizadas",
+    hint: "Uma por linha, por exemplo http://127.0.0.1:8765.",
+    multiline: true,
+    required: true,
+  },
+  {
+    name: "brave_api_key",
+    label: "Chave da Brave Search (opcional)",
+    hint: "Sem ela, web_search não é oferecida ao modelo.",
+    multiline: false,
+    required: false,
+  },
+] as const;
+
+function SetupArea({
+  client,
+  status,
+  onDone,
+}: {
+  client: HarnessClient;
+  status: SetupStatus;
+  onDone: (status: SetupStatus) => void;
+}) {
+  const [token, setToken] = useState("");
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const lines = (name: string) =>
+    (values[name] ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    const brave = (values.brave_api_key ?? "").trim();
+    void client
+      .completeSetup(token.trim(), {
+        allowed_workspace_roots: lines("allowed_workspace_roots"),
+        state_dir: (values.state_dir ?? "").trim(),
+        tokenizer_path: (values.tokenizer_path ?? "").trim(),
+        tokenizer_digest: (values.tokenizer_digest ?? "").trim(),
+        allowed_origins: lines("allowed_origins"),
+        brave_api_key: brave === "" ? null : brave,
+      })
+      .then(() => onDone({ ...status, configured: true, required: false, restart_required: true }))
+      .catch((cause: unknown) => setError(errorMessage(cause)))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <div className="setup-page">
+      <form className="setup-card" onSubmit={submit}>
+        <header>
+          <span className="loading-mark">H2</span>
+          <h1>Configurar este host</h1>
+          <p>
+            O servidor imprimiu um token de setup no stderr ao subir. Ele expira, vale uma
+            vez e só é aceito por uma conexão direta de loopback.
+          </p>
+        </header>
+
+        <label className="setup-field">
+          <span>Token de setup</span>
+          <input
+            type="password"
+            value={token}
+            required
+            aria-label="Token de setup"
+            autoComplete="off"
+            onChange={(event) => setToken(event.target.value)}
+          />
+          <small>Copie a linha "Harness setup: /setup token=…" do terminal.</small>
+        </label>
+
+        {setupFields.map((field) => (
+          <label className="setup-field" key={field.name}>
+            <span>{field.label}</span>
+            {field.multiline ? (
+              <textarea
+                rows={3}
+                required={field.required}
+                aria-label={field.label}
+                value={values[field.name] ?? ""}
+                onChange={(event) =>
+                  setValues((current) => ({ ...current, [field.name]: event.target.value }))
+                }
+              />
+            ) : (
+              <input
+                type={field.name === "brave_api_key" ? "password" : "text"}
+                required={field.required}
+                aria-label={field.label}
+                autoComplete="off"
+                value={values[field.name] ?? ""}
+                onChange={(event) =>
+                  setValues((current) => ({ ...current, [field.name]: event.target.value }))
+                }
+              />
+            )}
+            <small>{field.hint}</small>
+          </label>
+        ))}
+
+        {error && (
+          <div className="action-error setup-error" role="alert">
+            {error}
+          </div>
+        )}
+
+        <button className="primary-button" type="submit" disabled={busy}>
+          {busy ? "Gravando…" : "Concluir setup"}
+        </button>
+        <p className="setup-footnote">
+          Depois de concluir, reinicie o servidor para que a configuração entre em vigor.
+        </p>
+      </form>
     </div>
   );
 }
@@ -335,7 +518,15 @@ function ChatArea({
         if (!run) return current;
         return { ...current, [runId]: reduceLiveRun(run, event) };
       });
-      if (event.type === "RUN_STARTED" || event.type === "STEP_STARTED") {
+      const isConfirmationEvent =
+        event.type === "CUSTOM" &&
+        (event.name === "harness.confirmation_required" ||
+          event.name === "harness.confirmation_resolved");
+      if (
+        event.type === "RUN_STARTED" ||
+        event.type === "STEP_STARTED" ||
+        isConfirmationEvent
+      ) {
         void refresh(conversationId).catch((error) => setActionError(errorMessage(error)));
       }
     };
@@ -389,6 +580,15 @@ function ChatArea({
     if (!snapshot.conversationId) return;
     void runAction("stop", async () => {
       await client.stop(snapshot.conversationId!);
+      await refresh();
+    });
+  };
+
+  const resolveConfirmation = (approved: boolean) => {
+    const pending = snapshot.pendingConfirmation;
+    if (!snapshot.conversationId || !pending) return;
+    void runAction(approved ? "confirm-approve" : "confirm-deny", async () => {
+      await client.resolveConfirmation(snapshot.conversationId!, pending.id, approved);
       await refresh();
     });
   };
@@ -535,6 +735,13 @@ function ChatArea({
                 onEdit={editPending}
                 onCancel={cancelPending}
               />
+              {snapshot.pendingConfirmation && (
+                <ConfirmationCard
+                  confirmation={snapshot.pendingConfirmation}
+                  busyAction={busyAction}
+                  onResolve={resolveConfirmation}
+                />
+              )}
             </div>
             <Composer
               isRunning={isRunning}
@@ -727,6 +934,56 @@ function GrantChips({
         );
       })}
     </div>
+  );
+}
+
+function ConfirmationCard({
+  confirmation,
+  busyAction,
+  onResolve,
+}: {
+  confirmation: PendingConfirmation;
+  busyAction: string | null;
+  onResolve: (approved: boolean) => void;
+}) {
+  const busy = busyAction === "confirm-approve" || busyAction === "confirm-deny";
+  return (
+    <section className="confirmation-card" role="alertdialog" aria-labelledby="confirmation-title">
+      <header>
+        <ShieldAlert size={16} />
+        <h2 id="confirmation-title">Escrita com dado da web</h2>
+      </header>
+      <p>
+        O Turn leu conteúdo da web e agora quer escrever no Workspace. Aprovar vale só
+        para esta chamada: não cria grant nem amplia acesso.
+      </p>
+      <ul className="confirmation-calls">
+        {confirmation.tool_calls.map((call) => (
+          <li key={call.id}>
+            <code>{call.name}</code>
+            <pre>{JSON.stringify(call.arguments, null, 2)}</pre>
+          </li>
+        ))}
+      </ul>
+      <div className="confirmation-actions">
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => onResolve(false)}
+          disabled={busy}
+        >
+          Negar
+        </button>
+        <button
+          type="button"
+          className="primary-button"
+          onClick={() => onResolve(true)}
+          disabled={busy}
+        >
+          Aprovar esta escrita
+        </button>
+      </div>
+    </section>
   );
 }
 
