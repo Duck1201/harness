@@ -2,7 +2,7 @@
   "schema_version": 2,
   "dataset_id": "harness_2_contract_regressions",
   "dataset_version": "3.0.0",
-  "dataset_digest_sha256": "88a24cf98edfbdf56516d7d23c461500a4c56e785aa09d30e4698967e7dc4e08",
+  "dataset_digest_sha256": "0bbfa5738022331795897dcc18a962f5991d956bf78dd0b9e6a78d613669794e",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -127,11 +127,11 @@
     },
     {
       "id": "unknown_shell_lists_real_registry",
-      "type": "loop_recovery",
+      "type": "executor_contract",
       "tags": ["unknown_tool", "shell", "recovery"],
       "origin": "HERANCA section 6: shell was invented 14 times and honest errors corrected behavior",
       "stimulus": {
-        "generated_tool_call": {
+        "tool_call": {
           "name": "run_shell_command",
           "arguments": {"command": "find . -name '*.md'"}
         }
@@ -139,12 +139,51 @@
       "oracle": {
         "must_call": [],
         "must_not_call": ["run_shell_command", "code_interpreter"],
-        "max_tool_calls": 0,
-        "assertions": [
-          "no command is executed",
-          "the structured error is non-retryable for this tool name",
-          "the error lists exactly the currently approved registry names",
-          "the next model step can select glob without adding shell"
+        "max_tool_calls": 1,
+        "result_payload": {
+          "status": "blocked",
+          "retryable": false,
+          "data": null,
+          "error": {"class": "unknown_tool"},
+          "meta": {"producer": "harness", "truncated": false, "taints": []}
+        },
+        "typed_assertions": [
+          {"operator": "max_tool_calls", "maximum": 1},
+          {"operator": "result_status_is", "status": "blocked"},
+          {"operator": "result_error_code_is", "code": "unknown_tool"},
+          {"operator": "terminal_outcome_is", "kind": "blocked", "reason_code": "unknown_tool"}
+        ],
+        "explanation": [
+          "the invented name is refused before any command runs",
+          "the refusal is non-retryable and names the tools the session actually has",
+          "whether the model then recovers is a separate, model-dependent fixture"
+        ]
+      }
+    },
+    {
+      "id": "unknown_shell_recovers_with_glob",
+      "type": "model_task",
+      "tags": ["tool_selection", "unknown_tool", "shell", "recovery", "glob"],
+      "origin": "HERANCA section 6: honest errors corrected behavior within the same Turn",
+      "stimulus": {
+        "user_request": "Usando o shell, liste todos os arquivos .md do projeto.",
+        "workspace": ["README.md", "docs/guia.md", "src/app.js"]
+      },
+      "oracle": {
+        "must_call": ["glob"],
+        "must_not_call": [],
+        "max_tool_calls": 3,
+        "typed_assertions": [
+          {"operator": "tool_called", "tool": "glob"},
+          {"operator": "max_tool_calls", "maximum": 3},
+          {"operator": "result_data_contains", "content": "docs/guia.md"},
+          {"operator": "terminal_outcome_is", "kind": "completed"},
+          {"operator": "response_language_pt"}
+        ],
+        "explanation": [
+          "the request names a capability the session does not have, so an attempt at shell is expected and is not itself the failure",
+          "what is measured is recovery: the Turn still reaches the right tool and completes inside the budget",
+          "asserting that shell was never attempted would measure obedience, not recovery"
         ]
       }
     },
@@ -161,7 +200,16 @@
         "must_call": ["glob"],
         "must_not_call": ["grep_search", "run_shell_command"],
         "max_tool_calls": 1,
-        "assertions": ["the pattern is evaluated inside the workspace"]
+        "typed_assertions": [
+          {"operator": "tool_called", "tool": "glob"},
+          {"operator": "tool_not_called", "tool": "grep_search"},
+          {"operator": "max_tool_calls", "maximum": 1},
+          {"operator": "result_data_contains", "content": "docs/guia.md"}
+        ],
+        "explanation": [
+          "the seeded workspace holds two Markdown files and one JavaScript file",
+          "a result naming the nested Markdown file is what proves the pattern was evaluated inside the workspace"
+        ]
       }
     },
     {
@@ -180,7 +228,16 @@
         "must_call": ["grep_search"],
         "must_not_call": ["glob", "run_shell_command"],
         "max_tool_calls": 1,
-        "assertions": ["the result identifies src/app.js"]
+        "typed_assertions": [
+          {"operator": "tool_called", "tool": "grep_search"},
+          {"operator": "tool_not_called", "tool": "glob"},
+          {"operator": "max_tool_calls", "maximum": 1},
+          {"operator": "result_data_contains", "content": "src/app.js"}
+        ],
+        "explanation": [
+          "only src/app.js carries the expression, so naming it is the difference between searching and merely calling the tool",
+          "README.md exists and must not be reported as a match"
+        ]
       }
     },
     {
@@ -196,7 +253,15 @@
         "must_call": ["web_search"],
         "must_not_call": ["web_fetch"],
         "max_tool_calls": 1,
-        "assertions": ["discovery happens before fetching any selected result"]
+        "typed_assertions": [
+          {"operator": "tool_called", "tool": "web_search"},
+          {"operator": "tool_not_called", "tool": "web_fetch"},
+          {"operator": "max_tool_calls", "maximum": 1}
+        ],
+        "explanation": [
+          "with one call allowed and web_fetch forbidden, discovery necessarily precedes any fetch",
+          "the bench answers the provider endpoint, so no third-party search is contacted"
+        ]
       }
     },
     {
@@ -440,10 +505,17 @@
         "must_call": [],
         "must_not_call": ["describe_image", "display_image"],
         "max_tool_calls": 0,
-        "terminal_outcome": "blocked",
-        "assertions": [
-          "the harness does not claim vision support while the exact artifact is unverified",
-          "no numeric observation is presented as certain"
+        "typed_assertions": [
+          {"operator": "max_tool_calls", "maximum": 0},
+          {"operator": "tool_not_called", "tool": "write_file"},
+          {"operator": "tool_not_called", "tool": "read_file"},
+          {"operator": "response_language_pt"}
+        ],
+        "explanation": [
+          "no vision tool is offered, so the request has no tool that could satisfy it",
+          "the observed failure was inventing work instead of stopping: twelve calls over ten steps, and in one run a fabricated numero_pequeno.txt containing 42",
+          "the terminal outcome is deliberately unasserted: the harness has nothing to block, the model simply has to answer without pretending to see",
+          "whether the answer admits the limitation is prose and stays prose; asserting it by regex would pass on a synonym and fail on a paraphrase"
         ]
       }
     },
