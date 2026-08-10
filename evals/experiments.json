@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "manifest_version": "2.0.0",
-  "manifest_digest_sha256": "f65701e1d67ba2070ea70608f7e09b7d8c85d114760916f2f799c8ab600c6dd3",
+  "manifest_digest_sha256": "6c2868a30189346b3af9080a2fd5cbac6d26c85eb3c4d43ef5f857203a47f309",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -18,12 +18,12 @@
     "path": "evals/fixtures/regressions.json",
     "dataset_id": "harness_2_contract_regressions",
     "dataset_version": "3.0.0",
-    "dataset_digest_sha256": "049f2a7dc8406088ecf6de58c6ec2e2c19c87518c3b7286c4975d1e9dd54f284"
+    "dataset_digest_sha256": "becbd201e3f6794ace3dcc937cca3d57f8edf29f7fcb3a00bcd9d50a56da4347"
   },
   "contract_digests": {
     "model_profiles_sha256": "fabb858c63cecc51fcd412a3405db039fa70ca87db2047ff5f75bc704a501585",
     "harness_sha256": "656cd5db6badeb3d35ac3320bb1230748b84a21c30250c28ba797d94211cf6fd",
-    "tool_registry_sha256": "2a49cbdcd73d377e88d825aa61760cf172c01145c958296cab0da50a90785e36"
+    "tool_registry_sha256": "39a72a558ebccb2ee7ed812ad27677329d23a0e508df94273f657b7264a3deaa"
   },
   "primary_surface": "web",
   "promotion_protocol": {

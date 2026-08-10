@@ -21,6 +21,8 @@ from .domain import (
     ToolResult,
     ToolResultStatus,
     Turn,
+    effective_tool_calls,
+    tool_call_signature,
 )
 from .ports import (
     AgentEvent,
@@ -166,6 +168,9 @@ class AgentEngine:
 
     async def _run_active_turn(self, turn: Turn, deadline: float) -> Turn:
         rejected_count = 0
+        turn_calls: list[ToolCall] = []
+        turn_results: list[ToolResult] = []
+        seen_signatures: set[str] = set()
         tool_call_count = 0
         for step_sequence in range(1, self._max_model_invocations + 1):
             step_seed = turn.base_seed + step_sequence - 1
@@ -301,7 +306,12 @@ class AgentEngine:
                 )
 
             calls = response.tool_calls
-            if tool_call_count + len(calls) > self._max_tool_calls_per_turn:
+            # A call whose name and arguments were already seen this Turn is admitted
+            # optimistically: whether it is a repeat depends on the payload, which only
+            # exists after it runs. The count is reconciled below, and a Turn can
+            # overrun by at most one batch before the next check ends it.
+            fresh = sum(1 for call in calls if tool_call_signature(call) not in seen_signatures)
+            if tool_call_count + fresh > self._max_tool_calls_per_turn:
                 await self._store.append_agent_step(turn.id, seed=step_seed, tool_calls=calls)
                 await self._emit_step_finished(turn, step_sequence)
                 return await self._finish(
@@ -391,7 +401,21 @@ class AgentEngine:
                 turn.id, seed=step_seed, tool_calls=calls, tool_results=results
             )
             await self._emit_step_finished(turn, step_sequence)
-            tool_call_count += len(calls)
+            turn_calls.extend(calls)
+            turn_results.extend(results)
+            seen_signatures.update(tool_call_signature(call) for call in calls)
+            # A repeat that came back byte-identical bought the Turn nothing, so it
+            # does not spend the Turn's budget. The call still ran: nothing is cached.
+            tool_call_count = len(effective_tool_calls(turn_calls, turn_results))
+            if tool_call_count > self._max_tool_calls_per_turn:
+                # An optimistically admitted repeat came back different, so it was a
+                # real second reading after all. The Turn stops here rather than at
+                # the next batch.
+                return await self._finish(
+                    turn,
+                    TerminalOutcomeKind.LIMIT_REACHED,
+                    "tool_calls_per_turn_limit",
+                )
             blocked = next(
                 (result for result in results if result.status is ToolResultStatus.BLOCKED),
                 None,
@@ -656,15 +680,43 @@ class AgentEngine:
 
 
 def _validate_response(response: ModelResponse) -> None:
-    if response.content is None and not response.tool_calls:
+    # Blank counts as absent. An empty body with no tool call used to be persisted
+    # and handed to the Operator as the answer to their request.
+    blank = response.content is None or not response.content.strip()
+    if blank and not response.tool_calls:
         raise MalformedModelResponseError("model response has neither content nor tool calls")
     for call in response.tool_calls:
         if not call.id or not call.name:
             raise MalformedModelResponseError("model response contains an invalid tool call")
+    if response.content is not None and _leaked_reasoning(response.content):
+        raise MalformedModelResponseError(
+            "model response body carries reasoning markers, which are never persisted"
+        )
     if response.content is not None and _is_serialized_tool_call(response.content):
         raise MalformedModelResponseError(
             "model response body is a serialized tool call, not a final answer"
         )
+
+
+# The runtime also emits tool calls as markup, not only as JSON. A leaked payload
+# starts or ends on one of these tags.
+_TOOL_CALL_TAGS = (
+    "<tool_call>",
+    "</tool_call>",
+    "<function=",
+    "</function>",
+    "<parameter=",
+    "</parameter>",
+)
+
+# Reasoning is transient by contract and never enters CanonicalHistory. A marker
+# in the final body means the transient channel bled into the persisted answer,
+# so the body is rejected wherever the marker sits, not only at its edges.
+_REASONING_TAGS = ("<think>", "</think>")
+
+
+def _leaked_reasoning(content: str) -> bool:
+    return any(tag in content for tag in _REASONING_TAGS)
 
 
 def _is_serialized_tool_call(content: str) -> bool:
@@ -676,9 +728,14 @@ def _is_serialized_tool_call(content: str) -> bool:
     gives the model a chance to correct itself.
 
     Deliberately narrow: only a body that is *entirely* such a payload counts, so
-    an answer that merely quotes JSON is untouched.
+    an answer that merely quotes JSON is untouched. The same narrowness applies to
+    the model's other wire format, which is markup rather than JSON: a body that
+    opens or closes on a tool-call tag is the payload, a body that mentions one in
+    passing is an answer.
     """
     stripped = content.strip()
+    if stripped.startswith(_TOOL_CALL_TAGS) or stripped.endswith(_TOOL_CALL_TAGS):
+        return True
     if stripped.startswith("```"):
         without_fence = stripped[3:].partition("\n")[2]
         stripped = without_fence.rpartition("```")[0].strip() or without_fence.strip()

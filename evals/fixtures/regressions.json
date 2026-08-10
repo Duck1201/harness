@@ -2,7 +2,7 @@
   "schema_version": 2,
   "dataset_id": "harness_2_contract_regressions",
   "dataset_version": "3.0.0",
-  "dataset_digest_sha256": "049f2a7dc8406088ecf6de58c6ec2e2c19c87518c3b7286c4975d1e9dd54f284",
+  "dataset_digest_sha256": "becbd201e3f6794ace3dcc937cca3d57f8edf29f7fcb3a00bcd9d50a56da4347",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -246,7 +246,7 @@
       "tags": ["tool_selection", "web_search", "confusable_pair"],
       "origin": "HERANCA section 8: web capability split",
       "stimulus": {
-        "user_request": "Encontre a documentação oficial atual do Qwen3.5-4B sem assumir uma URL.",
+        "user_request": "Descubra o endereço da documentação oficial atual do Qwen3.5-4B. Quero só o endereço: não abra a página.",
         "network_stub": "search_results_available"
       },
       "oracle": {
@@ -320,17 +320,17 @@
       "oracle": {
         "must_call": ["web_fetch"],
         "must_not_call": ["browser"],
-        "max_tool_calls": 2,
+        "max_tool_calls": 1,
         "typed_assertions": [
           {"operator": "tool_called", "tool": "web_fetch"},
-          {"operator": "max_tool_calls", "maximum": 2},
+          {"operator": "max_tool_calls", "maximum": 1},
           {"operator": "result_status_is", "status": "success"},
           {"operator": "result_producer_is", "producer": "web_fetch", "tool_call_id": "bench-0"},
           {"operator": "result_producer_is", "producer": "web_fetch", "tool_call_id": "bench-1"}
         ],
         "explanation": [
           "both calls succeed and both are answered by web_fetch: containment must not turn the repeat into an error or into a browser run",
-          "the second one is served from the turn cache, so the bench records a single request and data_egress_events is 1",
+          "the second one is served from the turn cache and returns the same payload, so it costs the Turn nothing: one effective call, one bench request",
           "a warning alone is not containment; the count of network effects is what proves it",
           "run against the executor with a WebAccessGrant, since a call refused for a missing grant never reaches the cache and proves nothing about repetition"
         ]

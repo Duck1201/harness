@@ -1,0 +1,7 @@
+# O orçamento do Turn conta chamadas efetivas
+
+Uma chamada repetida cujo resultado volta idêntico ao de uma chamada anterior do mesmo Turn não consome orçamento. Repetição é estrita: mesmo nome, mesmos argumentos e mesmo `status`/`data`/`error`. Payload diferente significa que algo mudou, as duas leituras são reais e ambas contam. Nada é cacheado para decidir isso — a tool executa e só então os payloads se revelam iguais — o que preserva `never_cache_workspace_reads` e seu motivo, o TOCTOU externo, enquanto recusa cobrar duas vezes pela mesma informação. O oráculo de avaliação conta igual, senão o corpus reprovaria uma chamada que o harness não cobrou.
+
+Como só o payload decide, uma chamada de assinatura já vista entra otimista no pré-check e a contagem é reconciliada depois de executar; um Turn pode exceder por no máximo um lote antes de terminar em `tool_calls_per_turn_limit`.
+
+Isto não cobre a verificação que traz informação nova, como ler um arquivo que uma busca acabou de revelar: ela produz efeito, custa e conta. Contra ela o harness age pelo prompt, que declara o ResultPayload autoritativo. Se a medição mostrar que não basta, a decisão seguinte é orçamento por classe de efeito, e ela ainda não foi tomada.

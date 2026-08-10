@@ -195,6 +195,77 @@ def test_edit_preserves_bytes_outside_inclusive_line_range(tmp_path: Path) -> No
     asyncio.run(scenario())
 
 
+def test_edit_refuses_a_replacement_that_would_weld_the_next_line(tmp_path: Path) -> None:
+    """Observed in a corpus run: the model omits the final break and the file breaks."""
+
+    async def scenario() -> None:
+        before = b"function run(ok, value) {\n  if (ok) {\n    return value;\n  }\n}\n"
+        (tmp_path / "app.js").write_bytes(before)
+        executor = executor_for(tmp_path, "WorkspaceRootGrant", "WriteGrant")
+        arguments = {
+            "file_path": "app.js",
+            "start_line": 2,
+            "end_line": 4,
+            "expected_current_sha256": hashlib.sha256(before).hexdigest(),
+        }
+
+        welding = await executor.execute(
+            ToolCall(
+                id="edit-1",
+                name="edit",
+                arguments={**arguments, "replacement": "\tif (ok) {\n\t  return value;\n\t}"},
+            )
+        )
+
+        assert welding.status.value == "failed"
+        assert welding.error is not None
+        assert welding.error["code"] == "replacement_drops_line_break"
+        assert welding.retryable is True
+        assert (tmp_path / "app.js").read_bytes() == before
+
+        corrected = await executor.execute(
+            ToolCall(
+                id="edit-2",
+                name="edit",
+                arguments={**arguments, "replacement": "\tif (ok) {\n\t  return value;\n\t}\n"},
+            )
+        )
+
+        assert corrected.status.value == "success"
+        assert (tmp_path / "app.js").read_bytes() == (
+            b"function run(ok, value) {\n\tif (ok) {\n\t  return value;\n\t}\n}\n"
+        )
+
+    asyncio.run(scenario())
+
+
+def test_edit_of_the_last_line_may_drop_the_final_newline(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        before = b"alpha\nomega\n"
+        (tmp_path / "tail.txt").write_bytes(before)
+        executor = executor_for(tmp_path, "WorkspaceRootGrant", "WriteGrant")
+
+        result = await executor.execute(
+            ToolCall(
+                id="edit",
+                name="edit",
+                arguments={
+                    "file_path": "tail.txt",
+                    "start_line": 2,
+                    "end_line": 2,
+                    "replacement": "omega",
+                    "expected_current_sha256": hashlib.sha256(before).hexdigest(),
+                },
+            )
+        )
+
+        # Nothing follows the last line, so there is no line to weld and the edit stands.
+        assert result.status.value == "success"
+        assert (tmp_path / "tail.txt").read_bytes() == b"alpha\nomega"
+
+    asyncio.run(scenario())
+
+
 def test_duplicate_edit_reconciles_postcondition_without_reapplying(tmp_path: Path) -> None:
     async def scenario() -> None:
         before = b"one\ntwo\nthree\n"

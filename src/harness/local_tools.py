@@ -749,6 +749,24 @@ class RegistryToolExecutor:
                 )
             start_offset = sum(len(line) for line in lines[: start_line - 1])
             end_offset = sum(len(line) for line in lines[:end_line])
+            removed = before[start_offset:end_offset]
+            if _drops_trailing_newline(removed, replacement, before[end_offset:]):
+                # Observed: the model sends the block without its final newline and
+                # the next line is welded onto the last replaced one, producing a
+                # file the executor then reports as a success. Normalising silently
+                # would be worse: appending a newline breaks a deliberate edit of a
+                # file that has no final one. The refusal names what is missing.
+                return _error_result(
+                    call,
+                    ToolResultStatus.FAILED,
+                    "replacement_drops_line_break",
+                    "The replaced range ends with a line break and replacement does not, "
+                    "which would join the next line onto the last replaced one. Append the "
+                    "line break to replacement, or extend end_line to cover the line you "
+                    "mean to join.",
+                    retryable=True,
+                    mutation=True,
+                )
             after = before[:start_offset] + replacement + before[end_offset:]
             after_sha = sha256(after).hexdigest()
             if after == before:
@@ -1052,6 +1070,17 @@ def _arguments_fingerprint(call: ToolCall) -> str:
         sort_keys=True,
     ).encode("utf-8")
     return sha256(call.name.encode("utf-8") + b"\x00" + serialized).hexdigest()
+
+
+def _drops_trailing_newline(removed: bytes, replacement: bytes, following: bytes) -> bool:
+    """True when the edit would weld the next line onto the last replaced one.
+
+    Nothing follows the last line of a file, so dropping the final break there is
+    a legitimate edit and not a weld.
+    """
+    if not following or not removed.endswith((b"\n", b"\r")):
+        return False
+    return not replacement.endswith((b"\n", b"\r"))
 
 
 def _meta(*, truncated: bool, mutation: bool = False) -> Mapping[str, Any]:

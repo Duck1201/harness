@@ -40,6 +40,12 @@ class ModelIdentityConfig(ConfigModel):
     base_model: str
 
 
+class CapabilityConfig(ConfigModel):
+    support: str
+    evidence: Mapping[str, JsonValue]
+    gate_status: str
+
+
 class RuntimeProfileConfig(ConfigModel):
     id: str
     status: str
@@ -47,6 +53,7 @@ class RuntimeProfileConfig(ConfigModel):
     profile_digest_sha256: str
     model: ModelIdentityConfig
     installation: Mapping[str, JsonValue]
+    capabilities: Mapping[str, CapabilityConfig] = {}
 
 
 class ModelProfilesConfig(ConfigModel):

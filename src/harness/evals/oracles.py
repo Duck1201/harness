@@ -6,7 +6,7 @@ from typing import Protocol
 
 from pydantic import TypeAdapter
 
-from ..domain import TerminalOutcomeKind, ToolCall, ToolResult
+from ..domain import TerminalOutcomeKind, ToolCall, ToolResult, effective_tool_calls
 from .models import (
     FileContentContains,
     FileContentEquals,
@@ -109,8 +109,12 @@ def _evaluate(
         passed = all(call.name != assertion.tool for call in evidence.tool_calls)
         detail = f"tool {assertion.tool} was not called"
     elif isinstance(assertion, MaxToolCalls):
-        passed = len(evidence.tool_calls) <= assertion.maximum
-        detail = f"observed {len(evidence.tool_calls)} tool calls, maximum {assertion.maximum}"
+        # The Turn's budget ignores a repeat that came back byte-identical, and the
+        # oracle has to count the same way or it would judge a call the harness
+        # never charged for.
+        observed = len(effective_tool_calls(evidence.tool_calls, evidence.tool_results))
+        passed = observed <= assertion.maximum
+        detail = f"observed {observed} effective tool calls, maximum {assertion.maximum}"
     elif isinstance(assertion, TerminalOutcomeIs):
         passed = evidence.terminal_outcome_kind is assertion.kind and (
             assertion.reason_code is None

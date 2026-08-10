@@ -41,6 +41,7 @@ from ..ports import (
     ToolExecutor,
     ToolSchema,
 )
+from ..system_prompt import build_system_prompt
 from ..web_tools import WebToolExecutor
 from .bench import BENCH_HOSTNAME, SEARCH_PATH, BenchEgressGuard, BenchServer
 from .language import PortugueseDetector
@@ -288,7 +289,7 @@ class ModelCaseRunner:
                         output_budget=self._config.loop.max_output_tokens,
                     ),
                     event_sink=NullEventSink(),
-                    system_prompt=_SYSTEM_PROMPT,
+                    system_prompt=build_system_prompt(self._config),
                     tool_schemas=self._tool_schemas(policy),
                     model_options={
                         "temperature": self._config.execution_route.sampling.temperature,
@@ -392,11 +393,6 @@ class ModelCaseRunner:
 
 # harness.json#context.initial_budget_tokens, the same value ApplicationService uses.
 _CONTEXT_WINDOW = 24576
-
-_SYSTEM_PROMPT = (
-    "Use the available tools when needed. All workspace paths supplied to tools "
-    "must be relative to the workspace root."
-)
 
 
 def _bench_request(request: str, fixture: RegressionFixture, bench: BenchServer) -> str:

@@ -1,6 +1,7 @@
 import asyncio
 import json
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -121,6 +122,7 @@ def engine(
     estimator: FakeEstimator | None = None,
     seed: int = 100,
     max_model_invocations: int = 15,
+    max_tool_calls_per_turn: int = 20,
     max_turn_duration_seconds: float = 900,
     confirmation_gate: ConfirmationGate | None = None,
 ) -> AgentEngine:
@@ -135,6 +137,7 @@ def engine(
         model_options={"temperature": 0.3, "presence_penalty": 0},
         seed=seed,
         max_model_invocations=max_model_invocations,
+        max_tool_calls_per_turn=max_tool_calls_per_turn,
         max_turn_duration_seconds=max_turn_duration_seconds,
         confirmation_gate=confirmation_gate,
     )
@@ -321,6 +324,76 @@ def test_fifteenth_invocation_has_no_tools_and_keeps_limit_outcome(tmp_path: Pat
         assert finished.terminal_outcome is not None
         assert finished.terminal_outcome.kind is TerminalOutcomeKind.LIMIT_REACHED
         assert finished.terminal_outcome.reason_code == "model_invocation_limit"
+
+    asyncio.run(scenario())
+
+
+def test_a_repeat_with_an_identical_payload_does_not_spend_the_turn_budget(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        same = ToolCall(id="call-1", name="fake_tool", arguments={"value": 1})
+        runtime = FakeRuntime(
+            [
+                ModelResponse(tool_calls=(same,)),
+                ModelResponse(tool_calls=(replace(same, id="call-2"),)),
+                ModelResponse(tool_calls=(replace(same, id="call-3"),)),
+                ModelResponse(content="Já tenho a resposta."),
+            ]
+        )
+        executor = FakeToolExecutor()
+
+        finished = await engine(
+            store, runtime, executor, FakeEventSink(), max_tool_calls_per_turn=1
+        ).run(conversation_id, "confira de novo")
+
+        # Three identical calls really executed — nothing is cached — and the Turn
+        # still finished on a budget of one, because two of them told it nothing new.
+        assert len(executor.executed) == 3
+        assert finished.terminal_outcome is not None
+        assert finished.terminal_outcome.kind is TerminalOutcomeKind.COMPLETED
+
+    asyncio.run(scenario())
+
+
+def test_a_repeat_that_comes_back_different_still_spends_the_budget(tmp_path: Path) -> None:
+    class ChangingExecutor(FakeToolExecutor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.reading = 0
+
+        async def execute(self, call: ToolCall) -> ToolResult:
+            self.executed.append(call)
+            self.reading += 1
+            return ToolResult(
+                tool_call_id=call.id,
+                status=ToolResultStatus.SUCCESS,
+                retryable=False,
+                data={"value": self.reading},
+                error=None,
+                meta={"producer": "fake", "truncated": False, "taints": []},
+            )
+
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        same = ToolCall(id="call-1", name="fake_tool", arguments={"value": 1})
+        runtime = FakeRuntime(
+            [
+                ModelResponse(tool_calls=(same,)),
+                ModelResponse(tool_calls=(replace(same, id="call-2"),)),
+                ModelResponse(content="unreachable"),
+            ]
+        )
+
+        finished = await engine(
+            store, runtime, ChangingExecutor(), FakeEventSink(), max_tool_calls_per_turn=1
+        ).run(conversation_id, "leia de novo")
+
+        # The file changed between readings, so both are real and the budget runs out.
+        assert finished.terminal_outcome is not None
+        assert finished.terminal_outcome.kind is TerminalOutcomeKind.LIMIT_REACHED
+        assert finished.terminal_outcome.reason_code == "tool_calls_per_turn_limit"
 
     asyncio.run(scenario())
 
@@ -763,6 +836,93 @@ def test_a_tool_call_serialized_as_text_is_rejected_instead_of_answered(
             if item.kind is CanonicalHistoryEntryKind.FINAL_RESPONSE
         ]
         assert finals == ["Encontrei três arquivos Markdown."]
+
+    asyncio.run(scenario())
+
+
+def test_a_tool_call_serialized_as_markup_is_rejected_instead_of_answered(
+    tmp_path: Path,
+) -> None:
+    """Observed verbatim in a corpus run: the JSON guard did not see this shape."""
+
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        leaked = (
+            "\n</parameter>\n<parameter=tool_name>\nwrite_file\n"
+            "</parameter>\n</function>\n</tool_call>"
+        )
+        runtime = FakeRuntime(
+            [
+                ModelResponse(content=leaked),
+                ModelResponse(content="Encontrei a documentação oficial."),
+            ]
+        )
+
+        finished = await engine(store, runtime, FakeToolExecutor(), FakeEventSink()).run(
+            conversation_id, "procure a documentação"
+        )
+
+        assert finished.terminal_outcome is not None
+        assert finished.terminal_outcome.kind is TerminalOutcomeKind.COMPLETED
+        history = await store.list_canonical_history(conversation_id)
+        assert CanonicalHistoryEntryKind.REJECTED_MODEL_ATTEMPT in [item.kind for item in history]
+        finals = [
+            item.payload["content"]
+            for item in history
+            if item.kind is CanonicalHistoryEntryKind.FINAL_RESPONSE
+        ]
+        assert finals == ["Encontrei a documentação oficial."]
+
+    asyncio.run(scenario())
+
+
+def test_reasoning_markers_never_reach_the_persisted_answer(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        runtime = FakeRuntime(
+            [
+                ModelResponse(content="}`\n</think>\n\nO número é 24.7."),
+                ModelResponse(content="Não consigo ler imagens nesta sessão."),
+            ]
+        )
+
+        finished = await engine(store, runtime, FakeToolExecutor(), FakeEventSink()).run(
+            conversation_id, "leia o número da imagem"
+        )
+
+        assert finished.terminal_outcome is not None
+        finals = [
+            item.payload["content"]
+            for item in await store.list_canonical_history(conversation_id)
+            if item.kind is CanonicalHistoryEntryKind.FINAL_RESPONSE
+        ]
+        assert finals == ["Não consigo ler imagens nesta sessão."]
+
+    asyncio.run(scenario())
+
+
+def test_a_blank_final_body_is_not_delivered_as_the_answer(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        runtime = FakeRuntime(
+            [
+                ModelResponse(content="   \n  "),
+                ModelResponse(content="Arquivo criado."),
+            ]
+        )
+
+        finished = await engine(store, runtime, FakeToolExecutor(), FakeEventSink()).run(
+            conversation_id, "crie o arquivo"
+        )
+
+        assert finished.terminal_outcome is not None
+        assert finished.terminal_outcome.kind is TerminalOutcomeKind.COMPLETED
+        finals = [
+            item.payload["content"]
+            for item in await store.list_canonical_history(conversation_id)
+            if item.kind is CanonicalHistoryEntryKind.FINAL_RESPONSE
+        ]
+        assert finals == ["Arquivo criado."]
 
     asyncio.run(scenario())
 

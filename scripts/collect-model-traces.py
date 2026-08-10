@@ -40,8 +40,8 @@ from harness import (  # noqa: E402
 )
 from harness.brave_browser import BraveEgressGuard  # noqa: E402
 from harness.evals import ModelCaseRunner, RegressionFixture, load_eval_catalog  # noqa: E402
-from harness.evals.model_runner import _SYSTEM_PROMPT  # noqa: E402
 from harness.evals.runner import EvalCaseSpec  # noqa: E402
+from harness.system_prompt import build_system_prompt  # noqa: E402
 
 # The protocol's recorded orders. A seed is what varies a local run, so more
 # repetitions of the same seed add copies, not evidence.
@@ -96,6 +96,7 @@ def _record(
     seed: int,
     result: Any,
     offered: Sequence[str],
+    system_prompt: str,
 ) -> Mapping[str, Any]:
     evaluation = result.evaluation
     assertions = evaluation.assertions if evaluation is not None else ()
@@ -107,7 +108,7 @@ def _record(
         "seed": seed,
         "verdict": evaluation.verdict.value if evaluation is not None else "not_evaluated",
         "prompt": {
-            "system": _SYSTEM_PROMPT,
+            "system": system_prompt,
             "user": fixture.stimulus.get("user_request"),
             "offered_tools": list(offered),
             "workspace": _excerpt(fixture.stimulus.get("workspace")),
@@ -174,6 +175,7 @@ async def collect(seeds: Sequence[int], output: Path, tokenizer: Path) -> int:
     )
     fixtures = [item for item in catalog.dataset.fixtures if runner.supports(item.type)]
     offered = _offered_tools(config)
+    system_prompt = build_system_prompt(config)
     output.parent.mkdir(parents=True, exist_ok=True)
     counts: dict[str, int] = {}
     try:
@@ -190,7 +192,7 @@ async def collect(seeds: Sequence[int], output: Path, tokenizer: Path) -> int:
                             tier=EvalTier.MODEL_SMOKE,
                         )
                     )
-                    record = _record(fixture, seed, result, offered)
+                    record = _record(fixture, seed, result, offered, system_prompt)
                     handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
                     handle.flush()
                     verdict = str(record["verdict"])

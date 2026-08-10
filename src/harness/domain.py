@@ -1,3 +1,4 @@
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -217,3 +218,45 @@ class Turn:
 def _require_mapping_or_none(value: object) -> None:
     if value is not None and not isinstance(value, Mapping):
         raise TypeError("result error must be a mapping or null")
+
+
+def effective_tool_calls(
+    calls: Sequence[ToolCall],
+    results: Sequence[ToolResult],
+) -> tuple[ToolCall, ...]:
+    """Drops repeats that told the Turn nothing it did not already have.
+
+    A call is a repeat when an earlier call in the same Turn had the same name and
+    arguments *and* came back with a byte-identical payload. Nothing is cached to
+    decide this: the tool ran, the filesystem or the network was consulted, and
+    only then did the two payloads turn out to be the same — which keeps
+    ``never_cache_workspace_reads`` intact, TOCTOU included, while refusing to
+    charge a Turn twice for one piece of information.
+
+    Repeats that come back *different* are not repeats: something changed, and
+    both readings are real.
+    """
+    by_id = {result.tool_call_id: result for result in results}
+    seen: dict[str, str] = {}
+    effective: list[ToolCall] = []
+    for call in calls:
+        result = by_id.get(call.id)
+        if result is None:
+            effective.append(call)
+            continue
+        signature = tool_call_signature(call)
+        payload = _canonical(result.status.value, {"data": result.data, "error": result.error})
+        if seen.get(signature) == payload:
+            continue
+        seen[signature] = payload
+        effective.append(call)
+    return tuple(effective)
+
+
+def tool_call_signature(call: ToolCall) -> str:
+    """Identity of a call for repeat detection: the name and the arguments."""
+    return _canonical(call.name, call.arguments)
+
+
+def _canonical(prefix: str, value: object) -> str:
+    return prefix + "\x00" + json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)

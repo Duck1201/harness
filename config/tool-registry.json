@@ -201,7 +201,7 @@
           "pattern": {
             "type": "string",
             "minLength": 1,
-            "description": "Glob pattern evaluated inside the workspace."
+            "description": "Glob pattern evaluated inside the workspace, with standard glob semantics: a plain pattern such as *.md matches only the chosen directory, and ** is required to descend into subdirectories."
           },
           "directory_path": {
             "type": "string",

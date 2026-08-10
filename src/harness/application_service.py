@@ -49,6 +49,7 @@ from .ports import (
     ToolExecutorFactory,
     ToolSchema,
 )
+from .system_prompt import build_system_prompt
 from .web_tools import BrowserCapability, BrowserEgressGuard, WebToolExecutor
 from .workspace_coordinator import WorkspaceCoordinator
 
@@ -496,10 +497,7 @@ class ApplicationService:
                 output_budget=self.config.loop.max_output_tokens,
             ),
             event_sink=self._event_sink,
-            system_prompt=(
-                "Use the available tools when needed. All workspace paths supplied to tools "
-                "must be relative to the workspace root."
-            ),
+            system_prompt=build_system_prompt(self.config),
             tool_schemas=(),
             model_options={
                 "temperature": self.config.execution_route.sampling.temperature,
