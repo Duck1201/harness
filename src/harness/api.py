@@ -48,6 +48,8 @@ from .ports import ConfirmationRequest
 from .setup import SetupController, SetupError, SetupSubmission
 from .token_estimator import HuggingFaceTokenEstimator
 
+DEFAULT_PORT = 8765
+
 
 class ApiModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -175,7 +177,7 @@ def create_app(
         host_store = _host_config_store(host_config_path)
         host_config = host_store.load_optional()
         if allowed_origins is None:
-            effective_origins = _configured_origins(host_config)
+            effective_origins = configured_origins(host_config)
         credential_store = CredentialStore(host_store.credentials_path)
         credentials = credential_store
         operator_password_hash = credential_store.read_operator_password_hash()
@@ -824,13 +826,24 @@ def _host_config_store(path: str | Path | None = None) -> HostConfigStore:
     return HostConfigStore(selected)
 
 
-def _configured_origins(host_config: HostConfig | None) -> tuple[str, ...]:
+def configured_origins(host_config: HostConfig | None) -> tuple[str, ...]:
     override = os.environ.get("HARNESS_ALLOWED_ORIGINS")
     if override is not None:
         return tuple(value.strip() for value in override.split(",") if value.strip())
     if host_config is not None:
         return host_config.allowed_origins
-    return ("http://127.0.0.1:8000", "http://localhost:8000")
+    # Before setup writes a HostConfig, the only origin that can reach the API is
+    # the one the SPA is served from — this server's own port. Hardcoding a port
+    # here leaves a fresh install unable to complete its own setup form.
+    return tuple(f"http://{host}:{_configured_port()}" for host in ("127.0.0.1", "localhost"))
+
+
+def _configured_port() -> int:
+    try:
+        port = int(os.environ.get("HARNESS_PORT", str(DEFAULT_PORT)))
+    except ValueError:
+        return DEFAULT_PORT
+    return port if 0 < port < 65536 else DEFAULT_PORT
 
 
 def _default_state_dir() -> Path:

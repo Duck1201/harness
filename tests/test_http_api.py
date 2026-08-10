@@ -19,7 +19,7 @@ from harness import (
     create_app,
     load_config,
 )
-from harness.api import load_brave_api_key
+from harness.api import DEFAULT_PORT, configured_origins, load_brave_api_key
 
 # With no Operator password configured the server only answers direct loopback,
 # so a test has to say where its request comes from.
@@ -79,6 +79,36 @@ def test_brave_api_key_bootstrap_rejects_ambiguous_or_unsafe_files(
     monkeypatch.setenv("HARNESS_BRAVE_API_KEY_FILE", str(link))
     with pytest.raises(ValueError, match="could not be read securely"):
         load_brave_api_key()
+
+
+def test_default_origins_follow_the_port_the_server_listens_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Before setup writes a HostConfig the SPA's own origin is the only one that
+    # can reach the API, so a hardcoded port would leave a fresh install unable
+    # to submit its own setup form.
+    monkeypatch.delenv("HARNESS_ALLOWED_ORIGINS", raising=False)
+    monkeypatch.delenv("HARNESS_PORT", raising=False)
+    assert configured_origins(None) == (
+        f"http://127.0.0.1:{DEFAULT_PORT}",
+        f"http://localhost:{DEFAULT_PORT}",
+    )
+
+    monkeypatch.setenv("HARNESS_PORT", "9100")
+    assert configured_origins(None) == (
+        "http://127.0.0.1:9100",
+        "http://localhost:9100",
+    )
+
+    for invalid in ("not-a-port", "0", "70000"):
+        monkeypatch.setenv("HARNESS_PORT", invalid)
+        assert configured_origins(None) == (
+            f"http://127.0.0.1:{DEFAULT_PORT}",
+            f"http://localhost:{DEFAULT_PORT}",
+        )
+
+    monkeypatch.setenv("HARNESS_ALLOWED_ORIGINS", "https://harness.example")
+    assert configured_origins(None) == ("https://harness.example",)
 
 
 def _service(

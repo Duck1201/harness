@@ -4,10 +4,12 @@ import os
 
 import uvicorn
 
+from .api import DEFAULT_PORT
+
 
 def main() -> None:
     host = os.environ.get("HARNESS_HOST", "127.0.0.1")
-    port = int(os.environ.get("HARNESS_PORT", "8765"))
+    port = int(os.environ.get("HARNESS_PORT", str(DEFAULT_PORT)))
     uvicorn.run("harness.api:create_app", factory=True, host=host, port=port)
 
 
