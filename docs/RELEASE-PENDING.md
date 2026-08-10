@@ -10,7 +10,7 @@ Este documento registra o que deliberadamente não entra na primeira release. Au
 | Item | Motivo da exclusão | Gate e evidência para entrada |
 |---|---|---|
 | vLLM | Não existe instalação local fixada nem round-trip validado para reasoning e tools; o primeiro release tem Ollama como único runtime funcional. | RuntimeProfile completo, versão/digest do runtime e componentes, suíte de parser sem corrupção de whitespace, zero tool calls ocultas e evals web fim a fim. |
-| Outros runtimes locais | SGLang, Transformers e llama.cpp/GGUF aparecem na pesquisa, mas não têm instalação, adaptador e manifesto aprovados neste Workspace. | RuntimeProfile reproduzível por candidato, paridade de ResultPayload, parser/template fixos e os mesmos gates web, de segurança e de desempenho do Ollama. |
+| Outros runtimes locais | SGLang, Transformers e llama.cpp/GGUF são alternativas conhecidas, mas não têm instalação, adaptador e manifesto aprovados neste Workspace. | RuntimeProfile reproduzível por candidato, paridade de ResultPayload, parser/template fixos e os mesmos gates web, de segurança e de desempenho do Ollama. |
 | Backend remoto | Todo ModelView pode deixar a máquina a cada AgentStep e ainda não há fluxo de consentimento nem contrato de provedor. | Consentimento explícito e revogável, ausência de fallback silencioso, manifesto reproduzível, redaction testada, auditoria de `data_egress` e evals de privacidade. |
 | Visão | A declaração do runtime não prova qualidade do artefato exato; a herança registrou leitura de `24.7` como `247`. | Evidência no digest local exato, orçamento multimodal, limites de arquivos, aviso de incerteza e corpus com texto pequeno, números e falhas adversariais. |
 | Shell | WorkspaceRootGrant não contém execução arbitrária, subprocessos podem escapar da política de arquivos e timeouts com efeitos exigem reconciliação. | Sandbox separado, allowlist, WriteGrant específico, aprovação explícita, limites, auditoria, idempotência e zero violações na suíte de segurança. |
@@ -35,7 +35,7 @@ Este documento registra o que deliberadamente não entra na primeira release. Au
 
 | Item | Decisão | Condição excepcional para reconsiderar |
 |---|---|---|
-| Qwen2.5-Coder-7B | Removido do roadmap. O comparativo existente permanece apenas como evidência histórica e não define challenger, experimento ou destino de release. | Nova decisão explícita baseada em necessidade não atendida pelo RuntimeProfile vigente; se reaberto, exige manifesto completo e os mesmos gates de segurança e tarefa, sem tratamento preferencial. |
+| Qwen2.5-Coder-7B | Removido do roadmap. O comparativo histórico não define challenger, experimento ou destino de release e saiu do repositório. | Nova decisão explícita baseada em necessidade não atendida pelo RuntimeProfile vigente; se reaberto, exige manifesto completo e os mesmos gates de segurança e tarefa, sem tratamento preferencial. |
 
 ## Limitações residuais aceitas
 

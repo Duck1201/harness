@@ -753,7 +753,6 @@ for (const requiredTopic of [
 
 const markdownFiles = [
   contextPath,
-  path.join(root, "HERANCA-PARA-O-2.0.md"),
   ...collectMarkdownFiles(path.join(root, "docs")),
   ...collectMarkdownFiles(path.join(root, "evals")),
 ];

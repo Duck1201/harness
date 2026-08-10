@@ -4,7 +4,7 @@
 > Data: 10 de agosto de 2026  
 > Estado: vigente
 
-Este documento governa a primeira release. Os dossiês de herança, pesquisa e comparação preservam evidência e alternativas consideradas, mas não alteram o contrato vigente.
+Este documento governa a primeira release.
 
 ## Fontes executáveis e precedência
 
@@ -16,7 +16,7 @@ Os contratos consumíveis por código são:
 - [`evals/fixtures/regressions.json`](../evals/fixtures/regressions.json) e [`evals/experiments.json`](../evals/experiments.json), contratos versionados de avaliação;
 - [`Modelfile`](../Modelfile), entrada da instalação Ollama local.
 
-Em divergência, prevalecem: invariantes de segurança deste documento, contratos JSON, demais decisões desta página e, por último, documentos históricos. Alterar uma decisão exige atualizar contratos, fixtures e digests no mesmo conjunto.
+Em divergência, prevalecem: invariantes de segurança deste documento, contratos JSON e demais decisões desta página, nessa ordem. Alterar uma decisão exige atualizar contratos, fixtures e digests no mesmo conjunto.
 
 ## Vocabulário e fronteiras
 
@@ -55,7 +55,7 @@ O vocabulário canônico está em [`CONTEXT.md`](../CONTEXT.md). Em particular:
 | UI | AG-UI é projeção do estado, não fonte canônica; UX e evals são web-first |
 | Acesso | Sem senha de Operator, só loopback direto é atendido; com senha, toda rota exige sessão. Não há terceira opção |
 | Confirmação | Escrita sob UntrustedWebTaint exige decisão do Operator para aquela chamada; aprovar não cria grant nem amplia acesso |
-| Roadmap | Qwen2.5 está fora do roadmap; pesquisa comparativa permanece histórica |
+| Roadmap | Qwen2.5 está fora do roadmap e não é challenger de nenhum experimento |
 
 ## Estado, projeções e persistência
 
@@ -101,9 +101,7 @@ O que não entra, seus motivos e gates está em [`RELEASE-PENDING.md`](RELEASE-P
 
 ## Evidência preservada
 
-- [Herança empírica do Harness 1.0](../HERANCA-PARA-O-2.0.md)
-- [Guia de arquitetura pesquisado](HARNESS_QWEN35_4B.md)
-- [Guia histórico de tools](TOOLS_PARA_QWEN35.md)
-- [Cruzamento entre herança e pesquisa](research/CRUZAMENTO_HERANCA_QWEN35_4B.md)
-- [Pesquisa técnica do Qwen3.5-4B](research/QWEN35_4B_PESQUISA.md)
-- [Comparativo histórico com Qwen2.5](research/COMPARATIVO_QWEN35_4B_VS_QWEN25_CODER_7B.md)
+A pesquisa e a herança empírica do Harness 1.0 que originaram estas decisões
+foram retiradas do repositório; o que sobreviveu delas está aqui, nos ADRs e na
+proveniência declarada em `config/model-profiles.json` e
+`evals/fixtures/regressions.json`. Histórico completo permanece no git.

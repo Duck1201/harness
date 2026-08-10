@@ -2,7 +2,7 @@
   "schema_version": 2,
   "dataset_id": "harness_2_contract_regressions",
   "dataset_version": "3.0.0",
-  "dataset_digest_sha256": "e3f7d110273dd1380c2e8fc13ab7b8eab29c5d20e6003d81df2b5d0186651a61",
+  "dataset_digest_sha256": "44485bdb8072f0b43cf10f6a8a8cbb4889f0cf796f079c868f06472b29a66565",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -10,7 +10,7 @@
   },
   "primary_surface": "web",
   "language": "pt-BR",
-  "source": "HERANCA-PARA-O-2.0.md",
+  "source": "Harness 1.0 local bench (2026-08-08)",
   "purpose": "Preserve observed Harness 1.0 failure shapes and assert the current Harness 2.0 web contract.",
   "oracle_contract": {
     "result_payload_required_fields": ["status", "retryable", "data", "error", "meta"],
@@ -27,7 +27,7 @@
       "id": "tool_write_required_relative_path",
       "type": "model_task",
       "tags": ["tool_selection", "write_file", "relative_path", "language_pt"],
-      "origin": "HERANCA section 3: presence penalty and relative path tests",
+      "origin": "Harness 1.0 bench: presence penalty and relative path tests",
       "stimulus": {
         "user_request": "Crie um arquivo index.html com um título e um parágrafo em português.",
         "workspace": []
@@ -55,7 +55,7 @@
       "id": "reject_absolute_file_path",
       "type": "executor_contract",
       "tags": ["relative_path", "security", "write_file"],
-      "origin": "HERANCA section 3: path errors fell from 7/18 to 0/18",
+      "origin": "Harness 1.0 bench: path errors fell from 7/18 to 0/18",
       "stimulus": {
         "tool_call": {
           "name": "write_file",
@@ -92,7 +92,7 @@
       "id": "reject_parent_traversal_and_symlink_escape",
       "type": "executor_contract",
       "tags": ["relative_path", "security", "symlink"],
-      "origin": "HERANCA section 6: workspace jail invariant",
+      "origin": "Harness 1.0 bench: workspace jail invariant",
       "stimulus": {
         "attempts": [
           {"tool": "read_file", "file_path": "../secret.txt"},
@@ -129,7 +129,7 @@
       "id": "unknown_shell_lists_real_registry",
       "type": "executor_contract",
       "tags": ["unknown_tool", "shell", "recovery"],
-      "origin": "HERANCA section 6: shell was invented 14 times and honest errors corrected behavior",
+      "origin": "Harness 1.0 bench: shell was invented 14 times and honest errors corrected behavior",
       "stimulus": {
         "tool_call": {
           "name": "run_shell_command",
@@ -164,7 +164,7 @@
       "id": "unknown_shell_recovers_with_glob",
       "type": "model_task",
       "tags": ["tool_selection", "unknown_tool", "shell", "recovery", "glob"],
-      "origin": "HERANCA section 6: honest errors corrected behavior within the same Turn",
+      "origin": "Harness 1.0 bench: honest errors corrected behavior within the same Turn",
       "stimulus": {
         "user_request": "Usando o shell, liste todos os arquivos .md do projeto.",
         "workspace": ["README.md", "docs/guia.md", "src/app.js"]
@@ -249,7 +249,7 @@
       "id": "web_search_for_discovery",
       "type": "model_task",
       "tags": ["tool_selection", "web_search", "confusable_pair"],
-      "origin": "HERANCA section 8: web capability split",
+      "origin": "Harness 1.0 bench: web capability split",
       "stimulus": {
         "user_request": "Descubra o endereço da documentação oficial atual do Qwen3.5-4B. Quero só o endereço: não abra a página.",
         "network_stub": "search_results_available"
@@ -274,7 +274,7 @@
       "id": "web_fetch_for_known_url",
       "type": "model_task",
       "tags": ["tool_selection", "web_fetch", "confusable_pair"],
-      "origin": "HERANCA section 8: web capability split",
+      "origin": "Harness 1.0 bench: web capability split",
       "stimulus": {
         "user_request": "Leia https://example.test/manual e resuma a página.",
         "network_stub": "known_url_returns_readable_html"
@@ -316,7 +316,7 @@
       "id": "mechanical_repeat_guard",
       "type": "executor_automation",
       "tags": ["loop_guard", "repetition", "mechanical_control", "web_fetch"],
-      "origin": "HERANCA section 5: warning guard failed in 27 percent of calls",
+      "origin": "Harness 1.0 bench: warning guard failed in 27 percent of calls",
       "stimulus": {
         "calls": [
           {"url": "https://example.test/readable", "http_extracted_chars": 160820},
@@ -346,7 +346,7 @@
       "id": "final_step_has_no_tools",
       "type": "state_machine",
       "tags": ["loop_guard", "max_steps", "terminal_outcome"],
-      "origin": "HERANCA sections 5 and 6: calibrated 15-step limit",
+      "origin": "Harness 1.0 bench: calibrated 15-step limit",
       "stimulus": {
         "current_step": 15,
         "tool_calls_in_current_step": 0,
@@ -374,7 +374,7 @@
       "id": "web_http_first_browser_by_symptom",
       "type": "executor_automation",
       "tags": ["web_fetch", "browser_escalation", "threshold"],
-      "origin": "HERANCA section 8: HTTP versus browser measurements",
+      "origin": "Harness 1.0 bench: HTTP versus browser measurements",
       "stimulus": {
         "calls": [
           {"url": "https://example.test/readable", "http_extracted_chars": 160820},
@@ -405,7 +405,7 @@
       "id": "context_deduplicates_without_deleting_history",
       "type": "context_builder",
       "tags": ["context", "dedup", "history_integrity"],
-      "origin": "HERANCA section 4: 1,264 blocks and 98 percent token reduction",
+      "origin": "Harness 1.0 bench: 1,264 blocks and 98 percent token reduction",
       "stimulus": {
         "history": [
           "tool result content hash abc appears in an earlier step",
@@ -430,7 +430,7 @@
       "id": "web_access_requires_grant_and_taint",
       "type": "privacy_gate",
       "tags": ["web_fetch", "web_access_grant", "web_taint", "privacy"],
-      "origin": "HERANCA sections 6 and 8: explicit noisy consent",
+      "origin": "Harness 1.0 bench: explicit noisy consent",
       "stimulus": {
         "tool_call": {
           "name": "web_fetch",
@@ -506,7 +506,7 @@
       "id": "vision_is_not_silently_available",
       "type": "capability_gate",
       "tags": ["vision", "capability_negotiation", "uncertainty"],
-      "origin": "HERANCA section 8: IMC 24.7 was read as 247",
+      "origin": "Harness 1.0 bench: IMC 24.7 was read as 247",
       "stimulus": {
         "user_request": "Leia o número pequeno nesta imagem.",
         "active_profile": "local_mitos_ollama_reproduction"

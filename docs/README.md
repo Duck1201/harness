@@ -1,8 +1,8 @@
 # Documentação do Harness 2.0
 
-Contrato vigente e evidência histórica para implementar o Harness 2.0. A
-primeira release tem um único RuntimeProfile funcional, local via Ollama; demais
-runtimes e modelos citados na pesquisa não pertencem automaticamente ao roadmap.
+Contrato vigente do Harness 2.0. A primeira release tem um único RuntimeProfile
+funcional, local via Ollama; demais runtimes e modelos não pertencem
+automaticamente ao roadmap.
 
 ## Ordem de leitura
 
@@ -15,16 +15,6 @@ runtimes e modelos citados na pesquisa não pertencem automaticamente ao roadmap
 4. [ADRs](adr/) — fronteiras arquiteturais difíceis de reverter.
 5. [Modelo de ameaça da autenticação](THREAT-MODEL-AUTH.md) — ativos, ameaças,
    mitigações e o que fica fora do modelo na primeira release.
-6. [Pesquisa técnica completa](research/QWEN35_4B_PESQUISA.md) — fatos,
-   inferências, limitações, backends, memória, segurança, lacunas e fontes.
-7. [Cruzamento com a herança do 1.0](research/CRUZAMENTO_HERANCA_QWEN35_4B.md)
-   — confronto entre documentação oficial e cerca de 240 turnos locais,
-   convergências, contradições, limites de generalização e decisões.
-8. [Comparativo histórico Qwen3.5-4B versus Qwen2.5-Coder-7B](research/COMPARATIVO_QWEN35_4B_VS_QWEN25_CODER_7B.md)
-   — evidência preservada; Qwen2.5 foi removido do roadmap.
-9. [Guia histórico de arquitetura](HARNESS_QWEN35_4B.md) e
-   [guia histórico de tools](TOOLS_PARA_QWEN35.md) — pesquisa que explica a
-   origem das decisões, sem competir com os contratos vigentes.
 
 ## Contratos executáveis
 
@@ -63,8 +53,8 @@ operacional deliberado e não faz parte da validação documental.
 
 ## Estado da evidência
 
-A maior parte dos fatos vem do model card, dos arquivos do checkpoint e do
-código/documentação oficial de Qwen, vLLM, Transformers, SGLang e llama.cpp.
-Issues de upstream são usados como casos de regressão, não como prova de que
-todas as versões falham. Guias e comparativos preservam a data e a conclusão da
-pesquisa; somente `DECISOES-2.0.md` e os contratos JSON definem a release atual.
+Somente `DECISOES-2.0.md` e os contratos JSON definem a release atual. Os
+documentos de pesquisa e a herança empírica do Harness 1.0 foram retirados do
+repositório; a proveniência dos fatos que sobreviveram está declarada nos
+próprios contratos (`config/model-profiles.json`,
+`evals/fixtures/regressions.json`) e o texto integral permanece no git.

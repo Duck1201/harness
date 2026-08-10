@@ -208,6 +208,5 @@ experimento sem execução fica com `result: null`.
 
 Ordem de leitura em [`docs/README.md`](docs/README.md). Em resumo: o glossário
 canônico está em [`CONTEXT.md`](CONTEXT.md), o baseline normativo em
-`docs/DECISOES-2.0.md`, as exclusões da release em `docs/RELEASE-PENDING.md`, as
-fronteiras arquiteturais em `docs/adr/`, e a pesquisa que originou as decisões em
-`docs/research/` — evidência histórica, sem competir com os contratos vigentes.
+`docs/DECISOES-2.0.md`, as exclusões da release em `docs/RELEASE-PENDING.md` e as
+fronteiras arquiteturais em `docs/adr/`.
