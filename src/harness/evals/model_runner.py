@@ -339,6 +339,13 @@ class ModelCaseRunner:
                     "steps_to_terminal": float(len(steps)),
                     "extra_tool_calls": float(max(0, len(calls) - _expected_calls(spec.fixture))),
                     "tool_noop_rate": _noop_rate(results),
+                    # A malformed response or a tool call emitted as prose is caught
+                    # by AgentEngine and never reaches the Operator, so no oracle can
+                    # see it. Counting it is the only way the corpus reports how often
+                    # the model produces something the harness had to throw away.
+                    "rejected_model_attempts": float(
+                        sum(entry.kind.value == "rejected_model_attempt" for entry in history)
+                    ),
                 },
                 security_violations=security_violations(spec.fixture, evaluation),
                 evaluation=evaluation,

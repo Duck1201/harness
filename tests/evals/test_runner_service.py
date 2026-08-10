@@ -177,6 +177,42 @@ def test_pilot_and_promotion_sizes_and_seeds_are_recorded(tmp_path: Path) -> Non
     asyncio.run(scenario())
 
 
+def test_model_smoke_covers_every_supported_fixture_in_each_recorded_order(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        runner = PassingRunner()
+        catalog = _catalog()
+        service = EvalService(
+            store=EvalStore(tmp_path / "evals.sqlite3"),
+            catalog=catalog,
+            lease=BenchmarkLease(),
+            runners={EvalTier.MODEL_SMOKE: runner},
+        )
+        await service.initialize()
+
+        # No entry in the manifest: a smoke run is the corpus, not an arm comparison.
+        run = await service.create_run(
+            experiment_id="model_smoke",
+            tier=EvalTier.MODEL_SMOKE,
+            phase=EvalPhase.PILOT,
+        )
+        await service.start(run.id)
+        assert (await service.wait(run.id)).status is EvalRunStatus.COMPLETED
+
+        cases = await service.store.list_cases(run.id)
+        expected = {fixture.id for fixture in catalog.dataset.fixtures}
+        assert {case.fixture_id for case in cases} == expected
+        assert len(cases) == len(expected) * len(run.seeds)
+        for seed in run.seeds:
+            assert {case.fixture_id for case in cases if case.seed == seed} == expected
+        arms = await service.store.list_arms(run.id)
+        assert [arm.arm_id for arm in arms] == ["model_smoke"]
+        await service.shutdown()
+
+    asyncio.run(scenario())
+
+
 def test_cancel_releases_benchmark_lease(tmp_path: Path) -> None:
     class BlockingRunner(PassingRunner):
         def __init__(self) -> None:

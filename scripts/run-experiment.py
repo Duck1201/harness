@@ -6,6 +6,7 @@ drives the same EvalService the web surface drives, with the same protocol —
 15 cases per arm for a pilot, 50 for a promotion, three recorded seeds.
 
     uv run python scripts/run-experiment.py guarded_web_brave_escalation --phase pilot
+    uv run python scripts/run-experiment.py --tier model_smoke
 """
 
 from __future__ import annotations
@@ -43,7 +44,13 @@ from harness.evals import (  # noqa: E402
 )
 
 
-async def run(experiment_id: str, phase: EvalPhase, tokenizer: Path, database: Path) -> int:
+async def run(
+    experiment_id: str,
+    phase: EvalPhase,
+    tier: EvalTier,
+    tokenizer: Path,
+    database: Path,
+) -> int:
     config = load_config()
     catalog = load_eval_catalog(
         ROOT / "evals/fixtures/regressions.json",
@@ -93,10 +100,13 @@ async def run(experiment_id: str, phase: EvalPhase, tokenizer: Path, database: P
     try:
         run = await service.create_run(
             experiment_id=experiment_id,
-            tier=EvalTier.EXPERIMENT,
+            tier=tier,
             phase=phase,
         )
-        print(f"run {run.id} seeds={list(run.seeds)} phase={phase.value}", file=sys.stderr)
+        print(
+            f"run {run.id} seeds={list(run.seeds)} tier={tier.value} phase={phase.value}",
+            file=sys.stderr,
+        )
         await service.start(run.id)
         while True:
             current = await service.status(run.id)
@@ -118,8 +128,19 @@ async def run(experiment_id: str, phase: EvalPhase, tokenizer: Path, database: P
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("experiment_id")
+    parser.add_argument(
+        "experiment_id",
+        nargs="?",
+        default=EvalTier.MODEL_SMOKE.value,
+        help='experiment from the manifest, or "model_smoke" for the whole corpus',
+    )
     parser.add_argument("--phase", choices=[phase.value for phase in EvalPhase], default="pilot")
+    parser.add_argument(
+        "--tier",
+        choices=[EvalTier.MODEL_SMOKE.value, EvalTier.EXPERIMENT.value],
+        default=EvalTier.EXPERIMENT.value,
+        help="model_smoke runs every fixture that has a runner, in one arm",
+    )
     parser.add_argument(
         "--tokenizer",
         type=Path,
@@ -141,6 +162,7 @@ def main() -> int:
             run(
                 arguments.experiment_id,
                 EvalPhase(arguments.phase),
+                EvalTier(arguments.tier),
                 arguments.tokenizer,
                 arguments.database,
             )
@@ -150,6 +172,7 @@ def main() -> int:
             run(
                 arguments.experiment_id,
                 EvalPhase(arguments.phase),
+                EvalTier(arguments.tier),
                 arguments.tokenizer,
                 Path(temporary) / "evals.sqlite3",
             )

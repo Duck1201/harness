@@ -73,10 +73,9 @@ class EvalService:
             phase=phase,
             seeds=selected_seeds,
         )
-        if tier is EvalTier.CONTRACT:
-            await self.store.create_arm(run.id, "contract", settings={})
+        if experiment is None:
+            await self.store.create_arm(run.id, tier.value, settings={})
         else:
-            assert experiment is not None
             for arm in experiment.arms:
                 settings = cast(
                     Mapping[str, JsonValue],
@@ -168,6 +167,7 @@ class EvalService:
                     fixtures,
                     count=count,
                     seeds=run.seeds,
+                    cover_every_fixture=run.tier is EvalTier.MODEL_SMOKE,
                 )
                 for order_index, (fixture, seed) in enumerate(schedule):
                     result = await runner.run_case(
@@ -226,12 +226,24 @@ class EvalService:
         await self._save_report(blocked)
 
     def _experiment(self, experiment_id: str, tier: EvalTier) -> ExperimentDefinition | None:
+        """Returns None for a run that covers the corpus instead of comparing arms.
+
+        A smoke run answers "does anything the harness can execute still work",
+        so scoping it by an experiment's tags would leave whatever no experiment
+        happens to mention unexecuted — which is how four fixtures became
+        unreachable while looking like part of the corpus.
+        """
         if tier is EvalTier.CONTRACT:
             if experiment_id not in {
                 "contract_regressions",
                 self.catalog.dataset.dataset_id,
             }:
                 raise EvalServiceError(f"unknown contract experiment: {experiment_id}")
+            return None
+        if tier is EvalTier.MODEL_SMOKE and experiment_id in {
+            EvalTier.MODEL_SMOKE.value,
+            self.catalog.dataset.dataset_id,
+        }:
             return None
         experiment = next(
             (item for item in self.catalog.manifest.experiments if item.id == experiment_id),
@@ -243,10 +255,9 @@ class EvalService:
 
     def _fixtures(self, run: EvalRun, runner: CaseRunner) -> tuple[RegressionFixture, ...]:
         fixtures = self.catalog.dataset.fixtures
-        if run.tier is EvalTier.CONTRACT:
-            return tuple(item for item in fixtures if runner.supports(item.type))
         experiment = self._experiment(run.experiment_id, run.tier)
-        assert experiment is not None
+        if experiment is None:
+            return tuple(item for item in fixtures if runner.supports(item.type))
         tags = frozenset(experiment.fixture_tags)
         return tuple(
             item for item in fixtures if tags.intersection(item.tags) and runner.supports(item.type)
@@ -321,7 +332,15 @@ def _schedule(
     *,
     count: int,
     seeds: tuple[int, ...],
+    cover_every_fixture: bool = False,
 ) -> tuple[tuple[RegressionFixture, int], ...]:
+    """Draws `count` cases per arm, or the whole corpus once per recorded order.
+
+    The fixed counts belong to the comparison protocol: they size an arm so two
+    arms can be compared. A smoke run compares nothing, and 15 draws over a
+    larger corpus leaves a seed-dependent slice of it unexecuted, so it takes
+    every fixture in each of the three recorded orders instead.
+    """
     orders: dict[int, list[RegressionFixture]] = {}
     positions: dict[int, int] = {}
     for seed in seeds:
@@ -329,6 +348,8 @@ def _schedule(
         random.Random(seed).shuffle(order)
         orders[seed] = order
         positions[seed] = 0
+    if cover_every_fixture:
+        return tuple((fixture, seed) for seed in seeds for fixture in orders[seed])
     schedule: list[tuple[RegressionFixture, int]] = []
     for index in range(count):
         seed = seeds[index % len(seeds)]

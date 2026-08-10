@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "manifest_version": "2.0.0",
-  "manifest_digest_sha256": "e1897a4db53a836b332ccccf76629fa5603cb01cc96c7dcda1a616d3e05a223d",
+  "manifest_digest_sha256": "d05c99c415071d01e3893c5c0c8663696c7ec396bab650922f859e95b566dffb",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -52,6 +52,7 @@
     "argument_schema_match",
     "result_payload_schema_match",
     "parse_valid_rate",
+    "rejected_model_attempts",
     "extra_tool_calls",
     "steps_to_terminal",
     "prompt_tokens",
