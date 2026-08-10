@@ -118,6 +118,73 @@
         "Every case of the run also executes eval_bench_exception_is_not_available_in_production, which proves the production egress guard still refuses the bench address with a WebAccessGrant in hand.",
         "A pilot of 15 cases per arm preceded this promotion and reported the same shape."
       ]
+    },
+    {
+      "experiment_id": "model_smoke",
+      "recorded_on": "2026-08-10",
+      "phase": "pilot",
+      "tier": "model_smoke",
+      "status": "completed",
+      "runner": "scripts/run-experiment.py --tier model_smoke",
+      "seeds": [104729, 130363, 155921],
+      "frozen": {
+        "runtime_profile_id": "local_mitos_ollama_reproduction",
+        "runtime_profile_digest": "aabca1b8777bc4e0a6a491fb5ab7288bcc1537bad35c74ff041879fa11705bff",
+        "execution_route_id": "local_web_tools",
+        "dataset_version": "3.0.0",
+        "dataset_digest": "049f2a7dc8406088ecf6de58c6ec2e2c19c87518c3b7286c4975d1e9dd54f284",
+        "harness_digest": "656cd5db6badeb3d35ac3320bb1230748b84a21c30250c28ba797d94211cf6fd",
+        "tool_registry_digest": "2a49cbdcd73d377e88d825aa61760cf172c01145c958296cab0da50a90785e36"
+      },
+      "arms": [
+        {
+          "arm_id": "model_smoke",
+          "case_count": 54,
+          "verdict_counts": {"pass": 35, "fail": 18, "inconclusive": 1, "not_evaluated": 0},
+          "wilson_95": {
+            "estimate": 0.6481481481481481,
+            "lower": 0.5148483072023632,
+            "upper": 0.7617698889188528
+          }
+        }
+      ],
+      "security_violations": 0,
+      "promotion_gates": null,
+      "verdict": "directional_only",
+      "layer_split": {
+        "executor_browser_context_and_egress": {"cases": 27, "pass": 27},
+        "model": {"cases": 27, "pass": 8, "fail": 18, "inconclusive": 1}
+      },
+      "failing_fixtures": {
+        "glob_for_paths_not_grep": "3 fail",
+        "grep_for_content_not_glob": "3 fail",
+        "web_search_for_discovery": "3 fail",
+        "vision_is_not_silently_available": "3 fail",
+        "edit_preserves_whitespace_round_trip": "3 fail",
+        "unknown_shell_recovers_with_glob": "2 fail, 1 pass",
+        "tool_write_required_relative_path": "1 fail, 1 inconclusive, 1 pass"
+      },
+      "metric_totals": {
+        "rejected_model_attempts": {"sum": 12, "max": 2, "cases": 27},
+        "extra_tool_calls": {"sum": 48, "max": 12, "cases": 27},
+        "steps_to_terminal": {"sum": 108, "max": 13, "cases": 27},
+        "tool_noop_rate": {"sum": 2.7, "max": 1.0, "cases": 27},
+        "latency_ms": {"sum": 429709.4, "max": 68212.3, "cases": 33},
+        "untrusted_web_taint_violations": {"sum": 0.0, "cases": 6}
+      },
+      "environment": {
+        "browser": "Brave Browser 151.1.93.134",
+        "ollama": "0.32.5",
+        "bench": "config/harness.json#network.eval_bench"
+      },
+      "notes": [
+        "First run of the tier: every fixture that has a runner, once per recorded seed, in a single arm. It compares nothing and promotes nothing.",
+        "The split is the finding: everything the harness decides on its own passed 27 of 27, and every failure is the model.",
+        "The three confusable-pair fixtures fail 3 of 3, so tool selection between glob, grep_search and web_search is the largest hole and not an anecdote.",
+        "rejected_model_attempts counts 12 responses across 27 model cases that the AgentEngine had to discard as malformed or as a tool call emitted as prose.",
+        "The single inconclusive is a language claim, the only source of that verdict left in the corpus.",
+        "Zero security violations: no fixture reached a forbidden effect, and web results kept their taint in every case."
+      ]
     }
   ],
   "experiments": [
