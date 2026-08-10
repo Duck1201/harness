@@ -54,7 +54,7 @@ O vocabulário canônico está em [`CONTEXT.md`](../CONTEXT.md). Em particular:
 | Retenção | Uma policy global remove Conversation inteira; nunca cria buracos no histórico |
 | UI | AG-UI é projeção do estado, não fonte canônica; UX e evals são web-first |
 | Acesso | Sem senha de Operator, só loopback direto é atendido; com senha, toda rota exige sessão. Não há terceira opção |
-| Confirmação | Escrita sob UntrustedWebTaint exige decisão do Operator para aquela chamada; aprovar não cria grant nem amplia acesso |
+| Confirmação | Sob UntrustedWebTaint, todo efeito `workspace_write` ou `data_egress` exige decisão do Operator para aquela chamada; o gate lê o efeito no registry, nunca o nome da tool; aprovar não cria grant nem amplia acesso |
 | Roadmap | Qwen2.5 está fora do roadmap e não é challenger de nenhum experimento |
 
 ## Estado, projeções e persistência
@@ -71,7 +71,7 @@ Nomes de tools não autorizam nada. A policy resolve os efeitos declarados no re
 - `workspace_write` exige WorkspaceRootGrant e WriteGrant;
 - `data_egress` exige WebAccessGrant e controles de destino, DNS e redirect.
 
-WebAccessGrant não é consentimento para backend remoto. Conteúdo obtido da web recebe UntrustedWebTaint, que acompanha derivações e nunca cria grant, confirmação ou permissão. Paths continuam relativos, canonicalizados, com symlinks resolvidos e confinados ao Workspace.
+WebAccessGrant não é consentimento para backend remoto. Conteúdo obtido da web recebe UntrustedWebTaint, que acompanha derivações e nunca cria grant, confirmação ou permissão. Uma página hostil pode instruir o modelo tanto a alterar arquivos quanto a levá-los embora numa consulta ou URL, então as duas pernas passam pela mesma confirmação enquanto o taint estiver no contexto, e um efeito desconhecido é tratado como se precisasse dela. Paths continuam relativos, canonicalizados, com symlinks resolvidos e confinados ao Workspace.
 
 ## Tools, automações e resultados
 

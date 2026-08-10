@@ -353,7 +353,7 @@ class AgentEngine:
                     "tool_calls_per_turn_limit",
                 )
 
-            if _requires_web_taint_confirmation(calls, context):
+            if _requires_web_taint_confirmation(calls, context, self._tool_effects):
                 decision = await self._await_confirmation(turn, step_sequence, calls)
                 if self._stop_signal.stop_requested:
                     return await self._finish(turn, TerminalOutcomeKind.CANCELLED, "operator_stop")
@@ -363,7 +363,7 @@ class AgentEngine:
                     await self._append_blocked_automation(
                         turn,
                         decision.reason_code,
-                        automation_id="write_confirmation",
+                        automation_id="web_taint_confirmation",
                     )
                     await self._store.append_agent_step(turn.id, seed=step_seed, tool_calls=calls)
                     await self._emit_step_finished(turn, step_sequence)
@@ -591,7 +591,7 @@ class AgentEngine:
             turn.id,
             CanonicalHistoryEntryKind.INTERNAL_AUTOMATION,
             {
-                "automation_id": "write_confirmation",
+                "automation_id": "web_taint_confirmation",
                 "status": "requested",
                 "confirmation_id": request.id,
                 "reason_code": request.reason_code,
@@ -603,7 +603,7 @@ class AgentEngine:
             turn.id,
             CanonicalHistoryEntryKind.INTERNAL_AUTOMATION,
             {
-                "automation_id": "write_confirmation",
+                "automation_id": "web_taint_confirmation",
                 "status": "approved" if decision.approved else "denied",
                 "confirmation_id": request.id,
                 "reason_code": decision.reason_code,
@@ -742,6 +742,10 @@ def _validate_response(response: ModelResponse) -> None:
 # of the wire format, not a reply.
 _WORD = re.compile(r"\w")
 
+# Effects that a Turn carrying UntrustedWebTaint may not spend without the Operator:
+# one changes the Operator's files, the other takes their content off the machine.
+_TAINT_CONFIRMED_EFFECTS = frozenset({"workspace_write", "data_egress"})
+
 # The runtime also emits tool calls as markup, not only as JSON. A leaked payload
 # starts or ends on one of these tags.
 _TOOL_CALL_TAGS = (
@@ -870,10 +874,29 @@ def _tool_error_code(result: ToolResult) -> str | None:
     return code if isinstance(code, str) else None
 
 
-def _requires_web_taint_confirmation(calls: Sequence[ToolCall], context: ModelContext) -> bool:
-    return "UntrustedWebTaint" in context.taints and any(
-        call.name in {"write_file", "edit"} for call in calls
-    )
+def _requires_web_taint_confirmation(
+    calls: Sequence[ToolCall],
+    context: ModelContext,
+    tool_effects: Mapping[str, Sequence[str]],
+) -> bool:
+    """Gates by effect, never by tool name.
+
+    Content from the web can tell the model to write the Operator's files or to
+    carry them off the machine, and both legs need the same decision: a name list
+    only covers the tools that existed when it was written.
+    """
+    if "UntrustedWebTaint" not in context.taints:
+        return False
+    return any(_confirmable_under_taint(call, tool_effects) for call in calls)
+
+
+def _confirmable_under_taint(call: ToolCall, tool_effects: Mapping[str, Sequence[str]]) -> bool:
+    effects = tool_effects.get(call.name)
+    # An unknown tool is never assumed harmless: the same conservative reading that
+    # keeps it out of the read budget keeps it inside the gate.
+    if not effects:
+        return True
+    return any(effect in _TAINT_CONFIRMED_EFFECTS for effect in effects)
 
 
 def _deadline_reached(deadline: float) -> bool:
