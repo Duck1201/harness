@@ -180,7 +180,7 @@
     {
       "id": "canonical_state",
       "kind": "sqlite",
-      "implementation": "LangGraph SqliteSaver",
+      "implementation": "sqlite3_conversation_store",
       "stores_content": true,
       "stores_reasoning": false,
       "failure_is_fatal": true
@@ -206,7 +206,7 @@
     "delivery": "web_first",
     "protocol": "AG-UI",
     "projection_source": "canonical_state",
-    "client": "assistant-ui",
+    "client": "react_ag_ui_spa",
     "theme": "light_only",
     "conversation_branching": false,
     "approve_with_edits": false

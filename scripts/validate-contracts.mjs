@@ -68,6 +68,63 @@ function scopedDigest(document, label) {
   return sha256(canonicalJson(selected));
 }
 
+function replaceDigestField(text, key, value, label) {
+  const pattern = new RegExp(`("${key}"\\s*:\\s*")[0-9a-f]{64}(")`);
+  if (!pattern.test(text)) {
+    failures.push(`${label}: campo de digest não encontrado para reescrita: ${key}`);
+    return text;
+  }
+  return text.replace(pattern, `$1${value}$2`);
+}
+
+// Reescreve os digests derivados a partir do conteúdo atual dos contratos. A substituição é
+// textual e cirúrgica porque os JSON usam arrays compactos que um JSON.stringify desfaria,
+// transformando cada selagem num diff do arquivo inteiro.
+function sealDigests() {
+  const fixturesPath = "evals/fixtures/regressions.json";
+  const experimentsPath = "evals/experiments.json";
+  let fixturesText = fs.readFileSync(path.join(root, fixturesPath), "utf8");
+  let experimentsText = fs.readFileSync(path.join(root, experimentsPath), "utf8");
+
+  const datasetDigest = scopedDigest(JSON.parse(fixturesText), "fixtures");
+  fixturesText = replaceDigestField(
+    fixturesText,
+    "dataset_digest_sha256",
+    datasetDigest,
+    fixturesPath,
+  );
+  experimentsText = replaceDigestField(
+    experimentsText,
+    "dataset_digest_sha256",
+    datasetDigest,
+    experimentsPath,
+  );
+  for (const [field, contractPath] of [
+    ["model_profiles_sha256", "config/model-profiles.json"],
+    ["harness_sha256", "config/harness.json"],
+    ["tool_registry_sha256", "config/tool-registry.json"],
+  ]) {
+    const digest = documentDigest(JSON.parse(fs.readFileSync(path.join(root, contractPath), "utf8")));
+    experimentsText = replaceDigestField(experimentsText, field, digest, experimentsPath);
+  }
+
+  // O manifesto cobre dataset e contract_digests, então só fecha depois deles.
+  const manifestDigest = scopedDigest(JSON.parse(experimentsText), "experiments");
+  experimentsText = replaceDigestField(
+    experimentsText,
+    "manifest_digest_sha256",
+    manifestDigest,
+    experimentsPath,
+  );
+
+  if (failures.length > 0) return;
+  fs.writeFileSync(path.join(root, fixturesPath), fixturesText);
+  fs.writeFileSync(path.join(root, experimentsPath), experimentsText);
+  console.log(`Digests selados: ${fixturesPath}, ${experimentsPath}`);
+}
+
+if (process.argv.includes("--write")) sealDigests();
+
 function collectMarkdownFiles(directory) {
   const result = [];
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
