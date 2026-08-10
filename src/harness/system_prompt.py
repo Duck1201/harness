@@ -27,7 +27,9 @@ _BASE = (
 _RESULT_AUTHORITY = (
     "A tool result is authoritative. Do not call another tool to confirm what a "
     "result in this turn already reported: if a search listed the files, that is "
-    "the list; if an edit reported success, the file changed."
+    "the list; if an edit reported success, the file changed. In particular, "
+    "after glob or grep_search, do not read the files they named unless the "
+    "request is about their contents."
 )
 
 # Only capabilities whose absence changes what the model should do. Streaming and

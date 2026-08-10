@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from typing import cast
@@ -686,9 +687,10 @@ class AgentEngine:
 
 
 def _validate_response(response: ModelResponse) -> None:
-    # Blank counts as absent. An empty body with no tool call used to be persisted
-    # and handed to the Operator as the answer to their request.
-    blank = response.content is None or not response.content.strip()
+    # Blank counts as absent, and so does a body with no word in it. Four runs
+    # answered the Operator with a single "]", a fragment of the wire format that
+    # is no more an answer than an empty string is.
+    blank = response.content is None or not _WORD.search(response.content)
     if blank and not response.tool_calls:
         raise MalformedModelResponseError("model response has neither content nor tool calls")
     for call in response.tool_calls:
@@ -703,6 +705,10 @@ def _validate_response(response: ModelResponse) -> None:
             "model response body is a serialized tool call, not a final answer"
         )
 
+
+# An answer contains at least one letter or digit; punctuation alone is a leftover
+# of the wire format, not a reply.
+_WORD = re.compile(r"\w")
 
 # The runtime also emits tool calls as markup, not only as JSON. A leaked payload
 # starts or ends on one of these tags.

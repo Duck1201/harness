@@ -34,6 +34,9 @@ from harness import (  # noqa: E402
     EngineReadiness,
     EvalTier,
     HuggingFaceTokenEstimator,
+    ModelMessage,
+    ModelRequest,
+    ModelRole,
     OllamaRuntime,
     ToolResult,
     load_config,
@@ -146,6 +149,26 @@ def _record(
     }
 
 
+async def _warm_up(runtime: OllamaRuntime) -> None:
+    """One throwaway generation before the battery starts.
+
+    The seed is honoured — the same prompt at the same seed repeats exactly — but
+    the first generation after the model loads does not match the ones that
+    follow. Without this, whichever case happens to run first is measured under
+    conditions no other case sees.
+    """
+    await runtime.generate(
+        ModelRequest(
+            messages=(ModelMessage(role=ModelRole.USER, content="ok"),),
+            tools=(),
+            options={},
+            seed=0,
+            max_output_tokens=8,
+            think=False,
+        )
+    )
+
+
 async def collect(seeds: Sequence[int], output: Path, tokenizer: Path) -> int:
     config = load_config()
     catalog = load_eval_catalog(
@@ -163,6 +186,7 @@ async def collect(seeds: Sequence[int], output: Path, tokenizer: Path) -> int:
         print(f"RuntimeProfile is not ready: {verification.reason_code}", file=sys.stderr)
         return 2
 
+    await _warm_up(runtime)
     runner = ModelCaseRunner(
         config=config,
         runtime=runtime,

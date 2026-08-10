@@ -964,6 +964,34 @@ def test_a_blank_final_body_is_not_delivered_as_the_answer(tmp_path: Path) -> No
     asyncio.run(scenario())
 
 
+def test_a_bare_punctuation_body_is_not_delivered_as_the_answer(tmp_path: Path) -> None:
+    """Observed four times in a corpus run: a lone bracket handed over as the reply."""
+
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        runtime = FakeRuntime(
+            [
+                ModelResponse(content="]"),
+                ModelResponse(content="Pronto."),
+            ]
+        )
+
+        finished = await engine(store, runtime, FakeToolExecutor(), FakeEventSink()).run(
+            conversation_id, "responda"
+        )
+
+        assert finished.terminal_outcome is not None
+        assert finished.terminal_outcome.kind is TerminalOutcomeKind.COMPLETED
+        finals = [
+            item.payload["content"]
+            for item in await store.list_canonical_history(conversation_id)
+            if item.kind is CanonicalHistoryEntryKind.FINAL_RESPONSE
+        ]
+        assert finals == ["Pronto."]
+
+    asyncio.run(scenario())
+
+
 def test_an_answer_that_merely_quotes_json_is_still_a_final_response(
     tmp_path: Path,
 ) -> None:

@@ -18,7 +18,7 @@ from .models import (
 from .oracles import evaluate_oracle
 from .runner import CaseRunner, EvalCaseSpec
 from .statistics import evaluate_promotion_gate, wilson_interval
-from .store import EvalReport, EvalRun, EvalStore, RegressionDraft
+from .store import EvalCase, EvalReport, EvalRun, EvalStore, RegressionDraft
 
 
 class EvalServiceError(Exception):
@@ -168,6 +168,7 @@ class EvalService:
                     count=count,
                     seeds=run.seeds,
                     cover_every_fixture=run.tier is EvalTier.MODEL_SMOKE,
+                    passes=1 if run.phase is EvalPhase.PILOT else 3,
                 )
                 for order_index, (fixture, seed) in enumerate(schedule):
                     result = await runner.run_case(
@@ -288,6 +289,7 @@ class EvalService:
                         "lower": interval.lower,
                         "upper": interval.upper,
                     },
+                    "fixtures": _fixture_rates(arm_cases),
                 }
             )
         gate_payload: JsonValue = None
@@ -327,12 +329,44 @@ class EvalService:
         )
 
 
+def _fixture_rates(cases: Sequence[EvalCase]) -> JsonValue:
+    """Pass rate per fixture, so an unstable one reads as unstable.
+
+    An arm-level number hides which fixture moved. With a runtime that does not
+    reproduce exactly from its seed, a fixture that passes two of three readings
+    is a different fact from one that fails all three, and only this breaks them
+    apart.
+    """
+    by_fixture: dict[str, list[TaskVerdict]] = {}
+    for case in cases:
+        by_fixture.setdefault(case.fixture_id, []).append(case.verdict)
+    rates: dict[str, JsonValue] = {}
+    for fixture_id, verdicts in sorted(by_fixture.items()):
+        passed = sum(item is TaskVerdict.PASS for item in verdicts)
+        interval = wilson_interval(passed, len(verdicts))
+        rates[fixture_id] = {
+            "case_count": len(verdicts),
+            "verdict_counts": {
+                verdict.value: verdicts.count(verdict)
+                for verdict in TaskVerdict
+                if verdicts.count(verdict)
+            },
+            "wilson_95": {
+                "estimate": interval.estimate,
+                "lower": interval.lower,
+                "upper": interval.upper,
+            },
+        }
+    return rates
+
+
 def _schedule(
     fixtures: Sequence[RegressionFixture],
     *,
     count: int,
     seeds: tuple[int, ...],
     cover_every_fixture: bool = False,
+    passes: int = 1,
 ) -> tuple[tuple[RegressionFixture, int], ...]:
     """Draws `count` cases per arm, or the whole corpus once per recorded order.
 
@@ -349,7 +383,12 @@ def _schedule(
         orders[seed] = order
         positions[seed] = 0
     if cover_every_fixture:
-        return tuple((fixture, seed) for seed in seeds for fixture in orders[seed])
+        # The local runtime is not perfectly reproducible from its seed, so one
+        # reading per fixture cannot separate a broken fixture from a bad draw.
+        # A promotion smoke repeats every order, and the report carries the rate.
+        return tuple(
+            (fixture, seed) for _ in range(passes) for seed in seeds for fixture in orders[seed]
+        )
     schedule: list[tuple[RegressionFixture, int]] = []
     for index in range(count):
         seed = seeds[index % len(seeds)]

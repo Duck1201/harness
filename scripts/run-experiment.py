@@ -30,6 +30,9 @@ from harness import (  # noqa: E402
     EvalStore,
     EvalTier,
     HuggingFaceTokenEstimator,
+    ModelMessage,
+    ModelRequest,
+    ModelRole,
     OllamaRuntime,
     load_config,
 )
@@ -42,6 +45,26 @@ from harness.evals import (  # noqa: E402
     ModelCaseRunner,
     load_eval_catalog,
 )
+
+
+async def _warm_up(runtime: OllamaRuntime) -> None:
+    """One throwaway generation before the battery starts.
+
+    The seed is honoured — the same prompt at the same seed repeats exactly — but
+    the first generation after the model loads does not match the ones that
+    follow. Without this, whichever case happens to run first is measured under
+    conditions no other case sees.
+    """
+    await runtime.generate(
+        ModelRequest(
+            messages=(ModelMessage(role=ModelRole.USER, content="ok"),),
+            tools=(),
+            options={},
+            seed=0,
+            max_output_tokens=8,
+            think=False,
+        )
+    )
 
 
 async def run(
@@ -66,6 +89,7 @@ async def run(
     if not verification.ready:
         print(f"RuntimeProfile is not ready: {verification.reason_code}", file=sys.stderr)
         return 2
+    await _warm_up(runtime)
     browser = await BraveEgressGuard().readiness()
     if not browser.ready:
         print(f"Browser is not ready: {browser.reason_code}", file=sys.stderr)
