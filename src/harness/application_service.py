@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Protocol
 
 from .agent_engine import AgentEngine
+from .brave_browser import BraveBrowserCapability, BraveEgressGuard
 from .composite_tools import CompositeToolExecutor
 from .config import HarnessConfig, ToolRegistryConfig
 from .context_builder import ContextBuilder
@@ -45,7 +46,7 @@ from .ports import (
     ToolExecutorFactory,
     ToolSchema,
 )
-from .web_tools import WebToolExecutor
+from .web_tools import BrowserCapability, BrowserEgressGuard, WebToolExecutor
 from .workspace_coordinator import WorkspaceCoordinator
 
 
@@ -89,6 +90,8 @@ class ApplicationService:
         brave_api_key: str | None = None,
         benchmark_lease: BenchmarkLease | None = None,
         eval_service: EvalService | None = None,
+        browser_capability: BrowserCapability | None = None,
+        browser_egress_guard: BrowserEgressGuard | None = None,
     ) -> None:
         roots: list[Path] = []
         for candidate in allowed_workspace_roots:
@@ -133,12 +136,18 @@ class ApplicationService:
         self._stop_signals: dict[str, _CooperativeStopSignal] = {}
         self._worker_lock = asyncio.Lock()
         self._workspace_coordinator = WorkspaceCoordinator(store)
+        if browser_capability is None or browser_egress_guard is None:
+            brave_guard = BraveEgressGuard()
+            browser_capability = browser_capability or BraveBrowserCapability(guard=brave_guard)
+            browser_egress_guard = browser_egress_guard or brave_guard
         self._tool_executor_factory: ToolExecutorFactory = _ConversationToolExecutorFactory(
             store=store,
             registry=config.tool_registry,
             workspace_root=self.workspace_root,
             coordinator=self._workspace_coordinator,
             brave_api_key=normalized_brave_key,
+            browser_capability=browser_capability,
+            browser_egress_guard=browser_egress_guard,
         )
         self._event_bus = _LiveEventBus()
         self._event_sink = _ServiceEventSink(self._event_bus, observability_store)
@@ -544,12 +553,16 @@ class _ConversationToolExecutorFactory:
         workspace_root: Callable[[str], Path],
         coordinator: WorkspaceCoordinator,
         brave_api_key: str | None,
+        browser_capability: BrowserCapability | None = None,
+        browser_egress_guard: BrowserEgressGuard | None = None,
     ) -> None:
         self._store = store
         self._registry = registry
         self._workspace_root = workspace_root
         self._coordinator = coordinator
         self._brave_api_key = brave_api_key
+        self._browser_capability = browser_capability
+        self._browser_egress_guard = browser_egress_guard
 
     async def effective_tool_schemas(self, conversation_id: str) -> tuple[ToolSchema, ...]:
         policy = await self._store.get_session_policy(conversation_id)
@@ -581,6 +594,8 @@ class _ConversationToolExecutorFactory:
             registry=registry,
             session_policy=policy,
             brave_api_key=self._brave_api_key,
+            browser_capability=self._browser_capability,
+            browser_egress_guard=self._browser_egress_guard,
         )
         routes: dict[str, ToolExecutor] = {}
         for definition in registry.model_tools:

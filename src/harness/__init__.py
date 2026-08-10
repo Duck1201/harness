@@ -6,6 +6,13 @@ from .application_service import (
     OperatorConfirmationGate,
     WorkspaceInfo,
 )
+from .brave_browser import (
+    BraveBrowserCapability,
+    BraveBrowserError,
+    BraveBrowserVerifier,
+    BraveEgressGuard,
+    find_brave_executable,
+)
 from .composite_tools import CompositeToolExecutor
 from .config import (
     ExecutionRouteConfig,
@@ -196,6 +203,10 @@ __all__ = [
     "BenchmarkLease",
     "BenchmarkLeaseCanceled",
     "BenchmarkLeaseError",
+    "BraveBrowserCapability",
+    "BraveBrowserError",
+    "BraveBrowserVerifier",
+    "BraveEgressGuard",
     "BrowserCapability",
     "BrowserEgressGuard",
     "BrowserPage",
@@ -343,6 +354,7 @@ __all__ = [
     "default_host_config_path",
     "evaluate_oracle",
     "evaluate_promotion_gate",
+    "find_brave_executable",
     "load_config",
     "load_eval_catalog",
     "load_experiment_manifest",
