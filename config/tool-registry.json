@@ -1,0 +1,391 @@
+{
+  "schema_version": 2,
+  "registry_version": "2.0.0",
+  "source_of_truth": true,
+  "digest_contract": {
+    "algorithm": "sha256",
+    "canonicalization": "sorted_keys_compact_utf8",
+    "scope": [
+      "registry_version",
+      "model_tools",
+      "internal_automations",
+      "prohibited_capabilities"
+    ]
+  },
+  "name_pattern": "^[a-z][a-z0-9_]{0,62}$",
+  "model_facing_language": "en",
+  "path_contract": "All file and directory paths are relative to the workspace root. Absolute paths and escapes are rejected.",
+  "result_envelope": {
+    "required": ["status", "retryable", "data", "error", "meta"],
+    "status_values": ["success", "empty", "blocked", "failed"],
+    "status_issuers": {
+      "success": "harness_or_executor",
+      "empty": "harness_or_executor",
+      "blocked": "harness_only",
+      "failed": "harness_or_executor"
+    },
+    "data_error_contract": "data_and_error_are_always_present_and_at_most_one_is_non_null",
+    "meta_required_fields": ["producer", "truncated", "taints"],
+    "rules": [
+      "Never encode blocked, empty and failed as the same empty string.",
+      "Do not return stack traces, secrets or unrestricted raw content.",
+      "Include truncation and pagination metadata when applicable.",
+      "Provider refusal and provider unavailability are failed; only harness policy, grant, validation or limit decisions are blocked."
+    ]
+  },
+  "model_tools": [
+    {
+      "name": "read_file",
+      "status": "enabled",
+      "effects": ["workspace_read"],
+      "required_grants": ["WorkspaceRootGrant"],
+      "description": "Reads a range from an existing text file. Use when the file is already known. Do not use it to find files; use glob.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Path relative to the workspace root. Absolute paths and paths outside the workspace are rejected."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "First line to return, zero-based."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 2000,
+            "default": 500,
+            "description": "Maximum number of lines to return."
+          }
+        },
+        "required": ["file_path"]
+      },
+      "executor_invariants": [
+        "A successful result includes content_sha256 so later write_file or edit calls can use an optimistic-concurrency precondition.",
+        "The result states whether it was truncated and how to request the next range."
+      ],
+      "replay_policy": "never_cache_workspace_reads"
+    },
+    {
+      "name": "write_file",
+      "status": "enabled",
+      "effects": ["workspace_write"],
+      "required_grants": ["WorkspaceRootGrant", "WriteGrant"],
+      "description": "Creates a text file or replaces its complete contents. Use only when the full desired content is known. Replacing an existing file requires its current SHA-256 precondition.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Path relative to the workspace root. Absolute paths and paths outside the workspace are rejected."
+          },
+          "content": {
+            "type": "string",
+            "description": "Complete UTF-8 content to write."
+          },
+          "expected_current_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "Required when replacing an existing file. The write fails if the current bytes do not match this SHA-256."
+          }
+        },
+        "required": ["file_path", "content"]
+      },
+      "executor_invariants": [
+        "Creating a missing file does not require expected_current_sha256.",
+        "Replacing an existing file requires expected_current_sha256.",
+        "After an HTML write, page verification is controlled by config/harness.json and is not model-selectable."
+      ],
+      "replay_policy": "reconcile_postcondition_before_replay"
+    },
+    {
+      "name": "edit",
+      "status": "enabled",
+      "effects": ["workspace_write"],
+      "required_grants": ["WorkspaceRootGrant", "WriteGrant"],
+      "description": "Replaces an inclusive line range in an existing text file. Use for a localized change. The edit requires the current file SHA-256 and fails on stale content.",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Path relative to the workspace root. Absolute paths and paths outside the workspace are rejected."
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "First line to replace, one-based and inclusive."
+          },
+          "end_line": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Last line to replace, one-based and inclusive. Must be greater than or equal to start_line."
+          },
+          "replacement": {
+            "type": "string",
+            "description": "Exact UTF-8 replacement text. Whitespace and final newlines are significant."
+          },
+          "expected_current_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "SHA-256 of the current file bytes. The edit fails if it does not match."
+          }
+        },
+        "required": [
+          "file_path",
+          "start_line",
+          "end_line",
+          "replacement",
+          "expected_current_sha256"
+        ]
+      },
+      "executor_invariants": [
+        "end_line must be greater than or equal to start_line.",
+        "The runtime parser must pass byte-for-byte whitespace round-trip tests before this tool is enabled."
+      ],
+      "replay_policy": "reconcile_postcondition_before_replay"
+    },
+    {
+      "name": "list_directory",
+      "status": "enabled",
+      "effects": ["workspace_read"],
+      "required_grants": ["WorkspaceRootGrant"],
+      "description": "Lists immediate entries in a known directory. Do not use it for recursive filename matching; use glob.",
+      "replay_policy": "never_cache_workspace_reads",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "directory_path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Directory path relative to the workspace root. Use . for the workspace root."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "First entry to return, zero-based."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "default": 200,
+            "description": "Maximum number of entries to return."
+          }
+        },
+        "required": ["directory_path"]
+      }
+    },
+    {
+      "name": "glob",
+      "status": "enabled",
+      "effects": ["workspace_read"],
+      "required_grants": ["WorkspaceRootGrant"],
+      "description": "Finds file and directory paths by glob pattern. Use it to locate names, not to search file contents.",
+      "replay_policy": "never_cache_workspace_reads",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Glob pattern evaluated inside the workspace."
+          },
+          "directory_path": {
+            "type": "string",
+            "default": ".",
+            "description": "Directory path relative to the workspace root."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "default": 200,
+            "description": "Maximum number of paths to return."
+          }
+        },
+        "required": ["pattern"]
+      }
+    },
+    {
+      "name": "grep_search",
+      "status": "enabled",
+      "effects": ["workspace_read"],
+      "required_grants": ["WorkspaceRootGrant"],
+      "description": "Searches text or a regular expression inside workspace files. Use it for content, not for filename discovery; use glob for paths.",
+      "replay_policy": "never_cache_workspace_reads",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "pattern": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Text or regular expression to search for."
+          },
+          "directory_path": {
+            "type": "string",
+            "default": ".",
+            "description": "Directory path relative to the workspace root."
+          },
+          "is_regex": {
+            "type": "boolean",
+            "default": false,
+            "description": "When true, pattern is a regular expression."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000,
+            "default": 200,
+            "description": "Maximum number of matches to return."
+          }
+        },
+        "required": ["pattern"]
+      }
+    },
+    {
+      "name": "web_search",
+      "status": "enabled",
+      "effects": ["data_egress"],
+      "required_grants": ["WebAccessGrant"],
+      "result_taints": ["UntrustedWebTaint"],
+      "description": "Searches the public web to discover current pages. Use web_fetch when the exact URL is already known.",
+      "replay_policy": "cache_normalized_arguments_per_turn",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "description": "Search query."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "default": 8,
+            "description": "Maximum number of results to return."
+          }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "web_fetch",
+      "status": "enabled",
+      "effects": ["data_egress"],
+      "required_grants": ["WebAccessGrant"],
+      "result_taints": ["UntrustedWebTaint"],
+      "description": "Fetches readable content from a known public URL. The executor chooses HTTP or a browser internally. Do not use it to discover URLs; use web_search.",
+      "replay_policy": "cache_exact_url_per_turn",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 4096,
+            "description": "Public HTTP or HTTPS URL. Private, local, reserved and disallowed redirect targets are rejected."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 50000,
+            "default": 12000,
+            "description": "Maximum number of extracted characters to return."
+          }
+        },
+        "required": ["url"]
+      },
+      "executor_invariants": [
+        "Resolve and enforce SSRF policy before connecting and after every redirect.",
+        "HTTP is attempted first; browser escalation is internal and symptom-driven.",
+        "HTML extraction is shared and runs once before the result enters the model view."
+      ]
+    }
+  ],
+  "internal_automations": [
+    {
+      "id": "page_verification",
+      "kind": "InternalAutomation",
+      "trigger": "html_write_committed",
+      "effects": ["workspace_read"],
+      "required_grants": ["WorkspaceRootGrant", "WriteGrant"],
+      "model_selectable": false,
+      "config": "config/harness.json#page_verification"
+    },
+    {
+      "id": "browser_escalation",
+      "kind": "InternalAutomation",
+      "trigger": "web_fetch_http_result_requires_browser",
+      "effects": ["data_egress"],
+      "required_grants": ["WebAccessGrant"],
+      "model_selectable": false,
+      "config": "config/harness.json#network"
+    },
+    {
+      "id": "html_extraction",
+      "kind": "InternalAutomation",
+      "trigger": "html_enters_model_view",
+      "effects": [],
+      "required_grants": [],
+      "model_selectable": false,
+      "config": "config/harness.json#context"
+    }
+  ],
+  "prohibited_capabilities": [
+    {
+      "name": "run_shell_command",
+      "reason": "Shell execution is excluded from the first release threat model.",
+      "gate_document": "docs/RELEASE-PENDING.md"
+    },
+    {
+      "name": "code_interpreter",
+      "reason": "Arbitrary code execution is excluded from the first release threat model.",
+      "gate_document": "docs/RELEASE-PENDING.md"
+    },
+    {
+      "name": "verify_page",
+      "reason": "Page verification is InternalAutomation and cannot be selected by the model."
+    },
+    {
+      "name": "browser",
+      "reason": "Browser use is InternalAutomation behind guarded web_fetch and page verification."
+    },
+    {
+      "name": "web_extractor",
+      "reason": "HTML extraction is InternalAutomation in the context layer."
+    },
+    {
+      "name": "describe_image",
+      "reason": "Vision is not released until the exact local profile passes its gate.",
+      "gate_document": "docs/RELEASE-PENDING.md"
+    },
+    {
+      "name": "display_image",
+      "reason": "Vision is not released until the exact local profile passes its gate.",
+      "gate_document": "docs/RELEASE-PENDING.md"
+    },
+    {
+      "name": "remote_model",
+      "reason": "Remote model egress is not available in the first release.",
+      "gate_document": "docs/RELEASE-PENDING.md"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+.harness/
+.pytest_cache/
+.ruff_cache/
+.venv/
+**/__pycache__/
+*.pyc
+*.sqlite3
+web/dist/
+web/node_modules/

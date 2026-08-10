@@ -1,0 +1,755 @@
+#!/usr/bin/env node
+
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const failures = [];
+
+function check(condition, message) {
+  if (!condition) failures.push(message);
+}
+
+function readJson(relativePath) {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(root, relativePath), "utf8"));
+  } catch (error) {
+    failures.push(`${relativePath}: JSON inválido ou ilegível: ${error.message}`);
+    return null;
+  }
+}
+
+function unique(values, label) {
+  const seen = new Set();
+  for (const value of values) {
+    check(typeof value === "string" && value.length > 0, `${label}: identificador vazio`);
+    check(!seen.has(value), `${label}: valor duplicado: ${value}`);
+    seen.add(value);
+  }
+  return seen;
+}
+
+function sameValues(left, right) {
+  return JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
+}
+
+function canonicalJson(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  return `{${Object.keys(value)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+    .join(",")}}`;
+}
+
+function sha256(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function documentDigest(document) {
+  return sha256(canonicalJson(document));
+}
+
+function scopedDigest(document, label) {
+  const contract = document.digest_contract;
+  check(contract?.algorithm === "sha256", `${label}: digest deve usar sha256`);
+  check(
+    contract?.canonicalization === "sorted_keys_compact_utf8",
+    `${label}: canonicalização de digest inválida`,
+  );
+  check(Array.isArray(contract?.scope), `${label}: digest_contract.scope ausente`);
+  const selected = {};
+  for (const field of contract?.scope ?? []) {
+    check(Object.hasOwn(document, field), `${label}: campo de digest ausente: ${field}`);
+    selected[field] = document[field];
+  }
+  return sha256(canonicalJson(selected));
+}
+
+function collectMarkdownFiles(directory) {
+  const result = [];
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const absolutePath = path.join(directory, entry.name);
+    if (entry.isDirectory()) result.push(...collectMarkdownFiles(absolutePath));
+    if (entry.isFile() && entry.name.endsWith(".md")) result.push(absolutePath);
+  }
+  return result;
+}
+
+function collectGithubHeadingAnchors(content) {
+  const anchors = new Set();
+  const occurrences = new Map();
+  for (const line of content.split("\n")) {
+    const match = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+    if (!match) continue;
+    const base = match[2]
+      .toLocaleLowerCase("pt-BR")
+      .replace(/<[^>]+>/g, "")
+      .replace(/[`*~]/g, "")
+      .replace(/[^\p{L}\p{N}\s_-]/gu, "")
+      .trim()
+      .replace(/\s+/g, "-");
+    const seen = occurrences.get(base) ?? 0;
+    occurrences.set(base, seen + 1);
+    anchors.add(seen === 0 ? base : `${base}-${seen}`);
+  }
+  return anchors;
+}
+
+const profilesDocument = readJson("config/model-profiles.json");
+const harness = readJson("config/harness.json");
+const registry = readJson("config/tool-registry.json");
+const fixturesDocument = readJson("evals/fixtures/regressions.json");
+const experimentsDocument = readJson("evals/experiments.json");
+
+if (profilesDocument && harness && registry && fixturesDocument && experimentsDocument) {
+  check(profilesDocument.schema_version === 2, "model-profiles deve usar schema_version 2");
+  check(harness.schema_version === 2, "harness deve usar schema_version 2");
+  check(registry.schema_version === 2, "tool-registry deve usar schema_version 2");
+  check(fixturesDocument.schema_version === 2, "fixtures devem usar schema_version 2");
+  check(experimentsDocument.schema_version === 2, "experiments deve usar schema_version 2");
+
+  const profiles = profilesDocument.runtime_profiles ?? [];
+  const profileIds = unique(profiles.map((profile) => profile.id), "RuntimeProfiles");
+  const activeProfile = profiles.find(
+    (profile) => profile.id === profilesDocument.active_runtime_profile,
+  );
+  const functionalProfiles = profiles.filter((profile) => profile.status === "functional");
+
+  check(Boolean(activeProfile), "active_runtime_profile não referencia um RuntimeProfile");
+  check(functionalProfiles.length === 1, "deve existir exatamente um RuntimeProfile funcional");
+  check(
+    functionalProfiles[0]?.id === activeProfile?.id && activeProfile?.runtime?.backend === "ollama",
+    "o único RuntimeProfile funcional deve ser o perfil Ollama ativo",
+  );
+  check(
+    harness.default_runtime_profile === profilesDocument.active_runtime_profile,
+    "harness.default_runtime_profile diverge do perfil ativo",
+  );
+
+  const shaPattern = /^[a-f0-9]{64}$/;
+  const evidenceVariants = profilesDocument.component_evidence_union?.variants ?? {};
+  const capabilityContract = profilesDocument.capability_contract ?? {};
+  for (const profile of profiles) {
+    check(shaPattern.test(profile.profile_digest_sha256 ?? ""), `${profile.id}: digest inválido`);
+    check(
+      profile.installation?.installed_profile_digest_sha256 === profile.profile_digest_sha256,
+      `${profile.id}: instalação e RuntimeProfile usam digests diferentes`,
+    );
+    check(
+      profile.installation?.matches_repository_modelfile === true,
+      `${profile.id}: instalação funcional deve estar coerente com o Modelfile`,
+    );
+
+    unique((profile.components ?? []).map((component) => component.id), `${profile.id}.components`);
+    for (const component of profile.components ?? []) {
+      const evidence = component.evidence ?? {};
+      const variant = evidenceVariants[evidence.kind];
+      check(Boolean(variant), `${profile.id}.${component.id}: variante de evidência inválida`);
+      for (const field of variant?.required ?? []) {
+        check(
+          evidence[field] !== null && evidence[field] !== undefined && evidence[field] !== "",
+          `${profile.id}.${component.id}: evidência ${evidence.kind} sem ${field}`,
+        );
+      }
+      if (evidence.kind === "digest_sha256") {
+        check(shaPattern.test(evidence.sha256 ?? ""), `${profile.id}.${component.id}: SHA-256 inválido`);
+      }
+      if (evidence.kind === "embedded_in_profile") {
+        check(
+          evidence.profile_digest_sha256 === profile.profile_digest_sha256,
+          `${profile.id}.${component.id}: componente embutido referencia outro perfil`,
+        );
+      }
+    }
+    check(
+      (profile.components ?? []).some(
+        (component) => component.evidence?.kind === "embedded_in_profile",
+      ),
+      `${profile.id}: faltam evidências discriminadas de componentes embutidos`,
+    );
+
+    for (const [name, capability] of Object.entries(profile.capabilities ?? {})) {
+      check(
+        sameValues(Object.keys(capability), capabilityContract.required_fields ?? []),
+        `${profile.id}.capabilities.${name}: deve conter apenas support/evidence/gate_status`,
+      );
+      check(
+        capabilityContract.support_values?.includes(capability.support),
+        `${profile.id}.capabilities.${name}: support inválido`,
+      );
+      check(
+        capabilityContract.evidence_kinds?.includes(capability.evidence?.kind),
+        `${profile.id}.capabilities.${name}: evidence inválida`,
+      );
+      check(
+        typeof capability.evidence?.source === "string" && capability.evidence.source.length > 0,
+        `${profile.id}.capabilities.${name}: evidence.source ausente`,
+      );
+      check(
+        capabilityContract.gate_status_values?.includes(capability.gate_status),
+        `${profile.id}.capabilities.${name}: gate_status inválido`,
+      );
+      check(
+        !(capability.support === "unknown" && capability.gate_status === "passed"),
+        `${profile.id}.capabilities.${name}: suporte desconhecido não pode ter gate aprovado`,
+      );
+    }
+  }
+
+  if (activeProfile) {
+    const modelfilePath = path.join(root, activeProfile.installation.repository_modelfile);
+    check(fs.existsSync(modelfilePath), "Modelfile do RuntimeProfile ativo está ausente");
+    if (fs.existsSync(modelfilePath)) {
+      const modelfile = fs.readFileSync(modelfilePath, "utf8");
+      const modelfileHash = sha256(modelfile);
+      check(
+        activeProfile.installation.repository_modelfile_sha256 === modelfileHash,
+        "SHA-256 do Modelfile diverge da instalação declarada",
+      );
+      const modelfileComponent = activeProfile.components?.find(
+        (component) => component.id === "modelfile",
+      );
+      check(
+        modelfileComponent?.evidence?.sha256 === modelfileHash,
+        "componente modelfile diverge do arquivo atual",
+      );
+
+      const directives = modelfile
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line && !line.startsWith("#"));
+      const fromDirectives = directives.filter((line) => /^FROM\s+/i.test(line));
+      check(fromDirectives.length === 1, "Modelfile deve ter exatamente um FROM");
+      check(
+        fromDirectives[0] === `FROM ${activeProfile.model.base_model}`,
+        "Modelfile FROM diverge do RuntimeProfile ativo",
+      );
+      check(
+        !directives.some((line) => /^(TEMPLATE|SYSTEM|MESSAGE)\b/i.test(line)),
+        "Modelfile não deve duplicar TEMPLATE, SYSTEM ou MESSAGE",
+      );
+
+      const actualParameters = Object.fromEntries(
+        directives
+          .filter((line) => /^PARAMETER\s+/i.test(line))
+          .map((line) => {
+            const match = /^PARAMETER\s+(\S+)\s+(.+)$/i.exec(line);
+            check(Boolean(match), `diretiva PARAMETER inválida: ${line}`);
+            return match ? [match[1], match[2]] : [line, null];
+          }),
+      );
+      check(
+        canonicalJson(actualParameters) === canonicalJson(activeProfile.installation.parameters),
+        "parâmetros do Modelfile divergem da instalação declarada",
+      );
+      for (const requestScoped of ["think", "seed", "num_predict", "stop"]) {
+        check(
+          !Object.hasOwn(actualParameters, requestScoped),
+          `Modelfile não deve fixar parâmetro da ExecutionRoute: ${requestScoped}`,
+        );
+      }
+    }
+  }
+
+  const routes = harness.execution_routes ?? [];
+  const routeIds = unique(routes.map((route) => route.id), "ExecutionRoutes");
+  const defaultRoute = routes.find((route) => route.id === harness.default_execution_route);
+  check(Boolean(defaultRoute), "default_execution_route não referencia uma ExecutionRoute");
+  for (const route of routes) {
+    check(profileIds.has(route.runtime_profile), `${route.id}: RuntimeProfile inexistente`);
+    check(!Object.hasOwn(route, "model"), `${route.id}: ExecutionRoute não deve definir model`);
+    check(!Object.hasOwn(route, "runtime"), `${route.id}: ExecutionRoute não deve definir runtime`);
+  }
+  check(defaultRoute?.status === "active", "ExecutionRoute padrão deve estar ativa");
+  check(defaultRoute?.surface === "web", "ExecutionRoute padrão deve ser web-first");
+  check(defaultRoute?.streaming === false, "streaming deve começar desligado");
+  check(defaultRoute?.parallel_tool_execution === false, "paralelismo deve começar desligado");
+  check(
+    defaultRoute?.reasoning_persistence === "transient_only",
+    "reasoning da ExecutionRoute deve ser apenas transitório",
+  );
+  check(
+    activeProfile?.capabilities?.structured_tool_calls?.support === "supported" &&
+      activeProfile?.capabilities?.structured_tool_calls?.gate_status === "passed",
+    "ExecutionRoute com tools exige structured_tool_calls suportado e aprovado",
+  );
+  check(
+    !defaultRoute?.sampling?.thinking ||
+      (activeProfile?.capabilities?.reasoning?.support === "supported" &&
+        activeProfile?.capabilities?.reasoning?.gate_status === "passed"),
+    "ExecutionRoute com thinking exige reasoning suportado e aprovado",
+  );
+
+  check(
+    harness.platform?.python === "3.13" &&
+      harness.platform?.operating_system === "linux" &&
+      harness.platform?.architecture === "x86_64",
+    "plataforma normativa deve ser Python 3.13/Linux x86_64",
+  );
+  check(
+    harness.loop?.max_steps === 15 &&
+      harness.loop?.max_tool_calls_per_step === 4 &&
+      harness.loop?.max_tool_calls_per_turn === 20 &&
+      harness.loop?.max_turn_duration_seconds === 900 &&
+      harness.loop?.max_output_tokens === 8192,
+    "limites do loop devem ser 15 steps/4 calls por step/20 por turn/15 min/8192 output",
+  );
+  check(
+    harness.loop?.stream_tool_calls === false &&
+      harness.loop?.parallel_tool_execution === false &&
+      harness.loop?.execute_calls_in_emission_order === true &&
+      harness.loop?.offer_tools_on_final_step === false,
+    "tool loop deve ser completo, serial, ordenado e sem tools no passo final",
+  );
+  check(
+    harness.state?.model_view === "derived_disposable" &&
+      harness.state?.ag_ui === "derived_projection" &&
+      harness.state?.reasoning?.transient === true &&
+      harness.state?.reasoning?.persist_to_canonical_history === false &&
+      harness.state?.reasoning?.persist_to_telemetry === false,
+    "ModelView/AG-UI devem ser projeções e reasoning não pode ser persistido",
+  );
+  check(
+    harness.context?.code_compression?.enabled === false &&
+      harness.context?.code_compression?.status === "disabled_experimental",
+    "compressão de código deve permanecer desligada e experimental",
+  );
+  check(
+    harness.workspace?.model_visible_paths === "workspace_relative" &&
+      harness.workspace?.reject_absolute_paths === true &&
+      harness.workspace?.deny_outside_workspace === true,
+    "Workspace deve exigir paths relativos e confinados",
+  );
+
+  const expectedPageKey = [
+    "workspace_id",
+    "relative_path",
+    "html_sha256",
+    "workspace_revision",
+    "verifier_digest",
+  ];
+  check(
+    JSON.stringify(harness.page_verification?.page_revision_key_fields) ===
+      JSON.stringify(expectedPageKey),
+    "PageRevision deve usar workspace/path/html/workspace revision/verifier digest",
+  );
+  check(
+    harness.page_verification?.kind === "InternalAutomation" &&
+      harness.page_verification?.model_selectable === false,
+    "verificação de página deve ser InternalAutomation não selecionável",
+  );
+
+  check(
+    harness.policy?.basis === "effects" && harness.policy?.default === "deny",
+    "policy deve ser baseada em efeitos e negar por padrão",
+  );
+  const grantTypes = new Set(harness.policy?.grant_types ?? []);
+  check(
+    sameValues(grantTypes, ["WorkspaceRootGrant", "WriteGrant", "WebAccessGrant"]),
+    "grant_types deve conter WorkspaceRootGrant, WriteGrant e WebAccessGrant",
+  );
+  check(
+    harness.network?.effect === "data_egress" &&
+      harness.network?.required_grant === "WebAccessGrant" &&
+      harness.network?.default === "deny",
+    "rede deve ser data_egress guardado por WebAccessGrant",
+  );
+  check(
+    harness.network?.web_search?.provider === "brave_search" &&
+      harness.network?.browser?.engine === "brave",
+    "web deve usar Brave Search e navegador Brave",
+  );
+  check(
+    harness.network?.browser?.separate_context_per_operation === true &&
+      harness.network?.browser?.web_and_page_verification_contexts_separate === true &&
+      harness.network?.browser?.share_cookies_storage_cache_or_service_workers === false,
+    "contextos de browser devem ser isolados e não compartilhar estado",
+  );
+  check(
+    harness.network?.web_results?.taint === "UntrustedWebTaint" &&
+      harness.network?.web_results?.propagate_to_derivations === true &&
+      harness.network?.web_results?.taint_never_grants_authority === true,
+    "dados web devem propagar UntrustedWebTaint sem conceder autoridade",
+  );
+
+  const stores = harness.stores ?? [];
+  const storeIds = unique(stores.map((store) => store.id), "stores");
+  check(stores.length === 2, "harness deve declarar exatamente dois stores");
+  check(
+    storeIds.has("canonical_state") && storeIds.has("telemetry"),
+    "stores devem separar canonical_state e telemetry",
+  );
+  check(
+    stores.find((store) => store.id === "canonical_state")?.stores_reasoning === false &&
+      stores.find((store) => store.id === "telemetry")?.stores_content === false,
+    "stores não podem persistir reasoning e telemetria não pode guardar conteúdo",
+  );
+  check(
+    harness.retention?.policy_scope === "global" &&
+      harness.retention?.deletion_unit === "conversation" &&
+      harness.retention?.partial_history_deletion === false,
+    "retenção deve ser global e remover Conversation inteira",
+  );
+  check(
+    harness.ui?.delivery === "web_first" &&
+      harness.ui?.protocol === "AG-UI" &&
+      harness.ui?.projection_source === "canonical_state" &&
+      harness.evals?.primary_surface === "web",
+    "UX e evals devem ser web-first e AG-UI deve ser projeção",
+  );
+  check(
+    harness.roadmap?.excluded_models?.includes("Qwen2.5-Coder-7B-Instruct"),
+    "Qwen2.5-Coder-7B-Instruct deve ficar fora do roadmap",
+  );
+  check(
+    !(harness.outcomes?.terminal_outcomes ?? []).some((value) =>
+      (harness.outcomes?.task_verdicts ?? []).includes(value),
+    ),
+    "TerminalOutcome e TaskVerdict devem ter vocabulários disjuntos",
+  );
+
+  check(registry.source_of_truth === true, "tool registry deve declarar source_of_truth");
+  check(
+    harness.tool_registry === "config/tool-registry.json" &&
+      harness.tool_exposure?.source === harness.tool_registry &&
+      harness.tool_exposure?.collection === "model_tools",
+    "exposição do modelo deve vir somente de tool-registry.model_tools",
+  );
+  for (const legacyCollection of ["tools", "deferred", "forbidden"]) {
+    check(!Object.hasOwn(registry, legacyCollection), `registry ainda contém coleção legada: ${legacyCollection}`);
+  }
+  check(Array.isArray(registry.model_tools), "registry.model_tools deve ser coleção");
+  check(Array.isArray(registry.internal_automations), "registry.internal_automations deve ser coleção");
+  check(
+    Array.isArray(registry.prohibited_capabilities),
+    "registry.prohibited_capabilities deve ser coleção",
+  );
+
+  const modelTools = registry.model_tools ?? [];
+  const modelToolNames = unique(modelTools.map((tool) => tool.name), "model_tools");
+  const automationIds = unique(
+    (registry.internal_automations ?? []).map((automation) => automation.id),
+    "internal_automations",
+  );
+  const prohibitedNames = unique(
+    (registry.prohibited_capabilities ?? []).map((capability) => capability.name),
+    "prohibited_capabilities",
+  );
+  for (const name of modelToolNames) {
+    check(!automationIds.has(name), `${name}: não pode ser model tool e automação`);
+    check(!prohibitedNames.has(name), `${name}: não pode ser model tool e capacidade proibida`);
+  }
+
+  const namePattern = new RegExp(registry.name_pattern);
+  for (const tool of modelTools) {
+    check(namePattern.test(tool.name), `${tool.name}: nome inválido`);
+    check(tool.status === "enabled", `${tool.name}: model tool deve estar enabled`);
+    check(
+      tool.parameters?.additionalProperties === false,
+      `${tool.name}: parameters.additionalProperties deve ser false`,
+    );
+    check(Array.isArray(tool.effects) && tool.effects.length > 0, `${tool.name}: effects ausentes`);
+    const requiredGrants = new Set(tool.required_grants ?? []);
+    for (const effect of tool.effects ?? []) {
+      const grantsForEffect = harness.policy?.effect_grants?.[effect];
+      check(Boolean(grantsForEffect), `${tool.name}: efeito sem policy: ${effect}`);
+      for (const grant of grantsForEffect ?? []) {
+        check(requiredGrants.has(grant), `${tool.name}: efeito ${effect} exige ${grant}`);
+      }
+    }
+    for (const grant of requiredGrants) {
+      check(grantTypes.has(grant), `${tool.name}: grant desconhecido: ${grant}`);
+    }
+    if (tool.effects?.includes("data_egress")) {
+      check(
+        tool.result_taints?.includes("UntrustedWebTaint"),
+        `${tool.name}: data_egress deve produzir UntrustedWebTaint`,
+      );
+    }
+    for (const [parameterName, schema] of Object.entries(tool.parameters?.properties ?? {})) {
+      if (parameterName.endsWith("_path")) {
+        check(
+          /relative/i.test(schema.description ?? ""),
+          `${tool.name}.${parameterName}: descrição deve exigir path relativo`,
+        );
+      }
+    }
+  }
+
+  for (const automation of registry.internal_automations ?? []) {
+    check(automation.kind === "InternalAutomation", `${automation.id}: kind inválido`);
+    check(automation.model_selectable === false, `${automation.id}: automação não pode ser model-selectable`);
+    for (const effect of automation.effects ?? []) {
+      check(Boolean(harness.policy?.effect_grants?.[effect]), `${automation.id}: efeito sem policy`);
+    }
+    for (const grant of automation.required_grants ?? []) {
+      check(grantTypes.has(grant), `${automation.id}: grant desconhecido: ${grant}`);
+    }
+  }
+  check(
+    automationIds.has(harness.page_verification?.automation_id),
+    "page_verification referencia InternalAutomation inexistente",
+  );
+
+  check(
+    sameValues(registry.result_envelope?.required ?? [], [
+      "status",
+      "retryable",
+      "data",
+      "error",
+      "meta",
+    ]),
+    "ResultPayload deve exigir status/retryable/data/error/meta",
+  );
+  check(
+    registry.result_envelope?.status_issuers?.blocked === "harness_only",
+    "status blocked deve pertencer somente ao harness",
+  );
+
+  const fixtures = fixturesDocument.fixtures ?? [];
+  unique(fixtures.map((fixture) => fixture.id), "fixtures");
+  const fixtureTags = new Set(fixtures.flatMap((fixture) => fixture.tags ?? []));
+  const terminalOutcomes = new Set(harness.outcomes?.terminal_outcomes ?? []);
+  const knownNonCallable = new Set([...automationIds, ...prohibitedNames]);
+  for (const fixture of fixtures) {
+    check(Boolean(fixture.origin), `${fixture.id}: origin ausente`);
+    check(Boolean(fixture.oracle), `${fixture.id}: oracle ausente`);
+    for (const calledTool of fixture.oracle?.must_call ?? []) {
+      check(modelToolNames.has(calledTool), `${fixture.id}: must_call não é model tool: ${calledTool}`);
+    }
+    for (const forbiddenCall of fixture.oracle?.must_not_call ?? []) {
+      check(
+        modelToolNames.has(forbiddenCall) || knownNonCallable.has(forbiddenCall),
+        `${fixture.id}: must_not_call referencia nome desconhecido: ${forbiddenCall}`,
+      );
+    }
+    if (fixture.oracle?.terminal_outcome) {
+      check(
+        terminalOutcomes.has(fixture.oracle.terminal_outcome),
+        `${fixture.id}: TerminalOutcome inválido: ${fixture.oracle.terminal_outcome}`,
+      );
+    }
+    check(
+      (fixture.oracle?.max_tool_calls ?? 0) <= harness.loop.max_tool_calls_per_turn,
+      `${fixture.id}: oracle excede max_tool_calls_per_turn`,
+    );
+    const payload = fixture.oracle?.result_payload;
+    if (payload) {
+      check(
+        sameValues(Object.keys(payload), registry.result_envelope.required),
+        `${fixture.id}: ResultPayload do oracle não contém o envelope completo`,
+      );
+      check(
+        registry.result_envelope.status_values.includes(payload.status),
+        `${fixture.id}: ResultPayload.status inválido`,
+      );
+      check(
+        !(payload.data !== null && payload.error !== null),
+        `${fixture.id}: data e error não podem ser não nulos juntos`,
+      );
+      if (payload.status === "blocked") {
+        check(payload.meta?.producer === "harness", `${fixture.id}: blocked não foi produzido pelo harness`);
+      }
+      for (const field of registry.result_envelope.meta_required_fields ?? []) {
+        check(Object.hasOwn(payload.meta ?? {}, field), `${fixture.id}: ResultPayload.meta sem ${field}`);
+      }
+    }
+  }
+
+  check(fixturesDocument.primary_surface === "web", "fixtures devem ser web-first");
+  const calculatedDatasetDigest = scopedDigest(fixturesDocument, "fixtures");
+  check(
+    fixturesDocument.dataset_digest_sha256 === calculatedDatasetDigest,
+    `fixtures: dataset_digest_sha256 divergente; esperado ${calculatedDatasetDigest}`,
+  );
+  check(
+    experimentsDocument.dataset?.path === "evals/fixtures/regressions.json" &&
+      experimentsDocument.dataset?.dataset_id === fixturesDocument.dataset_id &&
+      experimentsDocument.dataset?.dataset_version === fixturesDocument.dataset_version &&
+      experimentsDocument.dataset?.dataset_digest_sha256 === calculatedDatasetDigest,
+    "experiments.dataset diverge do dataset versionado",
+  );
+  check(experimentsDocument.primary_surface === "web", "experiments devem ser web-first");
+  check(
+    experimentsDocument.promotion_protocol?.security_gate === "zero_violations",
+    "gate de segurança de promoção deve ser zero_violations",
+  );
+  check(Array.isArray(experimentsDocument.results), "experiments.results deve existir, mesmo vazio");
+
+  const experiments = experimentsDocument.experiments ?? [];
+  unique(experiments.map((experiment) => experiment.id), "experimentos");
+  for (const experiment of experiments) {
+    check(
+      profileIds.has(experiment.runtime_profile),
+      `${experiment.id}: RuntimeProfile inexistente: ${experiment.runtime_profile}`,
+    );
+    check(
+      routeIds.has(experiment.execution_route),
+      `${experiment.id}: ExecutionRoute inexistente: ${experiment.execution_route}`,
+    );
+    const route = routes.find((candidate) => candidate.id === experiment.execution_route);
+    check(
+      route?.runtime_profile === experiment.runtime_profile,
+      `${experiment.id}: ExecutionRoute seleciona outro RuntimeProfile`,
+    );
+    for (const tag of experiment.fixture_tags ?? []) {
+      check(fixtureTags.has(tag), `${experiment.id}: tag de fixture inexistente: ${tag}`);
+    }
+  }
+  const pageExperiment = experiments.find(
+    (experiment) => experiment.id === harness.page_verification.promotion_experiment,
+  );
+  check(Boolean(pageExperiment), "experimento de promoção da PageRevision não existe");
+  check(
+    JSON.stringify(pageExperiment?.page_revision_key_fields) === JSON.stringify(expectedPageKey),
+    "experimento de PageRevision usa chave divergente",
+  );
+
+  const expectedContractDigests = {
+    model_profiles_sha256: documentDigest(profilesDocument),
+    harness_sha256: documentDigest(harness),
+    tool_registry_sha256: documentDigest(registry),
+  };
+  for (const [field, expected] of Object.entries(expectedContractDigests)) {
+    check(
+      experimentsDocument.contract_digests?.[field] === expected,
+      `experiments.contract_digests.${field} divergente; esperado ${expected}`,
+    );
+  }
+  const calculatedManifestDigest = scopedDigest(experimentsDocument, "experiments");
+  check(
+    experimentsDocument.manifest_digest_sha256 === calculatedManifestDigest,
+    `experiments: manifest_digest_sha256 divergente; esperado ${calculatedManifestDigest}`,
+  );
+}
+
+const contextPath = path.join(root, "CONTEXT.md");
+const contextContent = fs.readFileSync(contextPath, "utf8");
+const canonicalTerms = [
+  "Operator",
+  "WorkspaceRootGrant",
+  "Workspace",
+  "Conversation",
+  "PendingRequest",
+  "Turn",
+  "AgentStep",
+  "ToolResult",
+  "ResultPayload",
+  "CanonicalHistory",
+  "ModelView",
+  "RuntimeProfile",
+  "ExecutionRoute",
+  "TerminalOutcome",
+  "TaskVerdict",
+  "WriteGrant",
+  "WebAccessGrant",
+  "UntrustedWebTaint",
+  "InternalAutomation",
+  "PageRevision",
+];
+const glossaryTerms = [...contextContent.matchAll(/^\*\*([^*]+)\*\*:/gm)].map(
+  (match) => match[1],
+);
+check(
+  JSON.stringify(glossaryTerms) === JSON.stringify(canonicalTerms),
+  "CONTEXT.md deve conter somente os termos canônicos, na ordem acordada",
+);
+const contextHeadings = contextContent.match(/^#{1,6}\s+.+$/gm) ?? [];
+check(
+  sameValues(contextHeadings, ["# Harness 2.0", "## Language"]),
+  "CONTEXT.md deve ser apenas glossário no formato domain-modeling",
+);
+
+const adrDirectory = path.join(root, "docs/adr");
+const adrFiles = fs
+  .readdirSync(adrDirectory)
+  .filter((name) => /^\d{4}-.*\.md$/.test(name))
+  .sort();
+check(adrFiles.length === 4, "docs/adr deve conter os quatro ADRs fundacionais");
+for (const adrFile of adrFiles) {
+  const content = fs.readFileSync(path.join(adrDirectory, adrFile), "utf8");
+  check(/^# .+/m.test(content), `${adrFile}: título ausente`);
+  check(content.trim().split("\n").length <= 8, `${adrFile}: ADR deve permanecer curto`);
+}
+
+const releasePending = fs.readFileSync(path.join(root, "docs/RELEASE-PENDING.md"), "utf8");
+for (const requiredTopic of [
+  "vLLM",
+  "Backend remoto",
+  "Visão",
+  "Shell",
+  "Streaming",
+  "Paralelismo",
+  "Compressão de código",
+  "Branching",
+  "Approve-with-edits",
+  "Dark mode",
+  "Qwen2.5-Coder-7B",
+  "Limitações residuais",
+]) {
+  check(releasePending.includes(requiredTopic), `RELEASE-PENDING.md não cobre: ${requiredTopic}`);
+}
+
+const markdownFiles = [
+  contextPath,
+  path.join(root, "HERANCA-PARA-O-2.0.md"),
+  ...collectMarkdownFiles(path.join(root, "docs")),
+  ...collectMarkdownFiles(path.join(root, "evals")),
+];
+const anchorsByFile = new Map(
+  markdownFiles.map((markdownFile) => [
+    markdownFile,
+    collectGithubHeadingAnchors(fs.readFileSync(markdownFile, "utf8")),
+  ]),
+);
+
+for (const markdownFile of markdownFiles) {
+  const content = fs.readFileSync(markdownFile, "utf8");
+  const relativeMarkdownPath = path.relative(root, markdownFile);
+  const fenceCount = content.match(/^```/gm)?.length ?? 0;
+  check(fenceCount % 2 === 0, `${relativeMarkdownPath}: cercas de código desbalanceadas`);
+
+  for (const match of content.matchAll(/\]\(([^)]+)\)/g)) {
+    const href = match[1].replace(/^<|>$/g, "");
+    if (/^(https?:|mailto:)/.test(href)) continue;
+    const [encodedTarget, encodedFragment] = href.split("#", 2);
+    const target = decodeURIComponent(encodedTarget);
+    const fragment = encodedFragment ? decodeURIComponent(encodedFragment) : null;
+    const resolvedTarget = target
+      ? path.resolve(path.dirname(markdownFile), target)
+      : markdownFile;
+    check(fs.existsSync(resolvedTarget), `${relativeMarkdownPath}: link local quebrado: ${href}`);
+    if (fragment && fs.existsSync(resolvedTarget) && resolvedTarget.endsWith(".md")) {
+      const targetAnchors =
+        anchorsByFile.get(resolvedTarget) ??
+        collectGithubHeadingAnchors(fs.readFileSync(resolvedTarget, "utf8"));
+      check(
+        targetAnchors.has(fragment),
+        `${relativeMarkdownPath}: âncora local quebrada: ${href}`,
+      );
+    }
+  }
+}
+
+const docsIndex = fs.readFileSync(path.join(root, "docs/README.md"), "utf8");
+for (const requiredReference of [
+  "CONTEXT.md",
+  "DECISOES-2.0.md",
+  "RELEASE-PENDING.md",
+  "model-profiles.json",
+  "harness.json",
+  "tool-registry.json",
+]) {
+  check(docsIndex.includes(requiredReference), `docs/README.md deve apontar para ${requiredReference}`);
+}
+
+if (failures.length > 0) {
+  for (const failure of failures) console.error(`ERRO: ${failure}`);
+  console.error(`\n${failures.length} erro(s).`);
+  process.exit(1);
+}
+
+console.log("OK: contratos documentais e executáveis coerentes.");

@@ -1,0 +1,234 @@
+import hashlib
+import hmac
+import secrets
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from threading import Lock
+from urllib.parse import urlsplit
+
+from pydantic import BaseModel, ConfigDict, SecretStr
+from tokenizers import Tokenizer
+
+from .host_config import CredentialStore, HostConfig, HostConfigStore
+
+
+class SetupSubmission(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    allowed_workspace_roots: tuple[Path, ...]
+    tokenizer_path: Path
+    tokenizer_digest: str
+    state_dir: Path
+    allowed_origins: tuple[str, ...]
+    brave_api_key: SecretStr | None = None
+
+
+class SetupStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    configured: bool
+    required: bool
+    restart_required: bool
+    token_expires_at: datetime | None
+
+
+class SetupError(Exception):
+    def __init__(self, code: str, message: str, *, status_code: int) -> None:
+        super().__init__(message)
+        self.code = code
+        self.status_code = status_code
+
+
+class SetupController:
+    def __init__(
+        self,
+        host_store: HostConfigStore,
+        *,
+        credential_store: CredentialStore | None = None,
+        reopen: bool = False,
+        token: str | None = None,
+        ttl_seconds: float = 600,
+        now: Callable[[], datetime] | None = None,
+    ) -> None:
+        if ttl_seconds <= 0:
+            raise ValueError("setup token TTL must be positive")
+        self._host_store = host_store
+        self._credential_store = credential_store or CredentialStore(
+            host_store.credentials_path
+        )
+        self._now = now or _utc_now
+        current = self._now()
+        if current.tzinfo is None:
+            raise ValueError("setup clock must return timezone-aware datetimes")
+        self._configured = host_store.exists()
+        self._active = reopen or not self._configured
+        self._restart_required = False
+        self._token = token or secrets.token_urlsafe(32) if self._active else None
+        self._expires_at = (
+            current + timedelta(seconds=ttl_seconds) if self._active else None
+        )
+        self._lock = Lock()
+
+    @property
+    def status(self) -> SetupStatus:
+        return SetupStatus(
+            configured=self._configured,
+            required=self._active,
+            restart_required=self._restart_required,
+            token_expires_at=self._expires_at if self._active else None,
+        )
+
+    def boot_console_message(self, setup_url: str = "/setup") -> str | None:
+        if not self._active or self._token is None:
+            return None
+        return f"Harness setup: {setup_url} token={self._token}"
+
+    def authorize(self, supplied_token: str | None) -> None:
+        with self._lock:
+            self._authorize(supplied_token)
+
+    def complete(self, supplied_token: str | None, submission: SetupSubmission) -> None:
+        with self._lock:
+            self._authorize(supplied_token)
+            config, brave_api_key = _validated_config(submission)
+            if brave_api_key is not None:
+                self._credential_store.write_brave_api_key(brave_api_key)
+            self._host_store.write(config)
+            self._configured = True
+            self._active = False
+            self._restart_required = True
+            self._token = None
+            self._expires_at = None
+
+    def _authorize(self, supplied_token: str | None) -> None:
+        if not self._active or self._token is None:
+            raise SetupError(
+                "setup_not_available",
+                "Setup is not available for this boot.",
+                status_code=409,
+            )
+        expires_at = self._expires_at
+        if expires_at is None or self._now() >= expires_at:
+            raise SetupError(
+                "setup_token_expired",
+                "The setup token has expired.",
+                status_code=410,
+            )
+        if supplied_token is None or not hmac.compare_digest(
+            supplied_token, self._token
+        ):
+            raise SetupError(
+                "invalid_setup_token",
+                "The setup token is invalid.",
+                status_code=403,
+            )
+
+
+def _validated_config(submission: SetupSubmission) -> tuple[HostConfig, str | None]:
+    tokenizer_path = submission.tokenizer_path
+    if not tokenizer_path.is_absolute():
+        raise SetupError(
+            "invalid_setup_configuration",
+            "Setup paths must be absolute and canonical.",
+            status_code=422,
+        )
+    try:
+        canonical_tokenizer = tokenizer_path.resolve(strict=True)
+    except OSError as error:
+        raise SetupError(
+            "invalid_tokenizer",
+            "The tokenizer file could not be validated.",
+            status_code=422,
+        ) from error
+    if canonical_tokenizer != tokenizer_path or not canonical_tokenizer.is_file():
+        raise SetupError(
+            "invalid_tokenizer",
+            "The tokenizer file could not be validated.",
+            status_code=422,
+        )
+
+    expected_digest = submission.tokenizer_digest.removeprefix("sha256:").lower()
+    try:
+        with canonical_tokenizer.open("rb") as tokenizer_file:
+            actual_digest = hashlib.file_digest(tokenizer_file, "sha256").hexdigest()
+    except OSError as error:
+        raise SetupError(
+            "invalid_tokenizer",
+            "The tokenizer file could not be validated.",
+            status_code=422,
+        ) from error
+    if not hmac.compare_digest(actual_digest, expected_digest):
+        raise SetupError(
+            "tokenizer_digest_mismatch",
+            "The tokenizer digest does not match the file.",
+            status_code=422,
+        )
+    try:
+        Tokenizer.from_file(  # pyright: ignore[reportUnknownMemberType]
+            str(canonical_tokenizer)
+        )
+    except Exception as error:
+        raise SetupError(
+            "invalid_tokenizer",
+            "The tokenizer file could not be validated.",
+            status_code=422,
+        ) from error
+
+    origins = tuple(dict.fromkeys(submission.allowed_origins))
+    if any(not _valid_origin(origin) for origin in origins):
+        raise SetupError(
+            "invalid_allowed_origin",
+            "Allowed origins must be HTTP or HTTPS origins.",
+            status_code=422,
+        )
+    brave_api_key: str | None = None
+    if submission.brave_api_key is not None:
+        raw_brave_api_key = submission.brave_api_key.get_secret_value()
+        brave_api_key = raw_brave_api_key.strip()
+        if not brave_api_key or "\n" in brave_api_key or "\r" in brave_api_key:
+            raise SetupError(
+                "invalid_brave_credential",
+                "The Brave credential must be a non-empty single line.",
+                status_code=422,
+            )
+    try:
+        config = HostConfig(
+            allowed_workspace_roots=submission.allowed_workspace_roots,
+            tokenizer_path=canonical_tokenizer,
+            tokenizer_digest=expected_digest,
+            state_dir=submission.state_dir,
+            allowed_origins=origins,
+            brave_credential_ref=(
+                "brave_api_key" if brave_api_key is not None else None
+            ),
+        )
+    except ValueError as error:
+        raise SetupError(
+            "invalid_setup_configuration",
+            "Setup paths and workspace roots must be absolute, canonical, and valid.",
+            status_code=422,
+        ) from error
+    return config, brave_api_key
+
+
+def _valid_origin(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme in {"http", "https"}
+        and parsed.hostname is not None
+        and parsed.username is None
+        and parsed.password is None
+        and parsed.path == ""
+        and parsed.query == ""
+        and parsed.fragment == ""
+        and (port is None or 0 < port < 65536)
+    )
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)

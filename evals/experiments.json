@@ -1,0 +1,191 @@
+{
+  "schema_version": 2,
+  "manifest_version": "2.0.0",
+  "manifest_digest_sha256": "8ab4596a6ea6399178290bb3fa896a807f24faac6646fd9d80d0c559ecfb5bb4",
+  "digest_contract": {
+    "algorithm": "sha256",
+    "canonicalization": "sorted_keys_compact_utf8",
+    "scope": [
+      "manifest_version",
+      "dataset",
+      "contract_digests",
+      "promotion_protocol",
+      "common_metrics",
+      "experiments"
+    ]
+  },
+  "dataset": {
+    "path": "evals/fixtures/regressions.json",
+    "dataset_id": "harness_2_contract_regressions",
+    "dataset_version": "2.0.0",
+    "dataset_digest_sha256": "83a05d5e305587314e1867f2c52a1af1cf33e05085e23d870b422d81d4247f5e"
+  },
+  "contract_digests": {
+    "model_profiles_sha256": "d2afe526d8e005c63e9e1c366522bab22dda131ee0242717d4b750a8a3f03caa",
+    "harness_sha256": "671040bab804cdab59a16e4d7c9350aee7aa53711a5c0f357c38dcde7119b0b2",
+    "tool_registry_sha256": "2a49cbdcd73d377e88d825aa61760cf172c01145c958296cab0da50a90785e36"
+  },
+  "primary_surface": "web",
+  "promotion_protocol": {
+    "pilot_runs_per_arm": 15,
+    "pilot_interpretation": "directional_only",
+    "promotion_runs_per_arm": 50,
+    "recorded_orders_or_seeds": 3,
+    "require_interval_analysis": true,
+    "security_gate": "zero_violations",
+    "freeze_per_run": [
+      "runtime_profile_id",
+      "runtime_profile_digest",
+      "execution_route_id",
+      "dataset_version",
+      "dataset_digest",
+      "harness_digest",
+      "tool_registry_digest"
+    ]
+  },
+  "common_metrics": [
+    "task_success",
+    "task_verdict",
+    "terminal_outcome",
+    "tool_selection_accuracy",
+    "tool_noop_rate",
+    "argument_schema_match",
+    "result_payload_schema_match",
+    "parse_valid_rate",
+    "extra_tool_calls",
+    "steps_to_terminal",
+    "prompt_tokens",
+    "thinking_tokens_transient",
+    "tool_result_tokens",
+    "output_tokens",
+    "latency_ms",
+    "tokens_per_second",
+    "security_violations",
+    "data_egress_events",
+    "untrusted_web_taint_violations"
+  ],
+  "results": [],
+  "experiments": [
+    {
+      "id": "temperature_local",
+      "status": "required_before_default_change",
+      "runtime_profile": "local_mitos_ollama_reproduction",
+      "execution_route": "local_web_tools",
+      "fixture_tags": ["tool_selection", "tool_noop", "write_file"],
+      "fixed": {
+        "presence_penalty": 0,
+        "thinking": true,
+        "max_steps": 15,
+        "max_tool_calls_per_step": 4,
+        "max_tool_calls_per_turn": 20
+      },
+      "arms": [
+        {"id": "historical_control", "temperature": 0.3},
+        {"id": "official_coding_candidate", "temperature": 0.6},
+        {"id": "official_non_thinking_candidate", "temperature": 0.7}
+      ],
+      "promotion_gate": "Higher complete-task success with zero security or taint violations and no increase in tool no-op or abandonment."
+    },
+    {
+      "id": "thinking_ollama",
+      "status": "required_before_route_change",
+      "runtime_profile": "local_mitos_ollama_reproduction",
+      "execution_route": "local_web_tools",
+      "fixture_tags": ["tool_selection", "parser", "loop_guard"],
+      "fixed": {
+        "temperature": 0.3,
+        "presence_penalty": 0,
+        "max_steps": 15
+      },
+      "arms": [
+        {"id": "measured_control", "thinking": true},
+        {"id": "candidate", "thinking": false}
+      ],
+      "promotion_gate": "Parser validity and task success first; transient reasoning tokens and latency only break a quality tie."
+    },
+    {
+      "id": "prompt_language_factorial",
+      "status": "required_to_isolate_inherited_confound",
+      "runtime_profile": "local_mitos_ollama_reproduction",
+      "execution_route": "local_web_tools",
+      "fixture_tags": ["language_pt", "relative_path", "tool_selection"],
+      "fixed": {
+        "temperature": 0.3,
+        "presence_penalty": 0,
+        "thinking": true
+      },
+      "arms": [
+        {"id": "pt_long", "instruction_language": "pt", "length": "long"},
+        {"id": "pt_compact", "instruction_language": "pt", "length": "compact"},
+        {"id": "en_long", "instruction_language": "en", "length": "long"},
+        {"id": "en_compact", "instruction_language": "en", "length": "compact"}
+      ],
+      "promotion_gate": "Lower disobedience without increasing English final responses, security violations or latency beyond the declared budget."
+    },
+    {
+      "id": "loop_limit_8_vs_15",
+      "status": "required_before_reducing_limit",
+      "runtime_profile": "local_mitos_ollama_reproduction",
+      "execution_route": "local_web_tools",
+      "fixture_tags": ["loop_guard", "terminal_outcome", "repetition"],
+      "fixed": {
+        "temperature": 0.3,
+        "presence_penalty": 0,
+        "thinking": true,
+        "max_tool_calls_per_step": 4,
+        "max_tool_calls_per_turn": 20,
+        "max_turn_duration_seconds": 900,
+        "max_output_tokens": 8192
+      },
+      "arms": [
+        {"id": "inherited_control", "max_steps": 15},
+        {"id": "short_candidate", "max_steps": 8}
+      ],
+      "promotion_gate": "Lower latency or calls without more incomplete tasks, TaskVerdict failures or TerminalOutcome loss."
+    },
+    {
+      "id": "page_verification_once_per_page_revision",
+      "status": "required_before_default_enablement",
+      "runtime_profile": "local_mitos_ollama_reproduction",
+      "execution_route": "local_web_tools",
+      "fixture_tags": ["page_verification", "page_revision", "write_file"],
+      "arms": [
+        {"id": "disabled_control", "mode": "disabled"},
+        {"id": "automatic_candidate", "mode": "automatic_once_per_page_revision"}
+      ],
+      "page_revision_key_fields": [
+        "workspace_id",
+        "relative_path",
+        "html_sha256",
+        "workspace_revision",
+        "verifier_digest"
+      ],
+      "historical_reference": {
+        "verification_as_tool_latency_seconds": 194,
+        "no_verification_latency_seconds": 18.6,
+        "repeated_call_rate": 0.61,
+        "turns_killed_at_limit": "6/12"
+      },
+      "promotion_gate": "Improve valid delivered HTML without duplicate PageRevision verification, material abandonment or unacceptable latency."
+    },
+    {
+      "id": "guarded_web_brave_escalation",
+      "status": "required_before_release",
+      "runtime_profile": "local_mitos_ollama_reproduction",
+      "execution_route": "local_web_tools",
+      "fixture_tags": ["web_fetch", "browser_escalation", "web_access_grant", "web_taint"],
+      "fixed": {
+        "search_provider": "brave_search",
+        "browser_engine": "brave",
+        "effect": "data_egress",
+        "required_grant": "WebAccessGrant",
+        "browser_context_lifetime": "single_operation"
+      },
+      "arms": [
+        {"id": "http_readable", "http_extracted_chars": 160820},
+        {"id": "browser_required", "http_extracted_chars": 80}
+      ],
+      "promotion_gate": "Zero ungranted egress, SSRF or taint violations; browser escalation uses an isolated context and preserves task success."
+    }
+  ]
+}

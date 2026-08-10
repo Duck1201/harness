@@ -1,0 +1,479 @@
+{
+  "schema_version": 2,
+  "dataset_id": "harness_2_contract_regressions",
+  "dataset_version": "2.0.0",
+  "dataset_digest_sha256": "83a05d5e305587314e1867f2c52a1af1cf33e05085e23d870b422d81d4247f5e",
+  "digest_contract": {
+    "algorithm": "sha256",
+    "canonicalization": "sorted_keys_compact_utf8",
+    "scope": ["dataset_id", "dataset_version", "fixtures"]
+  },
+  "primary_surface": "web",
+  "language": "pt-BR",
+  "source": "HERANCA-PARA-O-2.0.md",
+  "purpose": "Preserve observed Harness 1.0 failure shapes and assert the current Harness 2.0 web contract.",
+  "oracle_contract": {
+    "result_payload_required_fields": ["status", "retryable", "data", "error", "meta"],
+    "terminal_outcomes_source": "config/harness.json#outcomes.terminal_outcomes",
+    "task_verdicts_source": "config/harness.json#outcomes.task_verdicts"
+  },
+  "privacy": {
+    "contains_production_content": false,
+    "contains_secrets": false,
+    "rule": "Fixtures reproduce failure shapes, never production payloads."
+  },
+  "fixtures": [
+    {
+      "id": "tool_write_required_relative_path",
+      "type": "model_task",
+      "tags": ["tool_selection", "write_file", "relative_path", "language_pt"],
+      "origin": "HERANCA section 3: presence penalty and relative path tests",
+      "stimulus": {
+        "user_request": "Crie um arquivo index.html com um título e um parágrafo em português.",
+        "workspace": []
+      },
+      "oracle": {
+        "must_call": ["write_file"],
+        "must_not_call": ["run_shell_command", "code_interpreter"],
+        "max_tool_calls": 2,
+        "assertions": [
+          "file_path equals index.html",
+          "file_path is workspace-relative",
+          "content is non-empty",
+          "the final response is in Portuguese"
+        ]
+      }
+    },
+    {
+      "id": "reject_absolute_file_path",
+      "type": "executor_contract",
+      "tags": ["relative_path", "security", "write_file"],
+      "origin": "HERANCA section 3: path errors fell from 7/18 to 0/18",
+      "stimulus": {
+        "tool_call": {
+          "name": "write_file",
+          "arguments": {
+            "file_path": "/tmp/index.html",
+            "content": "<h1>Teste</h1>"
+          }
+        }
+      },
+      "oracle": {
+        "must_call": [],
+        "must_not_call": [],
+        "result_payload": {
+          "status": "blocked",
+          "retryable": false,
+          "data": null,
+          "error": {"class": "invalid_workspace_path"},
+          "meta": {"producer": "harness", "truncated": false, "taints": []}
+        },
+        "typed_assertions": [
+          {"operator": "tool_called", "tool": "write_file"},
+          {"operator": "max_tool_calls", "maximum": 1},
+          {"operator": "result_status_is", "status": "blocked"},
+          {"operator": "result_error_code_is", "code": "absolute_path_not_allowed"}
+        ],
+        "explanation": [
+          "the executor rejects the call before any write",
+          "the error says that paths must be workspace-relative",
+          "the error does not disclose host paths"
+        ]
+      }
+    },
+    {
+      "id": "reject_parent_traversal_and_symlink_escape",
+      "type": "executor_contract",
+      "tags": ["relative_path", "security", "symlink"],
+      "origin": "HERANCA section 6: workspace jail invariant",
+      "stimulus": {
+        "attempts": [
+          {"tool": "read_file", "file_path": "../secret.txt"},
+          {"tool": "read_file", "file_path": "link-outside/secret.txt"}
+        ],
+        "workspace_setup": [
+          "link-outside is a symlink whose real target is outside the workspace"
+        ]
+      },
+      "oracle": {
+        "must_call": [],
+        "must_not_call": [],
+        "terminal_outcome": "blocked",
+        "result_payload": {
+          "status": "blocked",
+          "retryable": false,
+          "data": null,
+          "error": {"class": "workspace_boundary_violation"},
+          "meta": {"producer": "harness", "truncated": false, "taints": []}
+        },
+        "typed_assertions": [
+          {"operator": "tool_called", "tool": "read_file"},
+          {"operator": "max_tool_calls", "maximum": 2},
+          {"operator": "result_status_is", "status": "blocked"}
+        ],
+        "explanation": [
+          "both attempts are rejected after canonicalization",
+          "no outside bytes are read",
+          "the security violation count is two"
+        ]
+      }
+    },
+    {
+      "id": "unknown_shell_lists_real_registry",
+      "type": "loop_recovery",
+      "tags": ["unknown_tool", "shell", "recovery"],
+      "origin": "HERANCA section 6: shell was invented 14 times and honest errors corrected behavior",
+      "stimulus": {
+        "generated_tool_call": {
+          "name": "run_shell_command",
+          "arguments": {"command": "find . -name '*.md'"}
+        }
+      },
+      "oracle": {
+        "must_call": [],
+        "must_not_call": ["run_shell_command", "code_interpreter"],
+        "max_tool_calls": 0,
+        "assertions": [
+          "no command is executed",
+          "the structured error is non-retryable for this tool name",
+          "the error lists exactly the currently approved registry names",
+          "the next model step can select glob without adding shell"
+        ]
+      }
+    },
+    {
+      "id": "glob_for_paths_not_grep",
+      "type": "model_task",
+      "tags": ["tool_selection", "glob", "confusable_pair"],
+      "origin": "Harness 2.0 tool-name evaluation requirement",
+      "stimulus": {
+        "user_request": "Encontre todos os arquivos Markdown dentro do projeto.",
+        "workspace": ["README.md", "docs/guia.md", "src/app.js"]
+      },
+      "oracle": {
+        "must_call": ["glob"],
+        "must_not_call": ["grep_search", "run_shell_command"],
+        "max_tool_calls": 1,
+        "assertions": ["the pattern is evaluated inside the workspace"]
+      }
+    },
+    {
+      "id": "grep_for_content_not_glob",
+      "type": "model_task",
+      "tags": ["tool_selection", "grep_search", "confusable_pair"],
+      "origin": "Harness 2.0 tool-name evaluation requirement",
+      "stimulus": {
+        "user_request": "Procure a expressão TODO dentro dos arquivos do projeto.",
+        "workspace": [
+          "src/app.js contains TODO: validate input",
+          "README.md does not contain the expression"
+        ]
+      },
+      "oracle": {
+        "must_call": ["grep_search"],
+        "must_not_call": ["glob", "run_shell_command"],
+        "max_tool_calls": 1,
+        "assertions": ["the result identifies src/app.js"]
+      }
+    },
+    {
+      "id": "web_search_for_discovery",
+      "type": "model_task",
+      "tags": ["tool_selection", "web_search", "confusable_pair"],
+      "origin": "HERANCA section 8: web capability split",
+      "stimulus": {
+        "user_request": "Encontre a documentação oficial atual do Qwen3.5-4B sem assumir uma URL.",
+        "network_stub": "search_results_available"
+      },
+      "oracle": {
+        "must_call": ["web_search"],
+        "must_not_call": ["web_fetch"],
+        "max_tool_calls": 1,
+        "assertions": ["discovery happens before fetching any selected result"]
+      }
+    },
+    {
+      "id": "web_fetch_for_known_url",
+      "type": "model_task",
+      "tags": ["tool_selection", "web_fetch", "confusable_pair"],
+      "origin": "HERANCA section 8: web capability split",
+      "stimulus": {
+        "user_request": "Leia https://example.test/manual e resuma a página.",
+        "network_stub": "known_url_returns_readable_html"
+      },
+      "oracle": {
+        "must_call": ["web_fetch"],
+        "must_not_call": ["web_search"],
+        "max_tool_calls": 1,
+        "assertions": ["the exact supplied URL is fetched"]
+      }
+    },
+    {
+      "id": "no_tool_for_explanation",
+      "type": "model_task",
+      "tags": ["tool_noop", "language_pt"],
+      "origin": "Harness 2.0 selection baseline",
+      "stimulus": {
+        "user_request": "Explique em duas frases a diferença entre glob e busca de conteúdo."
+      },
+      "oracle": {
+        "must_call": [],
+        "must_not_call": [],
+        "max_tool_calls": 0,
+        "assertions": ["the final response is in Portuguese"]
+      }
+    },
+    {
+      "id": "mechanical_repeat_guard",
+      "type": "state_machine",
+      "tags": ["loop_guard", "repetition", "mechanical_control"],
+      "origin": "HERANCA section 5: warning guard failed in 27 percent of calls",
+      "stimulus": {
+        "generated_calls": [
+          {"name": "web_fetch", "arguments": {"url": "https://example.test/page"}},
+          {"name": "web_fetch", "arguments": {"url": "https://example.test/page"}}
+        ]
+      },
+      "oracle": {
+        "must_call": ["web_fetch"],
+        "must_not_call": [],
+        "max_tool_calls": 1,
+        "typed_assertions": [
+          {"operator": "tool_called", "tool": "web_fetch"},
+          {"operator": "max_tool_calls", "maximum": 1}
+        ],
+        "explanation": [
+          "the second identical call is served from the turn cache or mechanically rejected",
+          "no second network effect occurs",
+          "a warning alone is not considered containment"
+        ]
+      }
+    },
+    {
+      "id": "final_step_has_no_tools",
+      "type": "state_machine",
+      "tags": ["loop_guard", "max_steps", "terminal_outcome"],
+      "origin": "HERANCA sections 5 and 6: calibrated 15-step limit",
+      "stimulus": {
+        "current_step": 15,
+        "tool_calls_in_current_step": 0,
+        "tool_calls_in_turn": 20,
+        "elapsed_seconds": 899,
+        "previous_state": "task_incomplete"
+      },
+      "oracle": {
+        "must_call": [],
+        "must_not_call": [],
+        "max_tool_calls": 0,
+        "terminal_outcome": "limit_reached",
+        "typed_assertions": [
+          {"operator": "max_tool_calls", "maximum": 0},
+          {"operator": "terminal_outcome_is", "kind": "limit_reached"}
+        ],
+        "explanation": [
+          "the model receives no tool schemas on the final generation",
+          "the terminal outcome cannot be overwritten",
+          "the turn outcome is persisted"
+        ]
+      }
+    },
+    {
+      "id": "page_verification_once_per_page_revision",
+      "type": "executor_automation",
+      "tags": ["page_verification", "page_revision", "write_file"],
+      "origin": "HERANCA section 5: verification tool loop and proposed automatic replacement",
+      "stimulus": {
+        "configured_mode": "automatic_once_per_page_revision",
+        "workspace_id": "workspace-a",
+        "workspace_revision": "revision-7",
+        "verifier_digest": "verifier-sha256-a",
+        "writes": [
+          {"file_path": "index.html", "content_id": "html_a"},
+          {"file_path": "index.html", "content_id": "html_a"},
+          {"file_path": "index.html", "content_id": "html_b"}
+        ]
+      },
+      "oracle": {
+        "must_call": ["write_file"],
+        "must_not_call": ["verify_page", "browser"],
+        "max_tool_calls": 3,
+        "assertions": [
+          "the PageRevision key contains workspace_id, relative_path, html_sha256, workspace_revision and verifier_digest",
+          "the executor runs verification exactly twice: once for each distinct PageRevision",
+          "the model never receives a verification tool",
+          "each verification result is injected at most once"
+        ]
+      }
+    },
+    {
+      "id": "web_http_first_browser_by_symptom",
+      "type": "executor_automation",
+      "tags": ["web_fetch", "browser_escalation", "threshold"],
+      "origin": "HERANCA section 8: HTTP versus browser measurements",
+      "stimulus": {
+        "calls": [
+          {"url": "https://example.test/readable", "http_extracted_chars": 160820},
+          {"url": "https://example.test/js-only", "http_extracted_chars": 80}
+        ]
+      },
+      "oracle": {
+        "must_call": ["web_fetch"],
+        "must_not_call": ["browser", "web_extractor"],
+        "max_tool_calls": 2,
+        "assertions": [
+          "the readable URL does not start a browser",
+          "the JS-only URL escalates internally because 80 is below the calibrated 120-character threshold",
+          "browser escalation uses Brave in a fresh operation context",
+          "the browser context shares no cookies, storage, cache or service workers with page verification",
+          "both engines share one HTML extraction function"
+        ]
+      }
+    },
+    {
+      "id": "context_deduplicates_without_deleting_history",
+      "type": "context_builder",
+      "tags": ["context", "dedup", "history_integrity"],
+      "origin": "HERANCA section 4: 1,264 blocks and 98 percent token reduction",
+      "stimulus": {
+        "history": [
+          "tool result content hash abc appears in an earlier step",
+          "the same result hash abc appears again",
+          "a rejected model attempt exists between them"
+        ]
+      },
+      "oracle": {
+        "must_call": [],
+        "must_not_call": [],
+        "typed_assertions": [
+          {"operator": "max_tool_calls", "maximum": 0}
+        ],
+        "explanation": [
+          "canonical history retains every entry including the rejected attempt",
+          "the pre-model view replaces the duplicate body with a reference",
+          "the derived view is not persisted as canonical history"
+        ]
+      }
+    },
+    {
+      "id": "runtime_profile_is_not_execution_route",
+      "type": "contract_boundary",
+      "tags": ["thinking", "runtime_profile", "execution_route"],
+      "origin": "HERANCA section 3: incompatible models returned HTTP 400 before first token",
+      "stimulus": {
+        "runtime_profile": "local_mitos_ollama_reproduction",
+        "execution_route": "local_web_tools"
+      },
+      "oracle": {
+        "must_call": [],
+        "must_not_call": [],
+        "assertions": [
+          "RuntimeProfile identifies the installed Ollama model, components and capabilities",
+          "ExecutionRoute selects think=true, model_tools and loop limits",
+          "route policy is not included in profile identity",
+          "changing a route does not claim a new runtime installation"
+        ]
+      }
+    },
+    {
+      "id": "web_access_requires_grant_and_taint",
+      "type": "privacy_gate",
+      "tags": ["web_fetch", "web_access_grant", "web_taint", "privacy"],
+      "origin": "HERANCA sections 6 and 8: explicit noisy consent",
+      "stimulus": {
+        "tool_call": {
+          "name": "web_fetch",
+          "arguments": {"url": "https://example.test/manual"}
+        },
+        "web_access_grant": false
+      },
+      "oracle": {
+        "must_call": [],
+        "must_not_call": [],
+        "terminal_outcome": "blocked",
+        "result_payload": {
+          "status": "blocked",
+          "retryable": false,
+          "data": null,
+          "error": {"class": "missing_web_access_grant"},
+          "meta": {"producer": "harness", "truncated": false, "taints": []}
+        },
+        "typed_assertions": [
+          {"operator": "tool_not_called", "tool": "web_fetch"},
+          {"operator": "max_tool_calls", "maximum": 0},
+          {
+            "operator": "terminal_outcome_is",
+            "kind": "blocked",
+            "reason_code": "web_access_grant_required"
+          },
+          {"operator": "result_status_is", "status": "blocked"},
+          {"operator": "result_error_code_is", "code": "web_access_grant_required"}
+        ],
+        "explanation": [
+          "no data_egress occurs without WebAccessGrant",
+          "blocked is emitted by the harness before network access",
+          "with a grant, returned web data carries UntrustedWebTaint through derivations"
+        ]
+      }
+    },
+    {
+      "id": "edit_preserves_whitespace_round_trip",
+      "type": "parser_contract",
+      "tags": ["edit", "parser", "whitespace"],
+      "origin": "Qwen3.5 vLLM parser regression case documented in research",
+      "stimulus": {
+        "replacement": "\tif (ok) {\n\t  return value;\n\t}\n",
+        "transport": "qwen3_coder_tool_call"
+      },
+      "oracle": {
+        "must_call": ["edit"],
+        "must_not_call": [],
+        "max_tool_calls": 1,
+        "assertions": [
+          "tabs, indentation and final newline survive byte-for-byte",
+          "the file SHA precondition is checked before applying the edit",
+          "a failed round-trip disables edit for that runtime profile"
+        ]
+      }
+    },
+    {
+      "id": "vision_is_not_silently_available",
+      "type": "capability_gate",
+      "tags": ["vision", "capability_negotiation", "uncertainty"],
+      "origin": "HERANCA section 8: IMC 24.7 was read as 247",
+      "stimulus": {
+        "user_request": "Leia o número pequeno nesta imagem.",
+        "active_profile": "local_mitos_ollama_reproduction"
+      },
+      "oracle": {
+        "must_call": [],
+        "must_not_call": ["describe_image", "display_image"],
+        "max_tool_calls": 0,
+        "terminal_outcome": "blocked",
+        "assertions": [
+          "the harness does not claim vision support while the exact artifact is unverified",
+          "no numeric observation is presented as certain"
+        ]
+      }
+    },
+    {
+      "id": "reasoning_is_transient_and_ag_ui_is_projection",
+      "type": "state_projection",
+      "tags": ["canonical_history", "reasoning", "ag_ui", "privacy"],
+      "origin": "Harness 2.0 ADR 0001 and current state contract",
+      "stimulus": {
+        "live_turn_contains": ["reasoning_delta", "tool_call", "final_response"]
+      },
+      "oracle": {
+        "must_call": [],
+        "must_not_call": [],
+        "terminal_outcome": "completed",
+        "assertions": [
+          "AG-UI may project reasoning_delta while the Turn is live",
+          "CanonicalHistory persists the tool call and final response but not reasoning content",
+          "replay is reconstructed from canonical state and contains no reasoning content",
+          "TaskVerdict cannot replace TerminalOutcome"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,166 @@
+{
+  "schema_version": 2,
+  "contract_version": "2.0.0",
+  "active_runtime_profile": "local_mitos_ollama_reproduction",
+  "component_evidence_union": {
+    "discriminator": "kind",
+    "variants": {
+      "digest_sha256": {
+        "required": ["subject", "sha256"]
+      },
+      "embedded_in_profile": {
+        "required": ["subject", "profile_digest_sha256", "observed_via"]
+      },
+      "behavioral_contract_digest": {
+        "required": ["subject", "sha256", "fixture_set"]
+      },
+      "unavailable": {
+        "required": ["subject", "reason"]
+      }
+    }
+  },
+  "capability_contract": {
+    "required_fields": ["support", "evidence", "gate_status"],
+    "support_values": ["supported", "unsupported", "unknown"],
+    "evidence_kinds": [
+      "local_measurement",
+      "runtime_inspection",
+      "upstream_documentation",
+      "no_evidence"
+    ],
+    "gate_status_values": ["passed", "failed", "pending", "not_required"]
+  },
+  "runtime_profiles": [
+    {
+      "id": "local_mitos_ollama_reproduction",
+      "status": "functional",
+      "release_eligible": true,
+      "profile_digest_sha256": "aabca1b8777bc4e0a6a491fb5ab7288bcc1537bad35c74ff041879fa11705bff",
+      "model": {
+        "id": "mitos:latest",
+        "base_model": "huihui_ai/qwen3.5-abliterated:4b",
+        "family": "qwen3.5-4b",
+        "variant": "abliterated",
+        "architecture": "qwen35",
+        "parameter_size": "4.5B",
+        "quantization": "Q4_K_M"
+      },
+      "runtime": {
+        "backend": "ollama",
+        "version": "0.32.5",
+        "renderer": "qwen3.5",
+        "tool_parser": "qwen3.5",
+        "reasoning_parser": "qwen3.5"
+      },
+      "installation": {
+        "observed_on": "2026-08-10",
+        "installed_tag": "mitos:latest",
+        "installed_profile_digest_sha256": "aabca1b8777bc4e0a6a491fb5ab7288bcc1537bad35c74ff041879fa11705bff",
+        "repository_modelfile": "Modelfile",
+        "repository_modelfile_sha256": "fe816f3e5cc37ee82c381d6e5c6ac3cc187e1878f21c0b069f14dfba82559af9",
+        "matches_repository_modelfile": true,
+        "parameters": {
+          "num_ctx": "24576",
+          "temperature": "0.3",
+          "presence_penalty": "0",
+          "top_k": "20",
+          "top_p": "0.8"
+        }
+      },
+      "components": [
+        {
+          "id": "model_weights",
+          "evidence": {
+            "kind": "digest_sha256",
+            "subject": "base_model_blob",
+            "sha256": "460a1ec4580a90414bd43796cd71e845b063a0f565449a9cdf6f0397f843c37e"
+          }
+        },
+        {
+          "id": "modelfile",
+          "evidence": {
+            "kind": "digest_sha256",
+            "subject": "Modelfile",
+            "sha256": "fe816f3e5cc37ee82c381d6e5c6ac3cc187e1878f21c0b069f14dfba82559af9"
+          }
+        },
+        {
+          "id": "tokenizer",
+          "evidence": {
+            "kind": "embedded_in_profile",
+            "subject": "tokenizer",
+            "profile_digest_sha256": "aabca1b8777bc4e0a6a491fb5ab7288bcc1537bad35c74ff041879fa11705bff",
+            "observed_via": "ollama_show"
+          }
+        },
+        {
+          "id": "chat_template",
+          "evidence": {
+            "kind": "embedded_in_profile",
+            "subject": "chat_template",
+            "profile_digest_sha256": "aabca1b8777bc4e0a6a491fb5ab7288bcc1537bad35c74ff041879fa11705bff",
+            "observed_via": "ollama_show"
+          }
+        }
+      ],
+      "hardware_evidence": {
+        "gpu": "AMD Radeon RX 7600",
+        "vram_gib": 7.98,
+        "ram_gib": 31,
+        "cpu_cores": 12,
+        "historical_tokens_per_second": 68,
+        "source": "HERANCA-PARA-O-2.0.md"
+      },
+      "capabilities": {
+        "structured_tool_calls": {
+          "support": "supported",
+          "evidence": {
+            "kind": "local_measurement",
+            "source": "HERANCA-PARA-O-2.0.md"
+          },
+          "gate_status": "passed"
+        },
+        "reasoning": {
+          "support": "supported",
+          "evidence": {
+            "kind": "local_measurement",
+            "source": "HERANCA-PARA-O-2.0.md"
+          },
+          "gate_status": "passed"
+        },
+        "vision": {
+          "support": "unknown",
+          "evidence": {
+            "kind": "runtime_inspection",
+            "source": "ollama_show"
+          },
+          "gate_status": "pending"
+        },
+        "usage_tokens": {
+          "support": "supported",
+          "evidence": {
+            "kind": "local_measurement",
+            "source": "HERANCA-PARA-O-2.0.md"
+          },
+          "gate_status": "passed"
+        },
+        "streaming": {
+          "support": "unknown",
+          "evidence": {
+            "kind": "no_evidence",
+            "source": "docs/RELEASE-PENDING.md"
+          },
+          "gate_status": "pending"
+        },
+        "parallel_tool_calls": {
+          "support": "unknown",
+          "evidence": {
+            "kind": "no_evidence",
+            "source": "docs/RELEASE-PENDING.md"
+          },
+          "gate_status": "pending"
+        }
+      }
+    }
+  ]
+}

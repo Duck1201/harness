@@ -1,0 +1,222 @@
+{
+  "schema_version": 2,
+  "contract_version": "2.0.0",
+  "normative_document": "docs/DECISOES-2.0.md",
+  "release_pending_document": "docs/RELEASE-PENDING.md",
+  "runtime_profiles": "config/model-profiles.json",
+  "tool_registry": "config/tool-registry.json",
+  "platform": {
+    "python": "3.13",
+    "operating_system": "linux",
+    "architecture": "x86_64"
+  },
+  "default_runtime_profile": "local_mitos_ollama_reproduction",
+  "default_execution_route": "local_web_tools",
+  "execution_routes": [
+    {
+      "id": "local_web_tools",
+      "status": "active",
+      "runtime_profile": "local_mitos_ollama_reproduction",
+      "surface": "web",
+      "model_tools_collection": "model_tools",
+      "sampling": {
+        "temperature": 0.3,
+        "presence_penalty": 0,
+        "thinking": true
+      },
+      "streaming": false,
+      "parallel_tool_execution": false,
+      "reasoning_persistence": "transient_only",
+      "limits_source": "loop"
+    }
+  ],
+  "locale": {
+    "model_facing_instructions": "en",
+    "tool_names": "en_ascii_snake_case",
+    "tool_descriptions": "en",
+    "final_response": "pt-BR",
+    "project_documentation": "pt-BR"
+  },
+  "policy": {
+    "basis": "effects",
+    "default": "deny",
+    "grant_types": [
+      "WorkspaceRootGrant",
+      "WriteGrant",
+      "WebAccessGrant"
+    ],
+    "effect_grants": {
+      "workspace_read": ["WorkspaceRootGrant"],
+      "workspace_write": ["WorkspaceRootGrant", "WriteGrant"],
+      "data_egress": ["WebAccessGrant"]
+    },
+    "grant_authority": "Operator",
+    "model_cannot_grant_or_expand_access": true
+  },
+  "tool_exposure": {
+    "source": "config/tool-registry.json",
+    "collection": "model_tools",
+    "dynamic_selection": false,
+    "unknown_tool_error_lists_current_collection": true,
+    "aliases_visible_to_model": false
+  },
+  "loop": {
+    "max_steps": 15,
+    "max_tool_calls_per_step": 4,
+    "max_tool_calls_per_turn": 20,
+    "max_turn_duration_seconds": 900,
+    "max_output_tokens": 8192,
+    "stream_tool_calls": false,
+    "parallel_tool_execution": false,
+    "execute_calls_in_emission_order": true,
+    "offer_tools_on_final_step": false,
+    "persist_terminal_outcome_once": true,
+    "replay_policy_source": "config/tool-registry.json#model_tools[*].replay_policy",
+    "guards": "mechanical_state_transitions"
+  },
+  "outcomes": {
+    "terminal_outcomes": [
+      "completed",
+      "limit_reached",
+      "cancelled",
+      "blocked",
+      "failed",
+      "abandoned"
+    ],
+    "reason_code_is_required": true,
+    "task_verdicts": ["pass", "fail", "inconclusive", "not_evaluated"],
+    "terminal_outcome_is_immutable": true,
+    "task_verdict_never_overwrites_terminal_outcome": true
+  },
+  "state": {
+    "canonical_history": "complete_durable_facts",
+    "model_view": "derived_disposable",
+    "ag_ui": "derived_projection",
+    "rejected_attempts_remain_in_history": true,
+    "reasoning": {
+      "transient": true,
+      "persist_to_canonical_history": false,
+      "persist_to_telemetry": false,
+      "available_in_replay": false
+    }
+  },
+  "context": {
+    "initial_budget_tokens": 24576,
+    "budget_includes": [
+      "system",
+      "tool_schemas",
+      "model_view",
+      "tool_results",
+      "reserved_output"
+    ],
+    "deduplicate_tool_results_by_content_hash": true,
+    "extract_html_once": true,
+    "code_compression": {
+      "enabled": false,
+      "status": "disabled_experimental"
+    },
+    "mechanical_prose_compression": false,
+    "cut_oldest_model_view_blocks_to_budget": true
+  },
+  "workspace": {
+    "model_visible_paths": "workspace_relative",
+    "reject_absolute_paths": true,
+    "reject_parent_traversal": true,
+    "canonicalize_and_check_symlinks": true,
+    "deny_outside_workspace": true
+  },
+  "page_verification": {
+    "kind": "InternalAutomation",
+    "automation_id": "page_verification",
+    "mode": "disabled",
+    "allowed_modes": [
+      "disabled",
+      "automatic_once_per_page_revision"
+    ],
+    "status": "experimental_not_promoted",
+    "model_selectable": false,
+    "page_revision_key_fields": [
+      "workspace_id",
+      "relative_path",
+      "html_sha256",
+      "workspace_revision",
+      "verifier_digest"
+    ],
+    "inject_result_at_most_once": true,
+    "promotion_experiment": "page_verification_once_per_page_revision"
+  },
+  "network": {
+    "effect": "data_egress",
+    "required_grant": "WebAccessGrant",
+    "default": "deny",
+    "allowed_schemes": ["http", "https"],
+    "block_private_and_special_ranges": true,
+    "revalidate_ssrf_policy_on_redirect": true,
+    "web_search": {
+      "provider": "brave_search"
+    },
+    "web_fetch": {
+      "initial_engine": "http",
+      "browser_escalation": "internal_by_symptom",
+      "empty_extraction_threshold_chars": 120,
+      "retry_seconds_for_incomplete_load": [5, 10, 20, 40, 80],
+      "retry_blocked_or_denied": false,
+      "cache_scope": "turn"
+    },
+    "browser": {
+      "engine": "brave",
+      "context_lifetime": "single_operation",
+      "separate_context_per_operation": true,
+      "web_and_page_verification_contexts_separate": true,
+      "share_cookies_storage_cache_or_service_workers": false
+    },
+    "web_results": {
+      "taint": "UntrustedWebTaint",
+      "propagate_to_derivations": true,
+      "taint_never_grants_authority": true
+    }
+  },
+  "stores": [
+    {
+      "id": "canonical_state",
+      "kind": "sqlite",
+      "implementation": "LangGraph SqliteSaver",
+      "stores_content": true,
+      "stores_reasoning": false,
+      "failure_is_fatal": true
+    },
+    {
+      "id": "telemetry",
+      "kind": "sqlite",
+      "implementation": "local_metrics_store",
+      "stores_content": false,
+      "stores_reasoning": false,
+      "external_export_enabled": false,
+      "failure_is_fatal": false
+    }
+  ],
+  "retention": {
+    "policy_scope": "global",
+    "retention_days": null,
+    "deletion_unit": "conversation",
+    "partial_history_deletion": false,
+    "per_conversation_override": false
+  },
+  "ui": {
+    "delivery": "web_first",
+    "protocol": "AG-UI",
+    "projection_source": "canonical_state",
+    "client": "assistant-ui",
+    "theme": "light_only",
+    "conversation_branching": false,
+    "approve_with_edits": false
+  },
+  "evals": {
+    "primary_surface": "web",
+    "fixtures": "evals/fixtures/regressions.json",
+    "experiments": "evals/experiments.json"
+  },
+  "roadmap": {
+    "excluded_models": ["Qwen2.5-Coder-7B-Instruct"]
+  }
+}
