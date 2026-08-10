@@ -183,7 +183,6 @@ class EvalService:
                     evaluation = result.evaluation or evaluate_oracle(
                         fixture.oracle.typed_assertions,
                         result.evidence,
-                        textual_assertions=fixture.oracle.assertions,
                     )
                     recorded = await self.store.record_case(
                         run_id=run.id,

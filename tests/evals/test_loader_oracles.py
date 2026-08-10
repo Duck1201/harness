@@ -164,20 +164,30 @@ def test_result_data_contains_reads_the_payload_and_not_only_the_envelope() -> N
     assert evaluate_oracle([assertion], replace(found, tool_results=())).verdict is TaskVerdict.FAIL
 
 
-def test_text_and_language_without_deterministic_detector_are_inconclusive() -> None:
+def test_language_without_a_deterministic_detector_is_the_only_inconclusive_source() -> None:
     evidence = EvalEvidence(response="Resposta em portugues")
 
-    evaluation = evaluate_oracle(
-        [{"operator": "response_language_pt"}],
-        evidence,
-        textual_assertions=("the answer sounds Portuguese",),
-    )
+    evaluation = evaluate_oracle([{"operator": "response_language_pt"}], evidence)
 
     assert evaluation.verdict is TaskVerdict.INCONCLUSIVE
-    assert [item.verdict for item in evaluation.assertions] == [
-        TaskVerdict.INCONCLUSIVE,
-        TaskVerdict.INCONCLUSIVE,
-    ]
+    assert [item.verdict for item in evaluation.assertions] == [TaskVerdict.INCONCLUSIVE]
+
+
+def test_an_oracle_without_typed_assertions_is_rejected_at_load(tmp_path: Path) -> None:
+    dataset = json.loads((ROOT / "evals/fixtures/regressions.json").read_text(encoding="utf-8"))
+    dataset["fixtures"][0]["oracle"] = {"assertions": ["looks right to a human"]}
+    dataset["dataset_digest_sha256"] = _scoped_digest(dataset)
+    path = tmp_path / "regressions.json"
+    path.write_text(json.dumps(dataset), encoding="utf-8")
+
+    with pytest.raises(ValidationError):
+        load_eval_catalog(
+            path,
+            ROOT / "evals/experiments.json",
+            contract_root=ROOT,
+            validate_manifest_digest=False,
+            validate_dataset_reference=False,
+        )
 
 
 def _scoped_digest(document: dict[str, object]) -> str:

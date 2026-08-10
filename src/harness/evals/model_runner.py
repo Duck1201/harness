@@ -166,7 +166,6 @@ class BrowserBenchCaseRunner:
         evaluation = evaluate_oracle(
             spec.fixture.oracle.typed_assertions,
             evidence,
-            textual_assertions=spec.fixture.oracle.assertions,
         )
         return CaseRunResult(
             evidence=evidence,
@@ -216,7 +215,6 @@ class BrowserBenchCaseRunner:
         evaluation = evaluate_oracle(
             spec.fixture.oracle.typed_assertions,
             evidence,
-            textual_assertions=spec.fixture.oracle.assertions,
         )
         return CaseRunResult(
             evidence=evidence,
@@ -332,7 +330,6 @@ class ModelCaseRunner:
             evaluation = evaluate_oracle(
                 spec.fixture.oracle.typed_assertions,
                 evidence,
-                textual_assertions=spec.fixture.oracle.assertions,
                 language_detector=self._language_detector,
             )
             return CaseRunResult(

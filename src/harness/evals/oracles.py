@@ -66,21 +66,12 @@ def evaluate_oracle(
     assertions: Sequence[TypedAssertion | Mapping[str, object]],
     evidence: EvalEvidence,
     *,
-    textual_assertions: Sequence[str] = (),
     language_detector: LanguageDetector | None = None,
 ) -> OracleEvaluation:
     evaluations = [
         _evaluate(_parse_assertion(assertion), evidence, language_detector)
         for assertion in assertions
     ]
-    evaluations.extend(
-        AssertionEvaluation(
-            operator="unsupported_textual_assertion",
-            verdict=TaskVerdict.INCONCLUSIVE,
-            explanation=f"Free-form assertion is not executable: {text}",
-        )
-        for text in textual_assertions
-    )
     verdicts = {item.verdict for item in evaluations}
     if TaskVerdict.FAIL in verdicts:
         verdict = TaskVerdict.FAIL

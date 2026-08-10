@@ -146,10 +146,16 @@ type TypedAssertion = Annotated[
 
 
 class OracleDefinition(EvalModel):
+    """An oracle is executable or it is not an oracle.
+
+    Free-form assertions used to live here and scored INCONCLUSIVE, so a fixture
+    carrying them never passed and never failed while still looking covered.
+    Prose now has exactly one home, ``explanation``, which nothing evaluates.
+    """
+
     model_config = ConfigDict(extra="allow")
 
-    typed_assertions: tuple[TypedAssertion, ...] = ()
-    assertions: tuple[str, ...] = ()
+    typed_assertions: tuple[TypedAssertion, ...] = Field(min_length=1)
     explanation: tuple[str, ...] = ()
 
 

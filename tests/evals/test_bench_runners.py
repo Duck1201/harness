@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -11,6 +12,7 @@ from harness.evals import (
     ContractCaseRunner,
     EvalCaseSpec,
     EvalTier,
+    ModelCaseRunner,
     RegressionFixture,
     TaskVerdict,
     load_eval_catalog,
@@ -22,6 +24,7 @@ from harness.evals.bench import (
     BenchEgressGuard,
     BenchServer,
 )
+from harness.ports import ModelRuntime, TokenEstimator
 from harness.web_tools import EgressPolicyError
 
 brave_required = pytest.mark.skipif(
@@ -124,3 +127,30 @@ def test_composite_routes_each_fixture_type_to_a_runner_that_supports_it() -> No
 
     with pytest.raises(ValueError):
         CompositeCaseRunner(())
+
+
+def test_every_fixture_type_in_the_dataset_has_a_runner() -> None:
+    """A type without a runner is dropped in silence by EvalService._fixtures.
+
+    Such a fixture never runs, never fails and protects nothing, which is how
+    three of them survived a release. supports() reads no collaborator, so the
+    model runner can be built with placeholders for this check alone.
+    """
+    config = load_config()
+    composite = CompositeCaseRunner(
+        (
+            ContractCaseRunner(registry=config.tool_registry),
+            BrowserBenchCaseRunner(registry=config.tool_registry),
+            ModelCaseRunner(
+                config=config,
+                runtime=cast(ModelRuntime, None),
+                estimator=cast(TokenEstimator, None),
+            ),
+        )
+    )
+
+    unsupported = sorted(
+        {fixture.type for fixture in _fixtures().values() if not composite.supports(fixture.type)}
+    )
+
+    assert unsupported == []
