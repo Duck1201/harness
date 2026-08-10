@@ -151,6 +151,10 @@ no contrato.
 Medição inventada para preencher contrato é proibida (`docs/DECISOES-2.0.md`). Um
 experimento sem execução fica com `result: null`.
 
+## Licença
+
+[Apache-2.0](LICENSE).
+
 ## Documentação
 
 Ordem de leitura em [`docs/README.md`](docs/README.md). Em resumo: o glossário
