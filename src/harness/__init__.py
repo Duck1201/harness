@@ -3,6 +3,7 @@ from .api import create_app
 from .application_service import (
     ApplicationService,
     ApplicationServiceError,
+    OperatorConfirmationGate,
     WorkspaceInfo,
 )
 from .composite_tools import CompositeToolExecutor
@@ -138,6 +139,10 @@ from .ollama_runtime import (
 from .ports import (
     AgentEvent,
     AgentEventKind,
+    ConfirmationDecision,
+    ConfirmationGate,
+    ConfirmationRequest,
+    DenyingConfirmationGate,
     EngineReadiness,
     EventSink,
     MalformedModelResponseError,
@@ -200,6 +205,9 @@ __all__ = [
     "CaseRunner",
     "CompositeToolExecutor",
     "ConfidenceInterval",
+    "ConfirmationDecision",
+    "ConfirmationGate",
+    "ConfirmationRequest",
     "ContentPayloadError",
     "ContextBudgetExceeded",
     "ContextBuilder",
@@ -211,6 +219,7 @@ __all__ = [
     "ConversationStoreError",
     "CredentialStore",
     "DatasetDriftError",
+    "DenyingConfirmationGate",
     "DomainEvent",
     "EgressGuard",
     "EgressPolicyError",
@@ -275,6 +284,7 @@ __all__ = [
     "OllamaProfileVerification",
     "OllamaRuntime",
     "OllamaRuntimeError",
+    "OperatorConfirmationGate",
     "OracleDefinition",
     "OracleEvaluation",
     "PathWithinWorkspace",

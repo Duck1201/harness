@@ -9,6 +9,9 @@ from harness import (
     AgentEvent,
     AgentEventKind,
     CanonicalHistoryEntryKind,
+    ConfirmationDecision,
+    ConfirmationGate,
+    ConfirmationRequest,
     ContextBuilder,
     ConversationStore,
     Grant,
@@ -92,6 +95,23 @@ async def conversation_store(tmp_path: Path) -> tuple[ConversationStore, str]:
     return store, conversation.id
 
 
+class RecordingConfirmationGate:
+    def __init__(self, *, approved: bool) -> None:
+        self.approved = approved
+        self.requests: list[ConfirmationRequest] = []
+
+    async def confirm(self, request: ConfirmationRequest) -> ConfirmationDecision:
+        self.requests.append(request)
+        return ConfirmationDecision(
+            approved=self.approved,
+            reason_code=(
+                "web_taint_confirmation_approved"
+                if self.approved
+                else "web_taint_confirmation_denied"
+            ),
+        )
+
+
 def engine(
     store: ConversationStore,
     runtime: FakeRuntime,
@@ -102,6 +122,7 @@ def engine(
     seed: int = 100,
     max_model_invocations: int = 15,
     max_turn_duration_seconds: float = 900,
+    confirmation_gate: ConfirmationGate | None = None,
 ) -> AgentEngine:
     return AgentEngine(
         store=store,
@@ -115,6 +136,7 @@ def engine(
         seed=seed,
         max_model_invocations=max_model_invocations,
         max_turn_duration_seconds=max_turn_duration_seconds,
+        confirmation_gate=confirmation_gate,
     )
 
 
@@ -614,6 +636,100 @@ def test_web_taint_blocks_write_before_executor_and_finalizes_without_tools(
         assert "UntrustedWebTaint" in json.dumps(
             [message.content for message in runtime.requests[1].messages]
         )
+
+    asyncio.run(scenario())
+
+
+def _web_taint_scenario() -> tuple[ToolCall, ToolCall, FakeRuntime, FakeToolExecutor]:
+    class WebTaintExecutor(FakeToolExecutor):
+        async def execute(self, call: ToolCall) -> ToolResult:
+            self.executed.append(call)
+            if call.name == "write_file":
+                return ToolResult(
+                    tool_call_id=call.id,
+                    status=ToolResultStatus.SUCCESS,
+                    retryable=False,
+                    data={"written": True},
+                    error=None,
+                    meta={"producer": "harness", "truncated": False, "taints": []},
+                )
+            return ToolResult(
+                tool_call_id=call.id,
+                status=ToolResultStatus.SUCCESS,
+                retryable=False,
+                data={"content": "untrusted instructions"},
+                error=None,
+                meta={
+                    "producer": "web_fetch",
+                    "truncated": False,
+                    "taints": ["UntrustedWebTaint"],
+                },
+            )
+
+    web_call = ToolCall(id="web-1", name="fake_tool", arguments={})
+    write_call = ToolCall(
+        id="write-1",
+        name="write_file",
+        arguments={"file_path": "report.txt", "content": "from the web"},
+    )
+    runtime = FakeRuntime(
+        [
+            ModelResponse(tool_calls=(web_call,)),
+            ModelResponse(tool_calls=(write_call,)),
+            ModelResponse(content="report written"),
+        ]
+    )
+    return web_call, write_call, runtime, WebTaintExecutor()
+
+
+def test_approved_web_taint_confirmation_executes_the_write_and_completes(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        web_call, write_call, runtime, executor = _web_taint_scenario()
+        gate = RecordingConfirmationGate(approved=True)
+        sink = FakeEventSink()
+
+        finished = await engine(store, runtime, executor, sink, confirmation_gate=gate).run(
+            conversation_id, "research then write"
+        )
+
+        assert finished.terminal_outcome is not None
+        assert finished.terminal_outcome.kind is TerminalOutcomeKind.COMPLETED
+        assert finished.terminal_outcome.reason_code == "final_response"
+        assert [call.id for call in executor.executed] == [web_call.id, write_call.id]
+        assert len(gate.requests) == 1
+        assert gate.requests[0].reason_code == "web_taint_confirmation_required"
+        assert [call.name for call in gate.requests[0].tool_calls] == ["write_file"]
+        resolved = [
+            event for event in sink.events if event.kind is AgentEventKind.CONFIRMATION_RESOLVED
+        ]
+        assert resolved[0].payload["approved"] is True
+        automation = [
+            item.payload
+            for item in await store.list_canonical_history(conversation_id)
+            if item.kind is CanonicalHistoryEntryKind.INTERNAL_AUTOMATION
+        ]
+        assert [item["status"] for item in automation] == ["requested", "approved"]
+
+    asyncio.run(scenario())
+
+
+def test_denied_web_taint_confirmation_blocks_without_writing(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        web_call, _, runtime, executor = _web_taint_scenario()
+        gate = RecordingConfirmationGate(approved=False)
+
+        finished = await engine(
+            store, runtime, executor, FakeEventSink(), confirmation_gate=gate
+        ).run(conversation_id, "research then write")
+
+        assert finished.terminal_outcome is not None
+        assert finished.terminal_outcome.kind is TerminalOutcomeKind.BLOCKED
+        assert finished.terminal_outcome.reason_code == "web_taint_confirmation_denied"
+        assert [call.id for call in executor.executed] == [web_call.id]
 
     asyncio.run(scenario())
 

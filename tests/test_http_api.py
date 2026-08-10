@@ -415,6 +415,36 @@ def test_feedback_and_ui_snapshots_are_query_projections(tmp_path: Path) -> None
     assert settings["default_execution_route"] == "local_web_tools"
 
 
+def test_confirmation_is_absent_until_required_and_cannot_be_answered_blindly(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    app = create_app(
+        service=_service(tmp_path, workspace),
+        static_dir=tmp_path / "missing-dist",
+    )
+
+    with TestClient(app) as client:
+        conversation_id = client.post(
+            "/api/conversations", json={"workspace_root": str(workspace)}
+        ).json()["conversation"]["id"]
+        pending = client.get(f"/api/conversations/{conversation_id}/confirmation")
+        chat = client.get("/api/ui/chat", params={"conversation_id": conversation_id}).json()
+        blind = client.post(
+            f"/api/conversations/{conversation_id}/confirmation/invented-id",
+            json={"approved": True},
+        )
+        unknown_conversation = client.get("/api/conversations/does-not-exist/confirmation")
+
+    assert pending.status_code == 200
+    assert pending.json()["confirmation"] is None
+    assert chat["pending_confirmation"] is None
+    assert blind.status_code == 409
+    assert blind.json()["error"]["code"] == "confirmation_not_pending"
+    assert unknown_conversation.status_code == 404
+
+
 def test_origin_body_limit_and_optional_spa_fallback_are_closed_by_default(
     tmp_path: Path,
 ) -> None:

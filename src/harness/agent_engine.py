@@ -23,6 +23,10 @@ from .domain import (
 from .ports import (
     AgentEvent,
     AgentEventKind,
+    ConfirmationDecision,
+    ConfirmationGate,
+    ConfirmationRequest,
+    DenyingConfirmationGate,
     EngineReadiness,
     EventSink,
     MalformedModelResponseError,
@@ -57,6 +61,7 @@ class AgentEngine:
         max_turn_duration_seconds: float = 900,
         runtime_readiness: EngineReadiness | None = None,
         stop_signal: StopSignal | None = None,
+        confirmation_gate: ConfirmationGate | None = None,
     ) -> None:
         if max_model_invocations < 1:
             raise ValueError("max_model_invocations must be positive")
@@ -86,6 +91,7 @@ class AgentEngine:
         self._max_turn_duration_seconds = max_turn_duration_seconds
         self._runtime_readiness = runtime_readiness or EngineReadiness(ready=True)
         self._stop_signal = stop_signal or NeverStopSignal()
+        self._confirmation_gate = confirmation_gate or DenyingConfirmationGate()
 
     @property
     def readiness(self) -> EngineReadiness:
@@ -303,15 +309,25 @@ class AgentEngine:
                 )
 
             if _requires_web_taint_confirmation(calls, context):
-                await self._append_blocked_automation(turn, "web_taint_confirmation_required")
-                await self._store.append_agent_step(turn.id, seed=step_seed, tool_calls=calls)
-                await self._emit_step_finished(turn, step_sequence)
-                return await self._finalize_blocked(
-                    turn,
-                    step_sequence,
-                    "web_taint_confirmation_required",
-                    deadline=deadline,
-                )
+                decision = await self._await_confirmation(turn, step_sequence, calls)
+                if self._stop_signal.stop_requested:
+                    return await self._finish(turn, TerminalOutcomeKind.CANCELLED, "operator_stop")
+                if _deadline_reached(deadline):
+                    return await self._finish_time_limit(turn)
+                if not decision.approved:
+                    await self._append_blocked_automation(
+                        turn,
+                        decision.reason_code,
+                        automation_id="write_confirmation",
+                    )
+                    await self._store.append_agent_step(turn.id, seed=step_seed, tool_calls=calls)
+                    await self._emit_step_finished(turn, step_sequence)
+                    return await self._finalize_blocked(
+                        turn,
+                        step_sequence,
+                        decision.reason_code,
+                        deadline=deadline,
+                    )
 
             tool_executor = await self._tool_executor_factory.create(turn.conversation_id)
             if self._stop_signal.stop_requested:
@@ -478,17 +494,71 @@ class AgentEngine:
         reason_code: str,
         *,
         detail: str | None = None,
+        automation_id: str = "tool_batch_blocked",
     ) -> None:
         await self._store.append_canonical_history(
             turn.id,
             CanonicalHistoryEntryKind.INTERNAL_AUTOMATION,
             {
-                "automation_id": "tool_batch_blocked",
+                "automation_id": automation_id,
                 "status": "blocked",
                 "reason_code": reason_code,
                 "detail": detail,
             },
         )
+
+    async def _await_confirmation(
+        self,
+        turn: Turn,
+        step_sequence: int,
+        calls: Sequence[ToolCall],
+    ) -> ConfirmationDecision:
+        request = ConfirmationRequest(
+            id=f"{turn.id}-confirmation-{step_sequence}",
+            conversation_id=turn.conversation_id,
+            turn_id=turn.id,
+            request_id=turn.request_id,
+            step_sequence=step_sequence,
+            reason_code="web_taint_confirmation_required",
+            tool_calls=tuple(calls),
+        )
+        await self._store.append_canonical_history(
+            turn.id,
+            CanonicalHistoryEntryKind.INTERNAL_AUTOMATION,
+            {
+                "automation_id": "write_confirmation",
+                "status": "requested",
+                "confirmation_id": request.id,
+                "reason_code": request.reason_code,
+                "tool_calls": [_tool_call_payload(call) for call in calls],
+            },
+        )
+        decision = await self._confirmation_gate.confirm(request)
+        await self._store.append_canonical_history(
+            turn.id,
+            CanonicalHistoryEntryKind.INTERNAL_AUTOMATION,
+            {
+                "automation_id": "write_confirmation",
+                "status": "approved" if decision.approved else "denied",
+                "confirmation_id": request.id,
+                "reason_code": decision.reason_code,
+            },
+        )
+        await self._emit(
+            AgentEvent(
+                kind=AgentEventKind.CONFIRMATION_RESOLVED,
+                turn_id=turn.id,
+                step_sequence=step_sequence,
+                payload={
+                    "confirmation_id": request.id,
+                    "approved": decision.approved,
+                    "reason_code": decision.reason_code,
+                },
+                conversation_id=turn.conversation_id,
+                request_id=turn.request_id,
+            )
+        )
+        return decision
 
     async def _build_context(self, turn: Turn, offered_tools: Sequence[ToolSchema]) -> ModelContext:
         history = await self._store.list_canonical_history(turn.conversation_id)

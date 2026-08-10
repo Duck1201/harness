@@ -5,20 +5,36 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
+import pytest
+
 from harness import (
+    AgentEvent,
+    AgentEventKind,
     ApplicationService,
+    ApplicationServiceError,
     BenchmarkLease,
+    ConfirmationRequest,
     ConversationStore,
     EngineReadiness,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ObservabilityStore,
+    OperatorConfirmationGate,
     TerminalOutcomeKind,
+    ToolCall,
     ToolSchema,
     TurnStatus,
     load_config,
 )
+
+
+class RecordingEventSink:
+    def __init__(self) -> None:
+        self.events: list[AgentEvent] = []
+
+    async def emit(self, event: AgentEvent) -> None:
+        self.events.append(event)
 
 
 class FakeEstimator:
@@ -243,6 +259,88 @@ def test_unready_runtime_profile_fails_closed_without_model_generation(
             assert turns[0].terminal_outcome.reason_code == "model_digest_mismatch"
         finally:
             await service.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_operator_confirmation_gate_announces_then_waits_for_a_matching_decision() -> None:
+    async def scenario() -> None:
+        sink = RecordingEventSink()
+        gate = OperatorConfirmationGate(sink)
+        request = ConfirmationRequest(
+            id="turn-1-confirmation-2",
+            conversation_id="conversation-1",
+            turn_id="turn-1",
+            request_id="request-1",
+            step_sequence=2,
+            reason_code="web_taint_confirmation_required",
+            tool_calls=(
+                ToolCall(
+                    id="write-1",
+                    name="write_file",
+                    arguments={"file_path": "report.txt", "content": "from the web"},
+                ),
+            ),
+        )
+
+        waiting = asyncio.create_task(gate.confirm(request))
+        await asyncio.sleep(0)
+
+        assert gate.pending("conversation-1") == request
+        assert [event.kind for event in sink.events] == [AgentEventKind.CONFIRMATION_REQUIRED]
+        assert sink.events[0].payload["confirmation_id"] == request.id
+        assert sink.events[0].payload["tool_calls"] == [
+            {
+                "id": "write-1",
+                "name": "write_file",
+                "arguments": {"file_path": "report.txt", "content": "from the web"},
+            }
+        ]
+
+        with pytest.raises(ApplicationServiceError) as unknown:
+            gate.resolve("conversation-1", "another-confirmation", approved=True)
+        assert unknown.value.code == "confirmation_not_pending"
+        assert not waiting.done()
+
+        gate.resolve("conversation-1", request.id, approved=True)
+        decision = await asyncio.wait_for(waiting, timeout=1)
+
+        assert decision.approved is True
+        assert decision.reason_code == "web_taint_confirmation_approved"
+        assert gate.pending("conversation-1") is None
+
+    asyncio.run(scenario())
+
+
+def test_operator_confirmation_gate_denies_and_abandons_without_an_answer() -> None:
+    async def scenario() -> None:
+        gate = OperatorConfirmationGate(RecordingEventSink())
+        request = ConfirmationRequest(
+            id="turn-1-confirmation-1",
+            conversation_id="conversation-1",
+            turn_id="turn-1",
+            request_id="request-1",
+            step_sequence=1,
+            reason_code="web_taint_confirmation_required",
+            tool_calls=(ToolCall(id="write-1", name="write_file", arguments={}),),
+        )
+
+        denial = asyncio.create_task(gate.confirm(request))
+        await asyncio.sleep(0)
+        gate.resolve("conversation-1", request.id, approved=False)
+        denied = await asyncio.wait_for(denial, timeout=1)
+
+        stopped = asyncio.create_task(gate.confirm(request))
+        await asyncio.sleep(0)
+        gate.abandon("conversation-1", "operator_stop")
+        abandoned = await asyncio.wait_for(stopped, timeout=1)
+
+        assert denied.approved is False
+        assert denied.reason_code == "web_taint_confirmation_denied"
+        assert abandoned.approved is False
+        assert abandoned.reason_code == "operator_stop"
+        # An abandon with nothing pending is how stop() behaves on a normal Turn.
+        gate.abandon("conversation-1", "operator_stop")
 
     asyncio.run(scenario())
 

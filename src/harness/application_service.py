@@ -32,7 +32,11 @@ from .local_tools import RegistryToolExecutor
 from .observability_store import ObservabilityStore
 from .ports import (
     AgentEvent,
+    AgentEventKind,
+    ConfirmationDecision,
+    ConfirmationRequest,
     EngineReadiness,
+    EventSink,
     ModelRuntime,
     StopSignal,
     TokenEstimator,
@@ -138,6 +142,7 @@ class ApplicationService:
         )
         self._event_bus = _LiveEventBus()
         self._event_sink = _ServiceEventSink(self._event_bus, observability_store)
+        self._confirmation_gate = OperatorConfirmationGate(self._event_sink)
 
     async def initialize(self) -> None:
         if self._initialized:
@@ -392,6 +397,7 @@ class ApplicationService:
             "active_turn": active,
             "turns": turns,
             "feedback": feedback,
+            "pending_confirmation": self._confirmation_gate.pending(conversation_id),
         }
 
     async def stop(self, conversation_id: str) -> None:
@@ -404,6 +410,19 @@ class ApplicationService:
                 status_code=409,
             )
         signal.request_stop()
+        # A Turn parked on a confirmation would otherwise ignore the stop until the
+        # turn deadline expires.
+        self._confirmation_gate.abandon(conversation_id, "operator_stop")
+
+    async def pending_confirmation(self, conversation_id: str) -> ConfirmationRequest | None:
+        await self.store.get_conversation(conversation_id)
+        return self._confirmation_gate.pending(conversation_id)
+
+    async def resolve_confirmation(
+        self, conversation_id: str, confirmation_id: str, *, approved: bool
+    ) -> None:
+        await self.store.get_conversation(conversation_id)
+        self._confirmation_gate.resolve(conversation_id, confirmation_id, approved=approved)
 
     def subscribe(self, conversation_id: str) -> asyncio.Queue[AgentEvent]:
         return self._event_bus.subscribe(conversation_id)
@@ -478,6 +497,7 @@ class ApplicationService:
             max_turn_duration_seconds=self.config.loop.max_turn_duration_seconds,
             runtime_readiness=self._runtime_readiness,
             stop_signal=stop_signal,
+            confirmation_gate=self._confirmation_gate,
         )
 
     def workspace_root(self, workspace_id: str) -> Path:
@@ -597,6 +617,83 @@ class _CooperativeStopSignal:
 
     def request_stop(self) -> None:
         self._requested = True
+
+
+class OperatorConfirmationGate:
+    """Holds one pending confirmation per Conversation until the Operator decides.
+
+    Registration and announcement happen in the same call so a decision cannot
+    arrive before the request is visible. Nothing is persisted: a confirmation only
+    matters while its Turn is alive, and a Turn does not survive a restart.
+    """
+
+    def __init__(self, event_sink: EventSink) -> None:
+        self._event_sink = event_sink
+        self._pending: dict[str, tuple[ConfirmationRequest, asyncio.Future[ConfirmationDecision]]]
+        self._pending = {}
+
+    def pending(self, conversation_id: str) -> ConfirmationRequest | None:
+        entry = self._pending.get(conversation_id)
+        return None if entry is None else entry[0]
+
+    async def confirm(self, request: ConfirmationRequest) -> ConfirmationDecision:
+        if request.conversation_id in self._pending:
+            raise RuntimeError("a Conversation runs one Turn at a time")
+        future: asyncio.Future[ConfirmationDecision] = asyncio.get_running_loop().create_future()
+        self._pending[request.conversation_id] = (request, future)
+        try:
+            await self._event_sink.emit(
+                AgentEvent(
+                    kind=AgentEventKind.CONFIRMATION_REQUIRED,
+                    turn_id=request.turn_id,
+                    step_sequence=request.step_sequence,
+                    payload={
+                        "confirmation_id": request.id,
+                        "reason_code": request.reason_code,
+                        "tool_calls": [
+                            {
+                                "id": call.id,
+                                "name": call.name,
+                                "arguments": dict(call.arguments),
+                            }
+                            for call in request.tool_calls
+                        ],
+                    },
+                    conversation_id=request.conversation_id,
+                    request_id=request.request_id,
+                )
+            )
+            return await future
+        finally:
+            self._pending.pop(request.conversation_id, None)
+
+    def resolve(self, conversation_id: str, confirmation_id: str, *, approved: bool) -> None:
+        entry = self._pending.get(conversation_id)
+        if entry is None or entry[0].id != confirmation_id:
+            raise ApplicationServiceError(
+                "confirmation_not_pending",
+                "There is no pending confirmation with this identifier.",
+                status_code=409,
+            )
+        future = entry[1]
+        if future.done():
+            return
+        future.set_result(
+            ConfirmationDecision(
+                approved=approved,
+                reason_code=(
+                    "web_taint_confirmation_approved"
+                    if approved
+                    else "web_taint_confirmation_denied"
+                ),
+            )
+        )
+
+    def abandon(self, conversation_id: str, reason_code: str) -> None:
+        entry = self._pending.get(conversation_id)
+        if entry is None or entry[1].done():
+            return
+        entry[1].set_result(ConfirmationDecision(approved=False, reason_code=reason_code))
 
 
 class _LiveEventBus:

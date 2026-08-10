@@ -70,6 +70,34 @@ def project_agent_event(event: AgentEvent, *, run_id: str) -> list[dict[str, Jso
                 ),
             }
         ]
+    if event.kind is AgentEventKind.CONFIRMATION_REQUIRED:
+        return [
+            {
+                "type": "CUSTOM",
+                "name": "harness.confirmation_required",
+                "value": {
+                    "confirmation_id": _string(event, "confirmation_id"),
+                    "reason_code": _string(event, "reason_code"),
+                    "step_sequence": event.step_sequence,
+                    "tool_calls": event.payload.get("tool_calls"),
+                },
+            }
+        ]
+    if event.kind is AgentEventKind.CONFIRMATION_RESOLVED:
+        approved = event.payload.get("approved")
+        if not isinstance(approved, bool):
+            raise ValueError("agent event field must be a boolean: approved")
+        return [
+            {
+                "type": "CUSTOM",
+                "name": "harness.confirmation_resolved",
+                "value": {
+                    "confirmation_id": _string(event, "confirmation_id"),
+                    "reason_code": _string(event, "reason_code"),
+                    "approved": approved,
+                },
+            }
+        ]
     if event.kind is AgentEventKind.FINAL_RESPONSE:
         message_id = f"{event.turn_id}-assistant"
         return [

@@ -43,6 +43,7 @@ from .evals import (
 from .host_config import CredentialStore, HostConfig, HostConfigStore
 from .observability_store import ObservabilityStore
 from .ollama_runtime import OllamaRuntime
+from .ports import ConfirmationRequest
 from .setup import SetupController, SetupError, SetupSubmission
 from .token_estimator import HuggingFaceTokenEstimator
 
@@ -67,6 +68,10 @@ class RequestContent(ApiModel):
 
 class GrantRequest(ApiModel):
     permission: str
+
+
+class ConfirmationDecisionRequest(ApiModel):
+    approved: bool
 
 
 class FeedbackRequest(ApiModel):
@@ -382,6 +387,22 @@ def create_app(
         await application_service.revoke_grant(conversation_id, grant_id)
         return Response(status_code=204)
 
+    @app.get("/api/conversations/{conversation_id}/confirmation")
+    async def get_confirmation(conversation_id: str) -> dict[str, Any]:
+        pending = await application_service.pending_confirmation(conversation_id)
+        return {"confirmation": _confirmation_json(pending)}
+
+    @app.post("/api/conversations/{conversation_id}/confirmation/{confirmation_id}")
+    async def resolve_confirmation(
+        conversation_id: str,
+        confirmation_id: str,
+        payload: ConfirmationDecisionRequest,
+    ) -> dict[str, bool]:
+        await application_service.resolve_confirmation(
+            conversation_id, confirmation_id, approved=payload.approved
+        )
+        return {"approved": payload.approved}
+
     @app.post("/api/conversations/{conversation_id}/stop", status_code=202)
     async def stop(conversation_id: str) -> dict[str, bool]:
         await application_service.stop(conversation_id)
@@ -471,6 +492,7 @@ def create_app(
         active = cast(Turn | None, snapshot["active_turn"])
         turns = cast(list[Turn], snapshot["turns"])
         feedback_items = cast(list[Feedback], snapshot["feedback"])
+        confirmation = cast(ConfirmationRequest | None, snapshot["pending_confirmation"])
         return {
             "conversation": _conversation_json(conversation),
             "pending_requests": [_pending_request_json(item) for item in pending],
@@ -478,6 +500,7 @@ def create_app(
             "active_turn": _turn_json(active) if active is not None else None,
             "turns": [_turn_json(item) for item in turns],
             "feedback": [_feedback_json(item) for item in feedback_items],
+            "pending_confirmation": _confirmation_json(confirmation),
         }
 
     @app.get("/api/ui/evals")
@@ -813,6 +836,22 @@ def _turn_json(turn: Turn) -> dict[str, Any]:
             if outcome is not None
             else None
         ),
+    }
+
+
+def _confirmation_json(request: ConfirmationRequest | None) -> dict[str, Any] | None:
+    if request is None:
+        return None
+    return {
+        "id": request.id,
+        "conversation_id": request.conversation_id,
+        "turn_id": request.turn_id,
+        "step_sequence": request.step_sequence,
+        "reason_code": request.reason_code,
+        "tool_calls": [
+            {"id": call.id, "name": call.name, "arguments": dict(call.arguments)}
+            for call in request.tool_calls
+        ],
     }
 
 

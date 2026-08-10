@@ -80,6 +80,8 @@ class AgentEventKind(StrEnum):
     STEP_FINISHED = "step_finished"
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
+    CONFIRMATION_REQUIRED = "confirmation_required"
+    CONFIRMATION_RESOLVED = "confirmation_resolved"
     FINAL_RESPONSE = "final_response"
     TURN_FINISHED = "turn_finished"
 
@@ -140,6 +142,50 @@ class NeverStopSignal:
     @property
     def stop_requested(self) -> bool:
         return False
+
+
+@dataclass(frozen=True, slots=True)
+class ConfirmationRequest:
+    id: str
+    conversation_id: str
+    turn_id: str
+    request_id: str
+    step_sequence: int
+    reason_code: str
+    tool_calls: tuple[ToolCall, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ConfirmationDecision:
+    approved: bool
+    reason_code: str
+
+    def __post_init__(self) -> None:
+        if not self.reason_code:
+            raise ValueError("confirmation decision requires a reason_code")
+
+
+class ConfirmationGate(Protocol):
+    """Asks the Operator to confirm a batch the harness refuses to run unattended.
+
+    The gate is responsible for notifying the Operator, because registering the
+    request and announcing it must happen together: a decision that arrives before
+    the request is known would be dropped.
+    """
+
+    async def confirm(self, request: ConfirmationRequest) -> ConfirmationDecision: ...
+
+
+class DenyingConfirmationGate:
+    """Default gate: nothing can approve, so the batch stays blocked.
+
+    Used wherever no Operator is present — eval runners and tests included. The
+    reason code is the request's own, because from the Turn's point of view the
+    confirmation was required and never obtained.
+    """
+
+    async def confirm(self, request: ConfirmationRequest) -> ConfirmationDecision:
+        return ConfirmationDecision(approved=False, reason_code=request.reason_code)
 
 
 class TokenEstimator(Protocol):
