@@ -2,7 +2,7 @@
   "schema_version": 2,
   "dataset_id": "harness_2_contract_regressions",
   "dataset_version": "2.0.0",
-  "dataset_digest_sha256": "45fd871aa362a8e88a55fe7d879ad51580a11c6b36caf2dba8b94b686b085bcf",
+  "dataset_digest_sha256": "f45a456b4bbc57453313bb0933273423ccac97bb6820138b528216a35675ddd4",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -114,7 +114,7 @@
         "explanation": [
           "both attempts are rejected after canonicalization",
           "no outside bytes are read",
-          "the security violation count is two"
+          "a refusal is the harness working; a violation is a security expectation that did not hold"
         ]
       }
     },

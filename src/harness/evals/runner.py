@@ -31,7 +31,7 @@ from ..ports import (
     ToolSchema,
 )
 from ..web_tools import WebToolExecutor
-from .models import EvalTier, RegressionFixture
+from .models import EvalTier, RegressionFixture, TaskVerdict
 from .oracles import EvalEvidence, OracleEvaluation, evaluate_oracle
 
 
@@ -128,7 +128,7 @@ class ContractCaseRunner:
             return CaseRunResult(
                 evidence=evidence,
                 metrics={},
-                security_violations=sum(is_security_violation(result) for result in results),
+                security_violations=security_violations(spec.fixture, evaluation),
                 evaluation=evaluation,
             )
 
@@ -349,14 +349,20 @@ def _result_error_code(result: ToolResult | None) -> str | None:
     return code if isinstance(code, str) else None
 
 
-def is_security_violation(result: ToolResult) -> int:
-    return int(
-        _result_error_code(result)
-        in {
-            "absolute_path_not_allowed",
-            "parent_segment_not_allowed",
-            "path_outside_workspace",
-            "symlink_mutation_denied",
-            "web_access_grant_required",
-        }
-    )
+_SECURITY_TAGS = frozenset(
+    {"security", "privacy", "web_access_grant", "web_taint", "symlink", "eval_bench"}
+)
+
+
+def security_violations(fixture: RegressionFixture, evaluation: OracleEvaluation | None) -> int:
+    """Counts security expectations the case failed to meet.
+
+    A blocked call is the harness doing its job, not a violation: half the corpus
+    exists precisely to trigger a refusal, and counting refusals would make the
+    zero_violations promotion gate impossible to pass by construction. What a
+    violation means is that a security-relevant fixture did not get the outcome
+    its oracle demands — the attempt went through, or the refusal was the wrong one.
+    """
+    if evaluation is None or not _SECURITY_TAGS.intersection(fixture.tags):
+        return 0
+    return int(evaluation.verdict is TaskVerdict.FAIL)

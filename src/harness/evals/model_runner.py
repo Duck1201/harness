@@ -38,7 +38,7 @@ from ..web_tools import WebToolExecutor
 from .bench import BENCH_HOSTNAME, BenchEgressGuard, BenchServer
 from .models import RegressionFixture
 from .oracles import EvalEvidence, evaluate_oracle
-from .runner import CaseRunner, CaseRunResult, EvalCaseSpec, is_security_violation
+from .runner import CaseRunner, CaseRunResult, EvalCaseSpec, security_violations
 
 _ALL_GRANTS = ("WorkspaceRootGrant", "WriteGrant", "WebAccessGrant")
 
@@ -151,6 +151,11 @@ class BrowserBenchCaseRunner:
             tool_results=tuple(results),
         )
         producers = [str(result.meta.get("producer", "")) for result in results]
+        evaluation = evaluate_oracle(
+            spec.fixture.oracle.typed_assertions,
+            evidence,
+            textual_assertions=spec.fixture.oracle.assertions,
+        )
         return CaseRunResult(
             evidence=evidence,
             metrics={
@@ -165,12 +170,8 @@ class BrowserBenchCaseRunner:
                     )
                 ),
             },
-            security_violations=sum(is_security_violation(result) for result in results),
-            evaluation=evaluate_oracle(
-                spec.fixture.oracle.typed_assertions,
-                evidence,
-                textual_assertions=spec.fixture.oracle.assertions,
-            ),
+            security_violations=security_violations(spec.fixture, evaluation),
+            evaluation=evaluation,
         )
 
     async def _run_boundary(self, spec: EvalCaseSpec) -> CaseRunResult:
@@ -200,15 +201,16 @@ class BrowserBenchCaseRunner:
         )
         result = await executor.execute(call)
         evidence = EvalEvidence(tool_calls=(call,), tool_results=(result,))
+        evaluation = evaluate_oracle(
+            spec.fixture.oracle.typed_assertions,
+            evidence,
+            textual_assertions=spec.fixture.oracle.assertions,
+        )
         return CaseRunResult(
             evidence=evidence,
             metrics={"data_egress_events": 0.0},
-            security_violations=is_security_violation(result),
-            evaluation=evaluate_oracle(
-                spec.fixture.oracle.typed_assertions,
-                evidence,
-                textual_assertions=spec.fixture.oracle.assertions,
-            ),
+            security_violations=security_violations(spec.fixture, evaluation),
+            evaluation=evaluation,
         )
 
     def _bench_path(self, entry: Mapping[str, JsonValue]) -> str:
@@ -327,7 +329,7 @@ class ModelCaseRunner:
                     "extra_tool_calls": float(max(0, len(calls) - _expected_calls(spec.fixture))),
                     "tool_noop_rate": _noop_rate(results),
                 },
-                security_violations=sum(is_security_violation(result) for result in results),
+                security_violations=security_violations(spec.fixture, evaluation),
                 evaluation=evaluation,
             )
 

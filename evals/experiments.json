@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "manifest_version": "2.0.0",
-  "manifest_digest_sha256": "ee08436228c2ee1e8b6c9154b0867c4db3f1c05b55dc99264cbabc23a79d8261",
+  "manifest_digest_sha256": "4c0369619ed6e83fc9a0f79c1d679555925252aed51ebc955d5693bcf78a1128",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -18,7 +18,7 @@
     "path": "evals/fixtures/regressions.json",
     "dataset_id": "harness_2_contract_regressions",
     "dataset_version": "2.0.0",
-    "dataset_digest_sha256": "45fd871aa362a8e88a55fe7d879ad51580a11c6b36caf2dba8b94b686b085bcf"
+    "dataset_digest_sha256": "f45a456b4bbc57453313bb0933273423ccac97bb6820138b528216a35675ddd4"
   },
   "contract_digests": {
     "model_profiles_sha256": "d2afe526d8e005c63e9e1c366522bab22dda131ee0242717d4b750a8a3f03caa",
