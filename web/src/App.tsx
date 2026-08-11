@@ -822,6 +822,8 @@ function ChatArea({
                   existingFeedback={snapshot.feedback.find(
                     (item) => item.turn_id === message.turnId,
                   )}
+                  grants={snapshot.grants}
+                  onGrant={toggleGrant}
                 />
               ))}
               <PendingQueue
@@ -992,6 +994,60 @@ function ConversationSidebar({
   );
 }
 
+const OUTCOME_HINTS: Record<string, string> = {
+  write_grant_required: "Ative o grant Write nesta conversa e reenvie o pedido.",
+  web_access_grant_required: "Ative o grant Web nesta conversa e reenvie o pedido.",
+  workspace_root_grant_required: "A conversa não tem workspace root. Selecione uma raiz permitida.",
+  sensitive_path_denied: "O caminho pedido é sensível e a policy nega o acesso.",
+  host_path_denied: "A policy do host nega este caminho.",
+  path_outside_workspace: "O caminho resolvido cai fora da workspace root.",
+  web_taint_confirmation_denied: "A confirmação da ação sob taint web foi negada.",
+  malformed_model_response_limit:
+    "O modelo respondeu sem texto e sem tool call. Reenvie ou simplifique o pedido.",
+  context_budget_exceeded: "O contexto estourou o orçamento. Abra outra conversa ou reduza o pedido.",
+  runtime_verification_failed:
+    "O runtime Ollama não confere com o perfil esperado. Verifique o modelo instalado.",
+  model_invocation_limit: "O turno atingiu o limite de passos. Divida a tarefa.",
+  tool_calls_per_turn_limit: "O turno atingiu o limite de tool calls. Divida a tarefa.",
+  tool_calls_per_step_limit: "O passo pediu tool calls demais de uma vez.",
+  rejected_model_attempt_limit: "O modelo insistiu em chamadas inválidas e o turno foi encerrado.",
+};
+
+const GRANT_FOR_REASON: Record<string, "WriteGrant" | "WebAccessGrant"> = {
+  write_grant_required: "WriteGrant",
+  web_access_grant_required: "WebAccessGrant",
+};
+
+export function TurnOutcome({
+  kind,
+  reasonCode,
+  grants,
+  onGrant,
+}: {
+  kind: string;
+  reasonCode: string;
+  grants: Grant[];
+  onGrant: (permission: "WriteGrant" | "WebAccessGrant") => void;
+}) {
+  const hint = OUTCOME_HINTS[reasonCode];
+  const permission = GRANT_FOR_REASON[reasonCode];
+  const missing = permission && !grants.some((grant) => grant.permission === permission);
+  return (
+    <div className="turn-outcome-block">
+      <div className={`turn-outcome turn-outcome--${kind}`}>
+        <span>{kind}</span>
+        <code>{reasonCode}</code>
+      </div>
+      {hint && <p className="turn-outcome-hint">{hint}</p>}
+      {missing && permission && (
+        <button type="button" className="secondary-button" onClick={() => onGrant(permission)}>
+          Ativar grant {permission === "WriteGrant" ? "Write" : "Web"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function GrantChips({
   grants,
   busyAction,
@@ -1089,11 +1145,15 @@ function TimelineMessage({
   conversationId,
   client,
   existingFeedback,
+  grants,
+  onGrant,
 }: {
   message: ChatMessage;
   conversationId: string;
   client: HarnessClient;
   existingFeedback?: FeedbackRecord;
+  grants: Grant[];
+  onGrant: (permission: "WriteGrant" | "WebAccessGrant") => void;
 }) {
   if (message.role === "user") {
     return (
@@ -1153,16 +1213,20 @@ function TimelineMessage({
         )}
         {message.metrics && <Metrics metrics={message.metrics} />}
         {message.terminalOutcome && (
-          <div className={`turn-outcome turn-outcome--${message.terminalOutcome.kind}`}>
-            <span>{message.terminalOutcome.kind}</span>
-            <code>{message.terminalOutcome.reason_code}</code>
-          </div>
+          <TurnOutcome
+            kind={message.terminalOutcome.kind}
+            reasonCode={message.terminalOutcome.reason_code}
+            grants={grants}
+            onGrant={onGrant}
+          />
         )}
         {message.liveOutcome && (
-          <div className={`turn-outcome turn-outcome--${message.liveOutcome.kind}`}>
-            <span>{message.liveOutcome.kind}</span>
-            <code>{message.liveOutcome.reasonCode}</code>
-          </div>
+          <TurnOutcome
+            kind={message.liveOutcome.kind}
+            reasonCode={message.liveOutcome.reasonCode}
+            grants={grants}
+            onGrant={onGrant}
+          />
         )}
         {!message.live && message.content && (
           <Feedback

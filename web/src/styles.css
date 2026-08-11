@@ -1192,6 +1192,16 @@ details[open] > summary .summary-chevron {
   font-size: 8px;
 }
 
+.turn-outcome-hint {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.turn-outcome-block .secondary-button {
+  margin-top: 6px;
+}
+
 .turn-outcome code {
   overflow: hidden;
   text-overflow: ellipsis;
