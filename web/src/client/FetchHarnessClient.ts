@@ -58,7 +58,6 @@ export class HarnessApiError extends Error {
 }
 
 export class FetchHarnessClient implements HarnessClient {
-  readonly mode = "live" as const;
   private session: string | null = null;
   private readonly baseUrl: string;
   private readonly fetchImplementation: FetchImplementation;

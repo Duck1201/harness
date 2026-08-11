@@ -125,7 +125,6 @@ const initialReports: EvalReport[] = [
 const clone = <T,>(value: T): T => structuredClone(value);
 
 export class MockHarnessClient implements HarnessClient {
-  readonly mode = "mock" as const;
   private workspaces = clone(initialWorkspaces);
   private conversations = clone(initialConversations);
   private grants = clone(initialGrants);

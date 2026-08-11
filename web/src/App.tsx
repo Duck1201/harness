@@ -8,7 +8,6 @@ import {
   Check,
   ChevronDown,
   CircleStop,
-  Database,
   FileCode2,
   FlaskConical,
   Globe2,
@@ -226,9 +225,7 @@ export function App({ client = harnessClient }: AppProps) {
                 }
               />
             )}
-            {area === "settings" && (
-              <SettingsArea snapshot={data.settings} clientMode={client.mode} />
-            )}
+            {area === "settings" && <SettingsArea snapshot={data.settings} />}
           </>
         )}
       </main>
@@ -451,15 +448,6 @@ function SetupArea({
         </p>
       </form>
     </div>
-  );
-}
-
-function MockPill({ mode }: { mode: HarnessClient["mode"] }) {
-  if (mode === "live") return null;
-  return (
-    <span className="preview-pill preview-pill--mock">
-      <Database size={12} /> Preview · dados simulados
-    </span>
   );
 }
 
@@ -773,7 +761,6 @@ function ChatArea({
               </div>
             </>
           )}
-          <MockPill mode={client.mode} />
         </header>
 
         {actionError && (
@@ -1498,7 +1485,6 @@ function EvalsArea({
           <p>Runs e relatórios retornados pelo serviço de avaliação.</p>
         </div>
         <div className="area-header-actions">
-          <MockPill mode={client.mode} />
           <button
             className="primary-button"
             type="button"
@@ -1702,13 +1688,7 @@ function EvalRunView({
   );
 }
 
-function SettingsArea({
-  snapshot,
-  clientMode,
-}: {
-  snapshot: SettingsSnapshot;
-  clientMode: HarnessClient["mode"];
-}) {
+function SettingsArea({ snapshot }: { snapshot: SettingsSnapshot }) {
   return (
     <div className="settings-page">
       <header className="area-header">
@@ -1718,7 +1698,6 @@ function SettingsArea({
           <p>Snapshot somente leitura retornado pelo servidor.</p>
         </div>
         <div className="area-header-actions">
-          <MockPill mode={clientMode} />
           <button className="primary-button" type="button" disabled>
             <CircleStop size={15} /> Mutações indisponíveis
           </button>

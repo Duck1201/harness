@@ -100,8 +100,9 @@ O `system_prompt` é **derivado dos contratos** (ADR 0007), não escrito à mão
   `ports.py` para tudo que é substituível.
 - Testes espelham o módulo (`tests/test_<modulo>.py`), sem framework extra além
   do pytest.
-- Frontend em `web/`: React 19 + Vite + vitest, cliente em `web/src/client/` com
-  implementação `Fetch` e `Mock` atrás da mesma interface.
+- Frontend em `web/`: React 19 + Vite + vitest, cliente em `web/src/client/`. O
+  app só compõe `FetchHarnessClient`; `MockHarnessClient` é dublê dos testes e
+  não entra no bundle.
 
 ## Idioma
 

@@ -5,6 +5,5 @@ import { FetchHarnessClient } from "./FetchHarnessClient";
 describe("client composition", () => {
   it("usa o client live por padrão", () => {
     expect(harnessClient).toBeInstanceOf(FetchHarnessClient);
-    expect(harnessClient.mode).toBe("live");
   });
 });

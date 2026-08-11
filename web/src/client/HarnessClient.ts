@@ -24,8 +24,6 @@ import type {
 } from "../types";
 
 export interface HarnessClient {
-  readonly mode: "mock" | "live";
-
   getHealth(): Promise<HealthSnapshot>;
   listWorkspaces(): Promise<Workspace[]>;
   listConversations(includeArchived?: boolean): Promise<Conversation[]>;
