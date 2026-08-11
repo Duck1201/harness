@@ -62,11 +62,16 @@ Gera `web/dist`, servido pelo próprio backend.
 
 ```bash
 ollama create mitos -f Modelfile
-ollama show mitos --modelfile | sha256sum
+curl -s http://127.0.0.1:11434/api/tags \
+  | python3 -c "import json,sys;print(next(m['digest'] for m in json.load(sys.stdin)['models'] if m['name']=='mitos:latest'))"
 ```
 Cria o perfil de execução a partir do [`Modelfile`](Modelfile) da raiz. O segundo
-comando deve bater com `installation.installed_profile_digest_sha256` em
-`config/model-profiles.json` — divergência é erro na inicialização, não aviso.
+comando imprime o digest do manifesto que o Ollama atribuiu ao modelo instalado,
+e ele deve bater com `installation.installed_profile_digest_sha256` em
+`config/model-profiles.json` — divergência é erro na inicialização, não aviso. É
+esse mesmo campo que `OllamaRuntime.verify_profile` compara com `/api/tags`, por
+isso o digest vem de lá e não de um hash do texto do Modelfile: são valores
+diferentes, e só um deles identifica os pesos e os parâmetros de fato instalados.
 
 ```bash
 mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}/harness-2"
@@ -80,7 +85,7 @@ no setup.
 
 ### Tokenizer
 
-O orçamento de contexto (24576 tokens) depende de uma contagem real de tokens, não
+O orçamento de contexto (32768 tokens) depende de uma contagem real de tokens, não
 de estimativa por caractere. O harness carrega um `tokenizer.json` no formato
 HuggingFace: sem o arquivo, a aplicação sobe com
 `EngineReadiness(ready=False, reason_code="tokenizer_file_missing")` e recusa
@@ -134,10 +139,17 @@ setup, e a variável de ambiente tem precedência sobre ele.
 | `HARNESS_BRAVE_API_KEY_FILE` | — | Caminho absoluto de arquivo privado (modo `0600`, sem symlink) com a chave |
 | `HARNESS_HOST_CONFIG` | padrão do XDG | Caminho do HostConfig |
 | `HARNESS_ALLOWED_ORIGINS` | `127.0.0.1` e `localhost` na porta do servidor | Allowlist de Origin, separada por vírgula |
-| `HARNESS_SETUP_REOPEN` | `0` | Reabre o setup numa instalação já configurada |
+| `HARNESS_SETUP_REOPEN` | `0` | Reabre o setup numa instalação já configurada. `HARNESS_SETUP` é aceito como alias |
 
-Não existe `.env`: segredos entram pelo setup e ficam no CredentialStore, gravado
-com escrita atômica e permissão privada.
+Um arquivo `.env` na raiz preenche essas variáveis — copie de `.env.example`. Ele
+é lido do diretório de trabalho, como `config/harness.json`, e vale para os dois
+jeitos de subir o servidor. Variável já exportada no ambiente vence o arquivo, e
+nada de `config/*.json` entra por ali: contrato é selado por digest e não é
+ajustável por ambiente.
+
+Segredo continua sendo assunto do setup, que grava no CredentialStore com escrita
+atômica e permissão privada. Se ainda assim a chave da Brave estiver no `.env`,
+ele precisa ser `0600` — com bit de grupo ou de outros o harness recusa a partida.
 
 ### Exposição de rede
 
@@ -204,6 +216,25 @@ server {
 ```bash
 HARNESS_ALLOWED_ORIGINS=https://harness.example uv run harness
 ```
+
+## System prompt
+
+`SYSTEM-PROMPT.md`, na raiz, mostra o texto exato que o modelo recebe. O arquivo
+tem duas metades separadas pela marca `<!-- OPERATOR -->`:
+
+- **acima**, um espelho do prompt derivado dos contratos. É documentação: editar
+  ali não muda nada. Para mudar esse texto, mude `src/harness/system_prompt.py`
+  ou as capacidades em `config/model-profiles.json` e resele com
+  `uv run python scripts/seal-system-prompt.py` — o `{{TODAY}}` do espelho é
+  substituído pela data do host a cada Turn;
+- **abaixo**, o seu texto, anexado ao fim do prompt. Bloco vazio ou arquivo
+  ausente deixam o prompt exatamente como o de cima, byte a byte. O limite é
+  4000 caracteres, porque ele entra em todo Turn e disputa o orçamento de
+  contexto com o histórico.
+
+Cada execução de eval congela o digest desse bloco junto dos digests de
+contrato: dois braços com textos de Operator diferentes não são o mesmo sistema
+e não devem ser comparados como se fossem.
 
 ## Uso
 

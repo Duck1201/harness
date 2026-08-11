@@ -92,6 +92,7 @@ from .host_config import (
     CredentialStore,
     HostConfig,
     HostConfigStore,
+    load_env_file,
 )
 from .local_tools import RegistryToolExecutor
 from .observability_store import (
@@ -256,6 +257,7 @@ __all__ = [
     "evaluate_promotion_gate",
     "hash_password",
     "load_config",
+    "load_env_file",
     "load_eval_catalog",
     "paired_bootstrap_difference",
     "verify_password",

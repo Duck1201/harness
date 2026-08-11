@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from pathlib import Path
 from typing import cast
 
@@ -162,6 +163,7 @@ def test_every_fixture_type_in_the_dataset_has_a_runner() -> None:
                 config=config,
                 runtime=cast(ModelRuntime, None),
                 estimator=cast(TokenEstimator, None),
+                operator_notes="",
             ),
         )
     )
@@ -171,3 +173,29 @@ def test_every_fixture_type_in_the_dataset_has_a_runner() -> None:
     )
 
     assert unsupported == []
+
+
+def test_an_empty_operator_block_freezes_the_digest_of_the_empty_string() -> None:
+    runner = ModelCaseRunner(
+        config=load_config(),
+        runtime=cast(ModelRuntime, None),
+        estimator=cast(TokenEstimator, None),
+        operator_notes="",
+    )
+
+    # "sem texto do Operator" é fato medido, não campo ausente.
+    assert runner.operator_prompt_digest == hashlib.sha256(b"").hexdigest()
+
+
+def test_a_different_operator_block_freezes_a_different_digest() -> None:
+    config = load_config()
+
+    def digest_for(notes: str) -> str:
+        return ModelCaseRunner(
+            config=config,
+            runtime=cast(ModelRuntime, None),
+            estimator=cast(TokenEstimator, None),
+            operator_notes=notes,
+        ).operator_prompt_digest
+
+    assert digest_for("Prefira respostas curtas.") != digest_for("Responda sempre em inglês.")

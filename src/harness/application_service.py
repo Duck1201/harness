@@ -95,6 +95,7 @@ class ApplicationService:
         estimator: TokenEstimator,
         allowed_workspace_roots: Sequence[str | Path],
         brave_api_key: str | None = None,
+        operator_notes: str = "",
         benchmark_lease: BenchmarkLease | None = None,
         eval_service: EvalService | None = None,
         browser_capability: BrowserCapability | None = None,
@@ -115,6 +116,10 @@ class ApplicationService:
         self.config = config
         self.runtime = runtime
         self.estimator = estimator
+        # Default aqui e não em build_system_prompt: nesta fronteira "" é ausência
+        # declarada, enquanto lá dentro um default deixaria o corpus montar um
+        # prompt diferente do de produção sem ninguém notar.
+        self._operator_notes = operator_notes
         if brave_api_key is not None and not brave_api_key.strip():
             raise ValueError("brave_api_key must not be blank")
         normalized_brave_key = brave_api_key.strip() if brave_api_key is not None else None
@@ -135,6 +140,7 @@ class ApplicationService:
             config=config,
             runtime=runtime,
             estimator=estimator,
+            operator_notes=operator_notes,
         )
         if Path(self.eval_service.store.database).resolve() == Path(store.database).resolve():
             raise ValueError("EvalStore must be separate from ConversationStore")
@@ -514,13 +520,17 @@ class ApplicationService:
             tool_executor_factory=self._tool_executor_factory,
             context_builder=ContextBuilder(
                 self.estimator,
-                context_window=24576,
+                context_window=self.config.context.initial_budget_tokens,
                 output_budget=self.config.loop.max_output_tokens,
             ),
             event_sink=self._event_sink,
             # An engine is built per Turn, so a conversation that crosses midnight
             # gets the new date on its next Turn without anything having to refresh.
-            system_prompt=build_system_prompt(self.config, today=datetime.now(UTC).date()),
+            system_prompt=build_system_prompt(
+                self.config,
+                today=datetime.now(UTC).date(),
+                operator_notes=self._operator_notes,
+            ),
             tool_schemas=(),
             model_options={
                 "temperature": self.config.execution_route.sampling.temperature,
@@ -557,6 +567,7 @@ def _default_eval_service(
     config: HarnessConfig,
     runtime: ModelRuntime,
     estimator: TokenEstimator,
+    operator_notes: str,
 ) -> EvalService:
     project_root = Path(__file__).resolve().parents[2]
     catalog = load_eval_catalog(
@@ -575,6 +586,7 @@ def _default_eval_service(
         runtime=runtime,
         estimator=estimator,
         browser_guard=browser_guard,
+        operator_notes=operator_notes,
     )
     bench = BrowserBenchCaseRunner(registry=registry, browser_guard=browser_guard)
     # An experiment picks its fixtures by tag, so one tier has to cover several

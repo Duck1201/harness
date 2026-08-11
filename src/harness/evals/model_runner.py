@@ -9,6 +9,7 @@ looked one up, found nothing, and blocked the run with ``runner_not_configured``
 
 from __future__ import annotations
 
+import hashlib
 import re
 import tempfile
 import time
@@ -255,12 +256,18 @@ class ModelCaseRunner:
         config: HarnessConfig,
         runtime: ModelRuntime,
         estimator: TokenEstimator,
+        operator_notes: str,
         runtime_readiness: EngineReadiness | None = None,
         browser_guard: BraveEgressGuard | None = None,
     ) -> None:
         self._config = config
         self._runtime = runtime
         self._estimator = estimator
+        self._operator_notes = operator_notes
+        # Congelado por run ao lado dos digests de contrato: bloco vazio recebe o
+        # digest da string vazia, porque "sem texto do Operator" é fato medido e
+        # não campo ausente.
+        self.operator_prompt_digest = hashlib.sha256(operator_notes.encode("utf-8")).hexdigest()
         self._runtime_readiness = runtime_readiness or EngineReadiness(ready=True)
         self._browser_guard = browser_guard or BraveEgressGuard()
         self._language_detector = PortugueseDetector()
@@ -299,11 +306,15 @@ class ModelCaseRunner:
                     tool_executor=executor,
                     context_builder=ContextBuilder(
                         self._estimator,
-                        context_window=_CONTEXT_WINDOW,
+                        context_window=self._config.context.initial_budget_tokens,
                         output_budget=self._config.loop.max_output_tokens,
                     ),
                     event_sink=NullEventSink(),
-                    system_prompt=build_system_prompt(self._config, today=BENCH_DATE),
+                    system_prompt=build_system_prompt(
+                        self._config,
+                        today=BENCH_DATE,
+                        operator_notes=self._operator_notes,
+                    ),
                     tool_schemas=self._tool_schemas(policy),
                     model_options={
                         "temperature": self._config.execution_route.sampling.temperature,
@@ -407,10 +418,6 @@ class ModelCaseRunner:
                 for definition in registry.model_tools
             }
         )
-
-
-# harness.json#context.initial_budget_tokens, the same value ApplicationService uses.
-_CONTEXT_WINDOW = 24576
 
 
 def _bench_request(request: str, fixture: RegressionFixture, bench: BenchServer) -> str:

@@ -45,6 +45,7 @@ from harness.evals import (  # noqa: E402
     ModelCaseRunner,
     load_eval_catalog,
 )
+from harness.system_prompt import load_operator_notes  # noqa: E402
 
 
 async def _warm_up(runtime: OllamaRuntime) -> None:
@@ -101,17 +102,19 @@ async def run(
     )
     guard = BraveEgressGuard()
     registry = config.tool_registry
+    model_runner = ModelCaseRunner(
+        config=config,
+        runtime=runtime,
+        estimator=estimator,
+        operator_notes=load_operator_notes(ROOT / "SYSTEM-PROMPT.md"),
+        runtime_readiness=EngineReadiness(ready=True),
+        browser_guard=guard,
+    )
     live = CompositeCaseRunner(
         (
             ContractCaseRunner(registry=registry),
             BrowserBenchCaseRunner(registry=registry, browser_guard=guard),
-            ModelCaseRunner(
-                config=config,
-                runtime=runtime,
-                estimator=estimator,
-                runtime_readiness=EngineReadiness(ready=True),
-                browser_guard=guard,
-            ),
+            model_runner,
         )
     )
     service = EvalService(
@@ -129,6 +132,12 @@ async def run(
         )
         print(
             f"run {run.id} seeds={list(run.seeds)} tier={tier.value} phase={phase.value}",
+            file=sys.stderr,
+        )
+        # Congelado junto dos digests de contrato quando o resultado é transcrito
+        # para evals/experiments.json#results[].frozen.
+        print(
+            f"operator_prompt_digest={model_runner.operator_prompt_digest}",
             file=sys.stderr,
         )
         await service.start(run.id)

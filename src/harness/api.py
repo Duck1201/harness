@@ -41,11 +41,18 @@ from .evals import (
     EvalTier,
     RegressionDraft,
 )
-from .host_config import CredentialStore, HostConfig, HostConfigStore, default_state_dir
+from .host_config import (
+    CredentialStore,
+    HostConfig,
+    HostConfigStore,
+    default_state_dir,
+    load_env_file,
+)
 from .observability_store import ObservabilityStore
 from .ollama_runtime import OllamaRuntime
 from .ports import ConfirmationRequest
 from .setup import SetupController, SetupError, SetupSubmission
+from .system_prompt import load_operator_notes
 from .token_estimator import HuggingFaceTokenEstimator
 
 DEFAULT_PORT = 8765
@@ -171,6 +178,10 @@ def create_app(
     session_controller: SessionController | None = None,
     credential_store: CredentialStore | None = None,
 ) -> FastAPI:
+    # `uv run uvicorn harness.api:create_app --factory` é um caminho documentado e
+    # não passa por __main__, então o .env também é carregado aqui. A segunda
+    # chamada é no-op: load_env_file nunca sobrescreve o que já está no ambiente.
+    load_env_file()
     if max_body_bytes < 1:
         raise ValueError("max_body_bytes must be positive")
     effective_origins = tuple(allowed_origins or ())
@@ -782,6 +793,7 @@ def _default_service(
                 host_config.brave_credential_ref if host_config is not None else None
             ),
         ),
+        operator_notes=load_operator_notes(),
     )
 
 

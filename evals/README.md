@@ -39,7 +39,8 @@ O resultado principal é a tarefa completa, não apenas a primeira tool call. Ca
 runner deve registrar:
 
 1. RuntimeProfile e digest completos;
-2. ExecutionRoute, fixture, dataset_version e digests de contratos;
+2. ExecutionRoute, fixture, dataset_version, digests de contratos e o
+   digest do bloco do Operator em `SYSTEM-PROMPT.md`;
 3. sequência de AgentSteps, decisões e model_tools;
 4. validação de argumentos e efeitos realmente aplicados;
 5. TerminalOutcome e TaskVerdict, sem conflar os dois;
@@ -52,8 +53,9 @@ métricas recebe somente IDs, hashes, tamanhos, contagens, classes e tempos.
 
 1. Crie os dois stores, uma Conversation e um Workspace exclusivos por braço.
 2. Use path temporário curto e de mesmo comprimento entre os braços.
-3. Fixe RuntimeProfile, ExecutionRoute, dataset_version e digests de dataset,
-   harness e registry.
+3. Fixe RuntimeProfile, ExecutionRoute, dataset_version, os digests de dataset,
+   harness e registry, e o digest do bloco do Operator — dois braços com prompts
+   de Operator diferentes não são o mesmo sistema.
 4. Randomize a ordem, registre seed/ordem e não reutilize cache entre braços.
 5. Execute primeiro o piloto de 15 casos por braço.
 6. Trate o piloto apenas como direção.

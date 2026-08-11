@@ -14,8 +14,9 @@ def test_config_loader_reads_harness_profiles_and_tool_registry() -> None:
     assert config.runtime_profile.model.id == "mitos:latest"
     assert (
         config.runtime_profile.profile_digest_sha256
-        == "aabca1b8777bc4e0a6a491fb5ab7288bcc1537bad35c74ff041879fa11705bff"
+        == "79d1056f6cb28d32c470a2206e76c83985dacabcac6bc141d088c15d344817f4"
     )
+    assert config.context.initial_budget_tokens == 32768
     assert [tool.name for tool in config.tool_registry.model_tools] == [
         "read_file",
         "write_file",

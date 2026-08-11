@@ -14,6 +14,7 @@ is told becomes impossible rather than merely unlikely.
 
 from collections.abc import Mapping
 from datetime import date
+from pathlib import Path
 
 from .config import HarnessConfig
 
@@ -67,12 +68,58 @@ _MODEL_FACING_LIMITS: Mapping[str, str] = {
 }
 
 
-def build_system_prompt(config: HarnessConfig, *, today: date) -> str:
+OPERATOR_MARKER = "<!-- OPERATOR -->"
+
+# ponytail: teto em caracteres, não em tokens — o estimator exige o tokenizer
+# carregado, que o composition root ainda não tem quando isto roda. São ~1k tokens
+# num orçamento de 32768 (config/harness.json#context.initial_budget_tokens).
+# Trocar por contagem real de tokens se o teto errar na prática.
+_OPERATOR_NOTES_LIMIT = 4000
+
+# A data no espelho versionado seria falsa amanhã, então ele guarda um marcador no
+# lugar dela. Substituir por uma data fixa e trocar de volta mantém uma única
+# função montando o prompt, que é o ponto do ADR 0007.
+_MIRROR_DATE = date(2026, 1, 1)
+_MIRROR_DATE_PLACEHOLDER = "{{TODAY}}"
+
+
+def load_operator_notes(path: Path = Path("SYSTEM-PROMPT.md")) -> str:
+    """O texto que o Operator anexou ao prompt, ou ``""`` quando não há arquivo.
+
+    Ler o arquivo é trabalho do composition root, não de ``build_system_prompt``:
+    o texto chega lá por argumento pelo mesmo motivo que a data chega, para que
+    corpus e produção não passem a montar prompts diferentes em silêncio.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+    _, separator, notes = text.partition(OPERATOR_MARKER)
+    if not separator:
+        raise ValueError(
+            f"{path} perdeu a marca {OPERATOR_MARKER} e não dá para saber onde "
+            "começa o texto do Operator. Restaure com "
+            "`uv run python scripts/seal-system-prompt.py` ou apague o arquivo."
+        )
+    stripped = notes.strip()
+    if len(stripped) > _OPERATOR_NOTES_LIMIT:
+        raise ValueError(
+            f"O bloco do Operator em {path} tem {len(stripped)} caracteres e o "
+            f"limite é {_OPERATOR_NOTES_LIMIT}: ele entra em todo Turn e comeria "
+            "o orçamento de contexto antes do histórico."
+        )
+    return stripped
+
+
+def build_system_prompt(config: HarnessConfig, *, today: date, operator_notes: str) -> str:
     """The prompt for the active RuntimeProfile, capability lines included.
 
     ``today`` has no default on purpose: a prompt that reads the clock by itself
     would make every bench run and every recorded trace differ by the day it ran.
-    Production passes the host clock, the corpus passes a fixed date.
+    Production passes the host clock, the corpus passes a fixed date. For the same
+    reason ``operator_notes`` is required and never read from disk here: an empty
+    string is a stated absence, and a bench run that forgot the Operator's text
+    would measure a different system than the one the Operator runs.
     """
     capabilities = config.runtime_profile.capabilities
     limits = [
@@ -80,7 +127,27 @@ def build_system_prompt(config: HarnessConfig, *, today: date) -> str:
         for name, sentence in _MODEL_FACING_LIMITS.items()
         if (capability := capabilities.get(name)) is None or capability.support != "supported"
     ]
-    return " ".join([_BASE, _RESULT_AUTHORITY, _MUTATION_DIRECTNESS, _current_date(today), *limits])
+    # Lista vazia e não `operator_notes` direto: uma string vazia no join deixaria
+    # um espaço sobrando no fim e o prompt sem bloco deixaria de ser o de sempre.
+    extra = [operator_notes] if operator_notes else []
+    return " ".join(
+        [_BASE, _RESULT_AUTHORITY, _MUTATION_DIRECTNESS, _current_date(today), *limits, *extra]
+    )
 
 
-__all__ = ["build_system_prompt"]
+def derived_prompt_mirror(config: HarnessConfig) -> str:
+    """O prompt derivado com a data trocada por um marcador, para SYSTEM-PROMPT.md.
+
+    O espelho é documentação: quem monta o prompt de verdade continua sendo
+    ``build_system_prompt``, e é ela que este texto reproduz.
+    """
+    prompt = build_system_prompt(config, today=_MIRROR_DATE, operator_notes="")
+    return prompt.replace(_MIRROR_DATE.isoformat(), _MIRROR_DATE_PLACEHOLDER)
+
+
+__all__ = [
+    "OPERATOR_MARKER",
+    "build_system_prompt",
+    "derived_prompt_mirror",
+    "load_operator_notes",
+]

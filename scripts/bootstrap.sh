@@ -30,7 +30,15 @@ for profile in profiles["runtime_profiles"]:
         print(profile["installation"]["installed_profile_digest_sha256"])
         break
 ')
-  installed_digest=$(ollama show mitos --modelfile | sha256sum | cut -d' ' -f1)
+  # O digest do manifesto, a mesma coisa que OllamaRuntime.verify_profile compara
+  # com /api/tags. Hash do texto do Modelfile é outro valor e não serve aqui.
+  installed_digest=$(curl -s http://127.0.0.1:11434/api/tags | python3 -c '
+import json, sys
+for model in json.load(sys.stdin)["models"]:
+    if model["name"] == "mitos:latest":
+        print(model["digest"])
+        break
+')
   if [ "$installed_digest" != "$expected_digest" ]; then
     echo "aviso: digest do perfil Ollama instalado não bate com config/model-profiles.json" >&2
     echo "  esperado: $expected_digest" >&2

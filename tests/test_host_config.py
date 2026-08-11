@@ -1,4 +1,5 @@
 import json
+import os
 import stat
 from pathlib import Path
 
@@ -6,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 import harness.host_config as host_config_module
-from harness import CredentialStore, HostConfig, HostConfigStore
+from harness import CredentialStore, HostConfig, HostConfigStore, load_env_file
 
 
 def test_host_config_round_trips_as_private_versioned_json(tmp_path: Path) -> None:
@@ -134,3 +135,92 @@ def test_host_config_rejects_nonexistent_roots_relative_paths_and_invalid_origin
             state_dir=(tmp_path / "state").resolve(),
             allowed_origins=("http://operator.test/path",),
         )
+
+
+@pytest.fixture
+def environ(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    """Um os.environ descartável: load_env_file grava de verdade no processo."""
+    replacement = dict(os.environ)
+    monkeypatch.setattr(os, "environ", replacement)
+    return replacement
+
+
+def test_an_exported_variable_wins_over_the_env_file(
+    tmp_path: Path, environ: dict[str, str]
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("HARNESS_PORT=8899\nHARNESS_OLLAMA_URL=http://file\n", encoding="utf-8")
+    environ["HARNESS_PORT"] = "9001"
+    environ.pop("HARNESS_OLLAMA_URL", None)
+
+    load_env_file(env_file)
+
+    assert environ["HARNESS_PORT"] == "9001"
+    assert environ["HARNESS_OLLAMA_URL"] == "http://file"
+
+
+def test_env_file_keeps_quoted_values_and_paths_with_spaces(
+    tmp_path: Path, environ: dict[str, str]
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        'HARNESS_WORKSPACE_ROOTS="/home/a b/c"\nHARNESS_STATE_DIR=/home/a b/state\n',
+        encoding="utf-8",
+    )
+    environ.pop("HARNESS_WORKSPACE_ROOTS", None)
+    environ.pop("HARNESS_STATE_DIR", None)
+
+    load_env_file(env_file)
+
+    assert environ["HARNESS_WORKSPACE_ROOTS"] == "/home/a b/c"
+    assert environ["HARNESS_STATE_DIR"] == "/home/a b/state"
+
+
+def test_env_file_skips_comments_blank_lines_and_export(
+    tmp_path: Path, environ: dict[str, str]
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("# comentário\n\nexport HARNESS_PORT=9100\n", encoding="utf-8")
+    environ.pop("HARNESS_PORT", None)
+
+    load_env_file(env_file)
+
+    assert environ["HARNESS_PORT"] == "9100"
+
+
+def test_a_missing_env_file_is_not_an_error(tmp_path: Path, environ: dict[str, str]) -> None:
+    before = dict(environ)
+
+    assert load_env_file(tmp_path / "nao-existe") is None
+    assert environ == before
+
+
+def test_a_malformed_env_line_is_refused_naming_the_line(
+    tmp_path: Path, environ: dict[str, str]
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("HARNESS_PORT=9100\nHARNESS_HOST 127.0.0.1\n", encoding="utf-8")
+    before = dict(environ)
+
+    with pytest.raises(ValueError, match="linha 2"):
+        load_env_file(env_file)
+    # Recusa é total: nenhuma linha do arquivo entra antes do erro.
+    assert environ == before
+
+
+def test_a_secret_in_a_world_readable_env_file_is_refused(
+    tmp_path: Path, environ: dict[str, str]
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("HARNESS_BRAVE_API_KEY=brave-secret\n", encoding="utf-8")
+    env_file.chmod(0o644)
+    environ.pop("HARNESS_BRAVE_API_KEY", None)
+
+    with pytest.raises(ValueError, match="chmod 600"):
+        load_env_file(env_file)
+    assert "HARNESS_BRAVE_API_KEY" not in environ
+
+    env_file.chmod(0o600)
+    load_env_file(env_file)
+
+    assert environ["HARNESS_BRAVE_API_KEY"] == "brave-secret"

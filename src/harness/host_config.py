@@ -146,6 +146,48 @@ class CredentialStore:
             return None
 
 
+# Nomes cuja presença num arquivo em texto puro é uma regressão contra o
+# CredentialStore, que grava 0600 e recusa qualquer outro modo na leitura.
+_ENV_SECRET_NAMES = frozenset({"HARNESS_BRAVE_API_KEY"})
+
+
+def load_env_file(path: Path = Path(".env")) -> None:
+    """Preenche o ambiente com um arquivo ``NOME=valor`` da raiz do projeto.
+
+    Variável já exportada vence o arquivo: exportar é decisão explícita do
+    Operator, e o arquivo só preenche o que ninguém disse. Nada de
+    ``config/*.json`` entra por aqui — contrato não é ajustável por ambiente.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return
+    pending: dict[str, str] = {}
+    for number, raw in enumerate(text.splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        name, separator, value = line.partition("=")
+        name = name.removeprefix("export ").strip()
+        if not separator or not name.isidentifier():
+            raise ValueError(f"{path} linha {number}: esperado NOME=valor")
+        pending[name] = _unquote(value.strip())
+    if pending.keys() & _ENV_SECRET_NAMES and path.stat().st_mode & 0o077:
+        raise ValueError(
+            f"{path} define uma chave de API e está legível por outros. "
+            "Rode `chmod 600 .env` ou entregue a chave pelo setup, que grava no "
+            "CredentialStore com permissão privada."
+        )
+    for name, value in pending.items():
+        os.environ.setdefault(name, value)
+
+
+def _unquote(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    return value
+
+
 def default_host_config_path(environ: Mapping[str, str] | None = None) -> Path:
     environment = os.environ if environ is None else environ
     configured = environment.get("XDG_CONFIG_HOME")

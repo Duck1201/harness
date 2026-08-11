@@ -49,7 +49,7 @@ from harness.evals import (  # noqa: E402
     load_eval_catalog,
 )
 from harness.evals.runner import EvalCaseSpec  # noqa: E402
-from harness.system_prompt import build_system_prompt  # noqa: E402
+from harness.system_prompt import build_system_prompt, load_operator_notes  # noqa: E402
 
 # The protocol's recorded orders. A seed is what varies a local run, so more
 # repetitions of the same seed add copies, not evidence.
@@ -193,6 +193,7 @@ async def collect(seeds: Sequence[int], output: Path, tokenizer: Path) -> int:
         return 2
 
     await _warm_up(runtime)
+    operator_notes = load_operator_notes(ROOT / "SYSTEM-PROMPT.md")
     runner = ModelCaseRunner(
         config=config,
         runtime=runtime,
@@ -200,12 +201,13 @@ async def collect(seeds: Sequence[int], output: Path, tokenizer: Path) -> int:
             tokenizer,
             expected_sha256=hashlib.sha256(tokenizer.read_bytes()).hexdigest(),
         ),
+        operator_notes=operator_notes,
         runtime_readiness=EngineReadiness(ready=True),
         browser_guard=BraveEgressGuard(),
     )
     fixtures = [item for item in catalog.dataset.fixtures if runner.supports(item.type)]
     offered = _offered_tools(config)
-    system_prompt = build_system_prompt(config, today=BENCH_DATE)
+    system_prompt = build_system_prompt(config, today=BENCH_DATE, operator_notes=operator_notes)
     output.parent.mkdir(parents=True, exist_ok=True)
     counts: dict[str, int] = {}
     try:

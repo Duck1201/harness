@@ -119,7 +119,7 @@
     }
   },
   "context": {
-    "initial_budget_tokens": 24576,
+    "initial_budget_tokens": 32768,
     "budget_includes": [
       "system",
       "tool_schemas",

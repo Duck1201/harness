@@ -82,7 +82,7 @@ def test_context_deduplicates_only_result_data_and_preserves_provenance() -> Non
         ),
     )
 
-    context = ContextBuilder(FakeEstimator()).build(
+    context = ContextBuilder(FakeEstimator(), context_window=32768).build(
         system="system",
         tool_schemas=(ToolSchema("read_file", "read", {"type": "object"}),),
         completed_turns=(previous,),

@@ -13,6 +13,7 @@ uv run ruff check . && uv run ruff format --check .
 uv run pyright                                 # strict, cobre src/ e tests/
 node scripts/validate-contracts.mjs            # coerência docs <-> contratos JSON
 node scripts/validate-contracts.mjs --write    # resela digests derivados
+uv run python scripts/seal-system-prompt.py    # resela o espelho de SYSTEM-PROMPT.md
 cd web && pnpm test && pnpm exec tsc -b && pnpm build
 harness                                        # sobe o servidor (uvicorn)
 ```
@@ -93,7 +94,11 @@ CanonicalHistory -> exatamente um `TerminalOutcome`.
 O `system_prompt` é **derivado dos contratos e de fatos do host** (ADR 0007), não
 escrito à mão. A data corrente é o fato do host: `build_system_prompt` a recebe
 como argumento obrigatório — produção passa o relógio em UTC, o corpus passa
-`BENCH_DATE` — para que o prompt do bench não mude sozinho a cada dia.
+`BENCH_DATE` — para que o prompt do bench não mude sozinho a cada dia. O texto do
+Operator entra pelo mesmo caminho: fica abaixo de `<!-- OPERATOR -->` em
+`SYSTEM-PROMPT.md`, é lido no composition root e chega por argumento. O resto do
+arquivo é espelho selado por `scripts/seal-system-prompt.py`, e um teste falha
+quando ele fica velho.
 
 ## Convenções
 

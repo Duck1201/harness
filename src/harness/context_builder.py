@@ -50,7 +50,7 @@ class ContextBuilder:
         self,
         estimator: TokenEstimator,
         *,
-        context_window: int = 24576,
+        context_window: int,
         output_budget: int = 8192,
     ) -> None:
         if context_window <= output_budget:

@@ -36,6 +36,10 @@ class LoopConfig(ConfigModel):
     offer_tools_on_final_step: bool
 
 
+class ContextConfig(ConfigModel):
+    initial_budget_tokens: int
+
+
 class ModelIdentityConfig(ConfigModel):
     id: str
     base_model: str
@@ -126,6 +130,7 @@ class _HarnessFile(ConfigModel):
     default_execution_route: str
     execution_routes: tuple[ExecutionRouteConfig, ...]
     loop: LoopConfig
+    context: ContextConfig
 
 
 class HarnessConfig(ConfigModel):
@@ -135,6 +140,7 @@ class HarnessConfig(ConfigModel):
     default_execution_route: str
     execution_routes: tuple[ExecutionRouteConfig, ...]
     loop: LoopConfig
+    context: ContextConfig
     model_profiles: ModelProfilesConfig
     tool_registry: ToolRegistryConfig
 
@@ -180,6 +186,7 @@ def load_config(path: str | Path = Path("config/harness.json")) -> HarnessConfig
         default_execution_route=harness.default_execution_route,
         execution_routes=harness.execution_routes,
         loop=harness.loop,
+        context=harness.context,
         model_profiles=profiles,
         tool_registry=registry,
     )

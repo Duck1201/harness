@@ -636,6 +636,24 @@ if (profilesDocument && harness && registry && fixturesDocument && experimentsDo
   );
   check(Array.isArray(experimentsDocument.results), "experiments.results deve existir, mesmo vazio");
 
+  // `results` está fora do digest_contract.scope: uma medição registrada não pode
+  // mudar de valor ao reselar. Sem selo, a única defesa contra um campo digitado
+  // errado é conferir o nome contra freeze_per_run. Regra de superconjunto, para
+  // que uma run anterior a um campo novo continue válida com o que de fato teve.
+  const frozenFields = new Set(experimentsDocument.promotion_protocol?.freeze_per_run ?? []);
+  for (const result of experimentsDocument.results ?? []) {
+    for (const [field, value] of Object.entries(result.frozen ?? {})) {
+      check(
+        frozenFields.has(field),
+        `${result.experiment_id}: frozen.${field} não está em freeze_per_run`,
+      );
+      check(
+        !field.endsWith("_digest") || /^[0-9a-f]{64}$/.test(String(value)),
+        `${result.experiment_id}: frozen.${field} não é um SHA-256`,
+      );
+    }
+  }
+
   const experiments = experimentsDocument.experiments ?? [];
   unique(experiments.map((experiment) => experiment.id), "experimentos");
   for (const experiment of experiments) {
