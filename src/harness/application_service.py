@@ -142,7 +142,9 @@ class ApplicationService:
         self._workers: dict[str, asyncio.Task[None]] = {}
         self._stop_signals: dict[str, _CooperativeStopSignal] = {}
         self._worker_lock = asyncio.Lock()
-        self._workspace_coordinator = WorkspaceCoordinator(store)
+        self._workspace_coordinator = WorkspaceCoordinator(
+            store, config.tool_registry.effects_by_tool
+        )
         if browser_capability is None or browser_egress_guard is None:
             brave_guard = BraveEgressGuard()
             browser_capability = browser_capability or BraveBrowserCapability(guard=brave_guard)

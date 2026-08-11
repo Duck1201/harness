@@ -9,6 +9,7 @@ from harness import (
     ToolResult,
     ToolResultStatus,
     WorkspaceCoordinator,
+    load_config,
 )
 
 
@@ -61,7 +62,7 @@ def test_workspace_coordinator_serializes_mutations_across_two_conversations(
         workspace = await store.create_workspace("shared-workspace")
         conversation_a = await store.create_conversation(workspace.workspace_id)
         conversation_b = await store.create_conversation(workspace.workspace_id)
-        coordinator = WorkspaceCoordinator(store)
+        coordinator = WorkspaceCoordinator(store, load_config().tool_registry.effects_by_tool)
         executor = ConcurrentExecutor()
 
         mutation_results = await asyncio.gather(

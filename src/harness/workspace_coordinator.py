@@ -1,16 +1,17 @@
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from .conversation_store import ConversationStore
 from .domain import ToolCall, ToolResult, ToolResultStatus
 from .ports import ToolExecutor
 
-_MUTATION_TOOLS = frozenset({"write_file", "edit"})
+_MUTATION_EFFECT = "workspace_write"
 
 
 class WorkspaceCoordinator:
-    def __init__(self, store: ConversationStore) -> None:
+    def __init__(self, store: ConversationStore, effects: Mapping[str, Sequence[str]]) -> None:
         self._store = store
+        self._effects = effects
         self._mutation_locks: dict[str, asyncio.Lock] = {}
 
     async def execute(
@@ -19,7 +20,7 @@ class WorkspaceCoordinator:
         call: ToolCall,
         executor: ToolExecutor,
     ) -> ToolResult:
-        if call.name not in _MUTATION_TOOLS:
+        if _MUTATION_EFFECT not in self._effects.get(call.name, ()):
             return await executor.execute(call)
 
         lock = self._mutation_locks.setdefault(workspace_id, asyncio.Lock())
