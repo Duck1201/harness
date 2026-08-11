@@ -60,7 +60,9 @@ export interface HarnessClient {
     conversationId: string,
     confirmationId: string,
     approved: boolean,
+    waive?: boolean,
   ): Promise<void>;
+  revokeConfirmationWaiver(conversationId: string, effect: string): Promise<void>;
   stop(conversationId: string): Promise<void>;
   addFeedback(
     conversationId: string,

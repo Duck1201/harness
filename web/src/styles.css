@@ -2681,70 +2681,166 @@ details[open] > summary .summary-chevron {
   }
 }
 
-/* Operator confirmation for a write that carries UntrustedWebTaint */
-.confirmation-card {
-  max-width: 720px;
-  margin: 16px auto 0;
-  padding: 14px 16px;
-  border: 1px solid #ead7a4;
-  border-radius: var(--radius);
-  background: var(--amber-soft);
-  box-shadow: var(--shadow-soft);
-}
-
-.confirmation-card header {
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
   display: flex;
   align-items: center;
-  gap: 7px;
+  justify-content: center;
+  padding: 28px 20px;
+  background: rgb(21 16 30 / 34%);
+  backdrop-filter: blur(3px);
+}
+
+.confirmation-dialog {
+  display: flex;
+  width: min(640px, 100%);
+  max-height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--paper);
+  box-shadow: 0 26px 70px rgb(30 17 55 / 20%);
+}
+
+.confirmation-dialog header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 18px 20px 0;
+}
+
+.confirmation-mark {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  flex: none;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--amber-soft);
   color: var(--amber);
 }
 
-.confirmation-card h2 {
+.confirmation-dialog h2 {
   margin: 0;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 16px;
+  font-weight: 720;
+  letter-spacing: -0.03em;
 }
 
-.confirmation-card p {
-  margin: 8px 0 10px;
-  color: var(--ink);
+.confirmation-dialog > p {
+  margin: 8px 20px 0;
+  color: var(--muted);
   font-size: 11px;
+  line-height: 1.55;
+}
+
+.confirmation-body {
+  display: grid;
+  gap: 11px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 20px 4px;
+}
+
+.confirmation-call h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.confirmation-call h3 code {
+  padding: 2px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--wash);
+  font-size: 10px;
+}
+
+.confirmation-target {
+  color: var(--soft);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.confirmation-target b {
+  color: var(--muted);
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.confirmation-arguments {
+  margin: 0;
+  overflow-x: auto;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fcfbfd;
+  font-size: 10px;
   line-height: 1.5;
 }
 
-.confirmation-calls {
-  margin: 0 0 12px;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 8px;
-}
-
-.confirmation-calls li {
-  padding: 9px 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
-  background: var(--paper);
-}
-
-.confirmation-calls code {
-  font-size: 10px;
-  font-weight: 680;
-}
-
-.confirmation-calls pre {
+.confirmation-note {
   margin: 6px 0 0;
-  overflow-x: auto;
+  color: var(--soft);
+  font-size: 10px;
+}
+
+.confirmation-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+  background: #fcfbfd;
+}
+
+.confirmation-waiver {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   color: var(--muted);
   font-size: 10px;
-  white-space: pre-wrap;
-  word-break: break-word;
+}
+
+.confirmation-waiver input {
+  width: 13px;
+  height: 13px;
+  accent-color: var(--purple);
 }
 
 .confirmation-actions {
   display: flex;
-  justify-content: flex-end;
   gap: 8px;
+  margin-left: auto;
+}
+
+.waiver-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid #ead7a4;
+  border-radius: 999px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.waiver-chip:not(:disabled):hover {
+  border-color: var(--amber);
 }
 
 /* First-boot setup */

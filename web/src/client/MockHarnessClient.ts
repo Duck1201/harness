@@ -141,6 +141,7 @@ export class MockHarnessClient implements HarnessClient {
   ];
   private feedback: FeedbackRecord[] = [];
   private confirmations = new Map<string, PendingConfirmation>();
+  private waivers = new Set<string>();
   private password = "";
   private sessionStatus: SessionStatus = {
     authentication_required: false,
@@ -330,6 +331,8 @@ export class MockHarnessClient implements HarnessClient {
         ? this.feedback.filter((item) => item.conversation_id === selected.id)
         : [],
       pendingConfirmation: selected ? this.confirmations.get(selected.id) ?? null : null,
+      confirmationWaivers:
+        selected && this.waivers.has(selected.id) ? ["workspace_write"] : [],
       execution: {
         defaultExecutionRoute: "local_web_tools",
         runtimeProfile: "local_mitos_ollama_reproduction",
@@ -472,13 +475,19 @@ export class MockHarnessClient implements HarnessClient {
   async resolveConfirmation(
     conversationId: string,
     confirmationId: string,
-    _approved: boolean,
+    approved: boolean,
+    waive = false,
   ) {
     const pending = this.confirmations.get(conversationId);
     if (!pending || pending.id !== confirmationId) {
       throw new Error("confirmation_not_pending");
     }
+    if (approved && waive) this.waivers.add(conversationId);
     this.confirmations.delete(conversationId);
+  }
+
+  async revokeConfirmationWaiver(conversationId: string, _effect: string) {
+    this.waivers.delete(conversationId);
   }
 
   /** Seeds a pending confirmation so the demo mode can exercise the approval card. */

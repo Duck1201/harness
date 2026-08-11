@@ -95,6 +95,14 @@ export interface FeedbackRecord {
   created_at: string;
 }
 
+export interface ConfirmationPreview {
+  tool_call_id: string;
+  path: string;
+  kind: "create" | "replace" | "edit";
+  diff: string;
+  truncated: boolean;
+}
+
 export interface PendingConfirmation {
   id: string;
   conversation_id: string;
@@ -106,6 +114,7 @@ export interface PendingConfirmation {
     name: string;
     arguments: Record<string, JsonValue>;
   }>;
+  previews: ConfirmationPreview[];
 }
 
 export interface ApiChatSnapshot {
@@ -116,6 +125,7 @@ export interface ApiChatSnapshot {
   turns: Turn[];
   feedback: FeedbackRecord[];
   pending_confirmation: PendingConfirmation | null;
+  confirmation_waivers: string[];
 }
 
 export interface WorkspaceGroup {
@@ -203,6 +213,7 @@ export interface ChatSnapshot {
   turns: Turn[];
   feedback: FeedbackRecord[];
   pendingConfirmation: PendingConfirmation | null;
+  confirmationWaivers: string[];
   execution?: ExecutionSnapshot;
 }
 

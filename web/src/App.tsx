@@ -38,6 +38,7 @@ import {
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { harnessClient, type HarnessClient } from "./client";
+import { ConfirmationDialog } from "./components/ConfirmationDialog";
 import { PendingQueue } from "./components/PendingQueue";
 import { ToolCallCard } from "./components/ToolCallCard";
 import type {
@@ -53,7 +54,6 @@ import type {
   FeedbackRecord,
   Grant,
   JsonValue,
-  PendingConfirmation,
   SessionStatus,
   SettingsSnapshot,
   SetupStatus,
@@ -674,11 +674,19 @@ function ChatArea({
     });
   };
 
-  const resolveConfirmation = (approved: boolean) => {
+  const resolveConfirmation = (approved: boolean, waive: boolean) => {
     const pending = snapshot.pendingConfirmation;
     if (!snapshot.conversationId || !pending) return;
     void runAction(approved ? "confirm-approve" : "confirm-deny", async () => {
-      await client.resolveConfirmation(snapshot.conversationId!, pending.id, approved);
+      await client.resolveConfirmation(snapshot.conversationId!, pending.id, approved, waive);
+      await refresh();
+    });
+  };
+
+  const revokeConfirmationWaiver = () => {
+    if (!snapshot.conversationId) return;
+    void runAction("waiver-revoke", async () => {
+      await client.revokeConfirmationWaiver(snapshot.conversationId!, "workspace_write");
       await refresh();
     });
   };
@@ -741,6 +749,18 @@ function ChatArea({
                 busyAction={busyAction}
                 onToggle={toggleGrant}
               />
+              {snapshot.confirmationWaivers.includes("workspace_write") && (
+                <button
+                  className="waiver-chip"
+                  type="button"
+                  onClick={revokeConfirmationWaiver}
+                  disabled={busyAction === "waiver-revoke"}
+                  title="Voltar a confirmar cada escrita nesta conversa"
+                >
+                  <ShieldAlert size={12} />
+                  Escritas sem confirmação
+                </button>
+              )}
               <div className="conversation-actions" aria-label="Ações da conversa">
                 <button
                   className="icon-button"
@@ -831,13 +851,6 @@ function ChatArea({
                 onEdit={editPending}
                 onCancel={cancelPending}
               />
-              {snapshot.pendingConfirmation && (
-                <ConfirmationCard
-                  confirmation={snapshot.pendingConfirmation}
-                  busyAction={busyAction}
-                  onResolve={resolveConfirmation}
-                />
-              )}
             </div>
             <Composer
               isRunning={isRunning}
@@ -850,6 +863,13 @@ function ChatArea({
       </section>
 
       <ChatContext snapshot={snapshot} />
+      {snapshot.pendingConfirmation && (
+        <ConfirmationDialog
+          confirmation={snapshot.pendingConfirmation}
+          busy={busyAction === "confirm-approve" || busyAction === "confirm-deny"}
+          onResolve={resolveConfirmation}
+        />
+      )}
     </div>
   );
 }
@@ -1090,55 +1110,6 @@ function GrantChips({
   );
 }
 
-function ConfirmationCard({
-  confirmation,
-  busyAction,
-  onResolve,
-}: {
-  confirmation: PendingConfirmation;
-  busyAction: string | null;
-  onResolve: (approved: boolean) => void;
-}) {
-  const busy = busyAction === "confirm-approve" || busyAction === "confirm-deny";
-  return (
-    <section className="confirmation-card" role="alertdialog" aria-labelledby="confirmation-title">
-      <header>
-        <ShieldAlert size={16} />
-        <h2 id="confirmation-title">Escrita com dado da web</h2>
-      </header>
-      <p>
-        O Turn leu conteúdo da web e agora quer escrever no Workspace. Aprovar vale só
-        para esta chamada: não cria grant nem amplia acesso.
-      </p>
-      <ul className="confirmation-calls">
-        {confirmation.tool_calls.map((call) => (
-          <li key={call.id}>
-            <code>{call.name}</code>
-            <pre>{JSON.stringify(call.arguments, null, 2)}</pre>
-          </li>
-        ))}
-      </ul>
-      <div className="confirmation-actions">
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={() => onResolve(false)}
-          disabled={busy}
-        >
-          Negar
-        </button>
-        <button
-          type="button"
-          className="primary-button"
-          onClick={() => onResolve(true)}
-          disabled={busy}
-        >
-          Aprovar esta escrita
-        </button>
-      </div>
-    </section>
-  );
-}
 
 function TimelineMessage({
   message,

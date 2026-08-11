@@ -145,6 +145,7 @@ export class FetchHarnessClient implements HarnessClient {
         turns: [],
         feedback: [],
         pendingConfirmation: null,
+        confirmationWaivers: [],
         execution: toExecutionSnapshot(settings),
       };
     }
@@ -181,6 +182,7 @@ export class FetchHarnessClient implements HarnessClient {
       turns: snapshot.turns,
       feedback: snapshot.feedback,
       pendingConfirmation: snapshot.pending_confirmation,
+      confirmationWaivers: snapshot.confirmation_waivers ?? [],
       execution: toExecutionSnapshot(settings),
     };
   }
@@ -318,12 +320,22 @@ export class FetchHarnessClient implements HarnessClient {
     conversationId: string,
     confirmationId: string,
     approved: boolean,
+    waive = false,
   ) {
     await this.request(
       `/conversations/${encodeURIComponent(conversationId)}/confirmation/${encodeURIComponent(
         confirmationId,
       )}`,
-      this.jsonRequest("POST", { approved }),
+      this.jsonRequest("POST", { approved, waive }),
+    );
+  }
+
+  async revokeConfirmationWaiver(conversationId: string, effect: string) {
+    await this.request(
+      `/conversations/${encodeURIComponent(conversationId)}/confirmation-waivers/${encodeURIComponent(
+        effect,
+      )}`,
+      { method: "DELETE" },
     );
   }
 

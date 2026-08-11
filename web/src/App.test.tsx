@@ -99,22 +99,85 @@ describe("App", () => {
           arguments: { file_path: "relatorio.md", content: "vindo da web" },
         },
       ],
+      previews: [
+        {
+          tool_call_id: "write-1",
+          path: "relatorio.md",
+          kind: "create",
+          diff: "@@ -0,0 +1 @@\n+vindo da web",
+          truncated: false,
+        },
+      ],
     });
     const resolve = vi.spyOn(client, "resolveConfirmation");
     render(<App client={client} />);
 
+    const dialog = await screen.findByRole("dialog");
     expect(
       await screen.findByRole("heading", { name: "Escrita com dado da web" }),
     ).toBeInTheDocument();
+    expect(dialog).toHaveAttribute("aria-modal", "true");
     expect(screen.getByText("write_file")).toBeInTheDocument();
+    expect(screen.getByText("+vindo da web")).toBeInTheDocument();
+    // A write the web asked for cannot be waived away.
+    expect(screen.queryByLabelText("Não perguntar mais nesta conversa")).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "Aprovar esta escrita" }));
+    // Escape must not answer for the Operator: the Turn is parked on this.
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Aprovar escrita" }));
 
     await waitFor(() =>
-      expect(resolve).toHaveBeenCalledWith("chat-128", "turn-1-confirmation-2", true),
+      expect(resolve).toHaveBeenCalledWith("chat-128", "turn-1-confirmation-2", true, false),
     );
     await waitFor(() =>
       expect(screen.queryByRole("heading", { name: "Escrita com dado da web" })).toBeNull(),
+    );
+  });
+
+  it("uma escrita comum pode ser dispensada, e a dispensa fica revogável", async () => {
+    const user = userEvent.setup();
+    const client = new MockHarnessClient();
+    client.seedConfirmation({
+      id: "turn-2-confirmation-1",
+      conversation_id: "chat-128",
+      turn_id: "turn-2",
+      step_sequence: 1,
+      reason_code: "write_confirmation_required",
+      tool_calls: [
+        {
+          id: "write-2",
+          name: "write_file",
+          arguments: { file_path: "notas.md", content: "sem web" },
+        },
+      ],
+      previews: [
+        {
+          tool_call_id: "write-2",
+          path: "notas.md",
+          kind: "create",
+          diff: "@@ -0,0 +1 @@\n+sem web",
+          truncated: false,
+        },
+      ],
+    });
+    const resolve = vi.spyOn(client, "resolveConfirmation");
+    const revoke = vi.spyOn(client, "revokeConfirmationWaiver");
+    render(<App client={client} />);
+
+    expect(await screen.findByRole("heading", { name: "Confirmar escrita" })).toBeInTheDocument();
+    await user.click(screen.getByLabelText("Não perguntar mais nesta conversa"));
+    await user.click(screen.getByRole("button", { name: "Aprovar escrita" }));
+
+    await waitFor(() =>
+      expect(resolve).toHaveBeenCalledWith("chat-128", "turn-2-confirmation-1", true, true),
+    );
+
+    const chip = await screen.findByRole("button", { name: /Escritas sem confirmação/ });
+    await user.click(chip);
+    await waitFor(() =>
+      expect(revoke).toHaveBeenCalledWith("chat-128", "workspace_write"),
     );
   });
 
