@@ -2,10 +2,11 @@ import asyncio
 import json
 import secrets
 import sqlite3
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from datetime import UTC, datetime
+from functools import wraps
 from pathlib import Path
-from typing import cast
+from typing import Concatenate, cast
 from uuid import uuid4
 
 from .domain import (
@@ -63,6 +64,23 @@ class IdempotencyConflictError(ConversationStoreError):
     pass
 
 
+def _offload[**P, R](
+    method: Callable[Concatenate["ConversationStore", P], R],
+) -> Callable[Concatenate["ConversationStore", P], Coroutine[None, None, R]]:
+    """Publishes a blocking store method as the awaitable the callers use.
+
+    Every operation here is synchronous sqlite3 under a short transaction; the
+    only thing the async surface adds is the thread hop, and writing that hop
+    out once per method was the same line thirty times over.
+    """
+
+    @wraps(method)
+    async def offloaded(self: "ConversationStore", *args: P.args, **kwargs: P.kwargs) -> R:
+        return await asyncio.to_thread(method, self, *args, **kwargs)
+
+    return offloaded
+
+
 class ConversationStore:
     def __init__(self, database: str | Path) -> None:
         self._database = str(database)
@@ -71,174 +89,6 @@ class ConversationStore:
     def database(self) -> str:
         return self._database
 
-    async def initialize(self) -> None:
-        await asyncio.to_thread(self._initialize)
-
-    async def create_workspace(self, reference: str) -> WorkspaceRevision:
-        return await asyncio.to_thread(self._create_workspace, reference)
-
-    async def create_conversation(
-        self, workspace_id: str, *, name: str = "New conversation"
-    ) -> Conversation:
-        return await asyncio.to_thread(self._create_conversation, workspace_id, name)
-
-    async def get_conversation(self, conversation_id: str) -> Conversation:
-        return await asyncio.to_thread(self._get_conversation, conversation_id)
-
-    async def list_conversations(self, *, include_archived: bool = False) -> list[Conversation]:
-        return await asyncio.to_thread(self._list_conversations, include_archived)
-
-    async def rename_conversation(self, conversation_id: str, name: str) -> Conversation:
-        return await asyncio.to_thread(self._rename_conversation, conversation_id, name)
-
-    async def set_conversation_archived(
-        self, conversation_id: str, *, archived: bool
-    ) -> Conversation:
-        return await asyncio.to_thread(self._set_conversation_archived, conversation_id, archived)
-
-    async def delete_conversation(self, conversation_id: str) -> None:
-        await asyncio.to_thread(self._delete_conversation, conversation_id)
-
-    async def get_workspace_revision(self, workspace_id: str) -> WorkspaceRevision:
-        return await asyncio.to_thread(self._get_workspace_revision, workspace_id)
-
-    async def advance_workspace_revision(
-        self, workspace_id: str, *, expected_revision: int
-    ) -> WorkspaceRevision:
-        return await asyncio.to_thread(
-            self._advance_workspace_revision, workspace_id, expected_revision
-        )
-
-    async def enqueue_request(self, conversation_id: str, content: str) -> PendingRequest:
-        return await asyncio.to_thread(self._enqueue_request, conversation_id, content)
-
-    async def edit_pending_request(self, request_id: str, content: str) -> PendingRequest:
-        return await asyncio.to_thread(self._edit_pending_request, request_id, content)
-
-    async def cancel_pending_request(self, request_id: str) -> PendingRequest:
-        return await asyncio.to_thread(self._cancel_pending_request, request_id)
-
-    async def list_pending_requests(self, conversation_id: str) -> list[PendingRequest]:
-        return await asyncio.to_thread(self._list_pending_requests, conversation_id)
-
-    async def get_request(self, request_id: str) -> PendingRequest:
-        return await asyncio.to_thread(self._get_request, request_id)
-
-    async def start_next_turn(
-        self, conversation_id: str, *, base_seed: int | None = None
-    ) -> Turn | None:
-        if base_seed is not None and (base_seed < 0 or base_seed > 2**63 - 1):
-            raise ValueError("base_seed must be a non-negative signed 64-bit integer")
-        return await asyncio.to_thread(self._start_next_turn, conversation_id, base_seed)
-
-    async def list_turns(self, conversation_id: str) -> list[Turn]:
-        return await asyncio.to_thread(self._list_turns, conversation_id)
-
-    async def recover_stale_active_turns(self) -> list[Turn]:
-        return await asyncio.to_thread(self._recover_stale_active_turns)
-
-    async def grant(
-        self,
-        conversation_id: str,
-        permission: str,
-        scope: str,
-        *,
-        expires_at: datetime | None = None,
-    ) -> Grant:
-        return await asyncio.to_thread(self._grant, conversation_id, permission, scope, expires_at)
-
-    async def get_session_policy(self, conversation_id: str) -> SessionPolicy:
-        return await asyncio.to_thread(self._get_session_policy, conversation_id)
-
-    async def revoke_grant(self, conversation_id: str, grant_id: str) -> Grant:
-        return await asyncio.to_thread(self._revoke_grant, conversation_id, grant_id)
-
-    async def append_agent_step(
-        self,
-        turn_id: str,
-        *,
-        seed: int,
-        tool_calls: Sequence[ToolCall] = (),
-        tool_results: Sequence[ToolResult] = (),
-    ) -> AgentStep:
-        return await asyncio.to_thread(
-            self._append_agent_step, turn_id, seed, tuple(tool_calls), tuple(tool_results)
-        )
-
-    async def list_agent_steps(self, turn_id: str) -> list[AgentStep]:
-        return await asyncio.to_thread(self._list_agent_steps, turn_id)
-
-    async def finish_turn(
-        self,
-        turn_id: str,
-        kind: TerminalOutcomeKind,
-        *,
-        reason_code: str,
-        detail: str | None = None,
-    ) -> Turn:
-        return await asyncio.to_thread(self._finish_turn, turn_id, kind, reason_code, detail)
-
-    async def append_canonical_history(
-        self,
-        turn_id: str,
-        kind: CanonicalHistoryEntryKind,
-        payload: Mapping[str, JsonValue],
-    ) -> CanonicalHistoryEntry:
-        return await asyncio.to_thread(self._append_canonical_history, turn_id, kind, payload)
-
-    async def list_canonical_history(
-        self, conversation_id: str, *, turn_id: str | None = None
-    ) -> list[CanonicalHistoryEntry]:
-        return await asyncio.to_thread(self._list_canonical_history, conversation_id, turn_id)
-
-    async def add_feedback(
-        self,
-        conversation_id: str,
-        *,
-        rating: int,
-        comment: str | None = None,
-        turn_id: str | None = None,
-    ) -> Feedback:
-        return await asyncio.to_thread(
-            self._add_feedback, conversation_id, rating, comment, turn_id
-        )
-
-    async def list_feedback(self, conversation_id: str) -> list[Feedback]:
-        return await asyncio.to_thread(self._list_feedback, conversation_id)
-
-    async def append_outbox_event(
-        self,
-        conversation_id: str | None,
-        *,
-        event_type: str,
-        payload: Mapping[str, JsonValue],
-        idempotency_key: str,
-    ) -> DomainEvent:
-        return await asyncio.to_thread(
-            self._append_outbox_event,
-            conversation_id,
-            event_type,
-            payload,
-            idempotency_key,
-        )
-
-    async def list_outbox_events(
-        self,
-        *,
-        after_sequence: int = 0,
-        limit: int = 100,
-        unpublished_only: bool = False,
-    ) -> list[DomainEvent]:
-        return await asyncio.to_thread(
-            self._list_outbox_events, after_sequence, limit, unpublished_only
-        )
-
-    async def mark_outbox_published(self, event_id: str) -> DomainEvent:
-        return await asyncio.to_thread(self._mark_outbox_published, event_id)
-
-    async def purge_inactive(self, *, before: datetime) -> list[str]:
-        return await asyncio.to_thread(self._purge_inactive, before)
-
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._database, timeout=30)
         connection.row_factory = sqlite3.Row
@@ -246,7 +96,8 @@ class ConversationStore:
         connection.execute("PRAGMA busy_timeout = 30000")
         return connection
 
-    def _initialize(self) -> None:
+    @_offload
+    def initialize(self) -> None:
         statements = (
             """
             CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -313,7 +164,7 @@ class ConversationStore:
                     connection.execute(statement)
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (1, ?)",
-                    (_serialize_datetime(_utcnow()),),
+                    (_serialize_datetime(datetime.now(UTC)),),
                 )
             applied = connection.execute(
                 "SELECT 1 FROM schema_migrations WHERE version = 2"
@@ -383,7 +234,7 @@ class ConversationStore:
                     connection.execute(statement)
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (2, ?)",
-                    (_serialize_datetime(_utcnow()),),
+                    (_serialize_datetime(datetime.now(UTC)),),
                 )
             applied = connection.execute(
                 "SELECT 1 FROM schema_migrations WHERE version = 3"
@@ -423,7 +274,7 @@ class ConversationStore:
                     connection.execute(statement)
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (3, ?)",
-                    (_serialize_datetime(_utcnow()),),
+                    (_serialize_datetime(datetime.now(UTC)),),
                 )
             applied = connection.execute(
                 "SELECT 1 FROM schema_migrations WHERE version = 4"
@@ -458,7 +309,7 @@ class ConversationStore:
                     connection.execute(statement)
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (4, ?)",
-                    (_serialize_datetime(_utcnow()),),
+                    (_serialize_datetime(datetime.now(UTC)),),
                 )
 
             applied = connection.execute(
@@ -472,7 +323,7 @@ class ConversationStore:
                 connection.execute("ALTER TABLE conversations ADD COLUMN archived_at TEXT")
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (5, ?)",
-                    (_serialize_datetime(_utcnow()),),
+                    (_serialize_datetime(datetime.now(UTC)),),
                 )
 
             applied = connection.execute(
@@ -489,13 +340,14 @@ class ConversationStore:
                 )
                 connection.execute(
                     "INSERT INTO schema_migrations(version, applied_at) VALUES (6, ?)",
-                    (_serialize_datetime(_utcnow()),),
+                    (_serialize_datetime(datetime.now(UTC)),),
                 )
 
-    def _create_workspace(self, reference: str) -> WorkspaceRevision:
+    @_offload
+    def create_workspace(self, reference: str) -> WorkspaceRevision:
         if not reference:
             raise ValueError("workspace reference must not be empty")
-        now = _utcnow()
+        now = datetime.now(UTC)
         with self._connect() as connection:
             existing = connection.execute(
                 "SELECT id, revision, updated_at FROM workspaces WHERE reference = ?",
@@ -513,11 +365,14 @@ class ConversationStore:
             )
         return WorkspaceRevision(workspace_id=workspace_id, revision=0, updated_at=now)
 
-    def _create_conversation(self, workspace_id: str, name: str) -> Conversation:
+    @_offload
+    def create_conversation(
+        self, workspace_id: str, *, name: str = "New conversation"
+    ) -> Conversation:
         normalized_name = name.strip()
         if not normalized_name:
             raise ValueError("conversation name must not be blank")
-        now = _utcnow()
+        now = datetime.now(UTC)
         conversation = Conversation(
             id=str(uuid4()),
             workspace_id=workspace_id,
@@ -548,7 +403,8 @@ class ConversationStore:
             raise NotFoundError(f"workspace not found: {workspace_id}") from error
         return conversation
 
-    def _get_conversation(self, conversation_id: str) -> Conversation:
+    @_offload
+    def get_conversation(self, conversation_id: str) -> Conversation:
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT * FROM conversations WHERE id = ?", (conversation_id,)
@@ -557,7 +413,8 @@ class ConversationStore:
             raise NotFoundError(f"conversation not found: {conversation_id}")
         return _conversation_from_row(row)
 
-    def _list_conversations(self, include_archived: bool) -> list[Conversation]:
+    @_offload
+    def list_conversations(self, *, include_archived: bool = False) -> list[Conversation]:
         query = (
             "SELECT * FROM conversations ORDER BY last_active_at DESC, id"
             if include_archived
@@ -568,11 +425,12 @@ class ConversationStore:
             rows = connection.execute(query).fetchall()
         return [_conversation_from_row(row) for row in rows]
 
-    def _rename_conversation(self, conversation_id: str, name: str) -> Conversation:
+    @_offload
+    def rename_conversation(self, conversation_id: str, name: str) -> Conversation:
         normalized_name = name.strip()
         if not normalized_name:
             raise ValueError("conversation name must not be blank")
-        now = _utcnow()
+        now = datetime.now(UTC)
         with self._connect() as connection:
             cursor = connection.execute(
                 "UPDATE conversations SET name = ?, updated_at = ? WHERE id = ?",
@@ -587,8 +445,9 @@ class ConversationStore:
             raise NotFoundError(f"conversation not found: {conversation_id}")
         return _conversation_from_row(row)
 
-    def _set_conversation_archived(self, conversation_id: str, archived: bool) -> Conversation:
-        now = _utcnow()
+    @_offload
+    def set_conversation_archived(self, conversation_id: str, *, archived: bool) -> Conversation:
+        now = datetime.now(UTC)
         with self._connect() as connection:
             cursor = connection.execute(
                 "UPDATE conversations SET archived_at = ?, updated_at = ? WHERE id = ?",
@@ -607,7 +466,8 @@ class ConversationStore:
             raise NotFoundError(f"conversation not found: {conversation_id}")
         return _conversation_from_row(row)
 
-    def _delete_conversation(self, conversation_id: str) -> None:
+    @_offload
+    def delete_conversation(self, conversation_id: str) -> None:
         with self._connect() as connection:
             cursor = connection.execute(
                 "DELETE FROM conversations WHERE id = ?", (conversation_id,)
@@ -615,7 +475,8 @@ class ConversationStore:
             if cursor.rowcount != 1:
                 raise NotFoundError(f"conversation not found: {conversation_id}")
 
-    def _get_workspace_revision(self, workspace_id: str) -> WorkspaceRevision:
+    @_offload
+    def get_workspace_revision(self, workspace_id: str) -> WorkspaceRevision:
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT id, revision, updated_at FROM workspaces WHERE id = ?", (workspace_id,)
@@ -624,10 +485,11 @@ class ConversationStore:
             raise NotFoundError(f"workspace not found: {workspace_id}")
         return _workspace_revision_from_row(row)
 
-    def _advance_workspace_revision(
-        self, workspace_id: str, expected_revision: int
+    @_offload
+    def advance_workspace_revision(
+        self, workspace_id: str, *, expected_revision: int
     ) -> WorkspaceRevision:
-        now = _utcnow()
+        now = datetime.now(UTC)
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -661,8 +523,9 @@ class ConversationStore:
         finally:
             connection.close()
 
-    def _enqueue_request(self, conversation_id: str, content: str) -> PendingRequest:
-        now = _utcnow()
+    @_offload
+    def enqueue_request(self, conversation_id: str, content: str) -> PendingRequest:
+        now = datetime.now(UTC)
         request_id = str(uuid4())
         with self._connect() as connection:
             _require_conversation(connection, conversation_id)
@@ -695,8 +558,9 @@ class ConversationStore:
             updated_at=now,
         )
 
-    def _edit_pending_request(self, request_id: str, content: str) -> PendingRequest:
-        now = _utcnow()
+    @_offload
+    def edit_pending_request(self, request_id: str, content: str) -> PendingRequest:
+        now = datetime.now(UTC)
         with self._connect() as connection:
             row = _require_request(connection, request_id)
             if row["status"] != RequestStatus.QUEUED:
@@ -718,8 +582,9 @@ class ConversationStore:
             raise NotFoundError(f"request not found: {request_id}")
         return _request_from_row(updated)
 
-    def _cancel_pending_request(self, request_id: str) -> PendingRequest:
-        now = _utcnow()
+    @_offload
+    def cancel_pending_request(self, request_id: str) -> PendingRequest:
+        now = datetime.now(UTC)
         with self._connect() as connection:
             row = _require_request(connection, request_id)
             if row["status"] != RequestStatus.QUEUED:
@@ -741,7 +606,8 @@ class ConversationStore:
             raise NotFoundError(f"request not found: {request_id}")
         return _request_from_row(updated)
 
-    def _list_pending_requests(self, conversation_id: str) -> list[PendingRequest]:
+    @_offload
+    def list_pending_requests(self, conversation_id: str) -> list[PendingRequest]:
         with self._connect() as connection:
             _require_conversation(connection, conversation_id)
             rows = connection.execute(
@@ -754,11 +620,15 @@ class ConversationStore:
             ).fetchall()
         return [_request_from_row(row) for row in rows]
 
-    def _get_request(self, request_id: str) -> PendingRequest:
+    @_offload
+    def get_request(self, request_id: str) -> PendingRequest:
         with self._connect() as connection:
             return _request_from_row(_require_request(connection, request_id))
 
-    def _start_next_turn(self, conversation_id: str, base_seed: int | None) -> Turn | None:
+    @_offload
+    def start_next_turn(self, conversation_id: str, *, base_seed: int | None = None) -> Turn | None:
+        if base_seed is not None and (base_seed < 0 or base_seed > 2**63 - 1):
+            raise ValueError("base_seed must be a non-negative signed 64-bit integer")
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -783,7 +653,7 @@ class ConversationStore:
             if request is None:
                 connection.commit()
                 return None
-            now = _utcnow()
+            now = datetime.now(UTC)
             selected_seed = secrets.randbits(31) if base_seed is None else base_seed
             turn = Turn(
                 id=str(uuid4()),
@@ -821,7 +691,8 @@ class ConversationStore:
         finally:
             connection.close()
 
-    def _list_turns(self, conversation_id: str) -> list[Turn]:
+    @_offload
+    def list_turns(self, conversation_id: str) -> list[Turn]:
         with self._connect() as connection:
             _require_conversation(connection, conversation_id)
             rows = connection.execute(
@@ -830,8 +701,9 @@ class ConversationStore:
             ).fetchall()
         return [_turn_from_row(row) for row in rows]
 
-    def _recover_stale_active_turns(self) -> list[Turn]:
-        now = _utcnow()
+    @_offload
+    def recover_stale_active_turns(self) -> list[Turn]:
+        now = datetime.now(UTC)
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -857,16 +729,18 @@ class ConversationStore:
         finally:
             connection.close()
 
-    def _grant(
+    @_offload
+    def grant(
         self,
         conversation_id: str,
         permission: str,
         scope: str,
-        expires_at: datetime | None,
+        *,
+        expires_at: datetime | None = None,
     ) -> Grant:
         if not permission or not scope:
             raise ValueError("permission and scope must not be empty")
-        now = _utcnow()
+        now = datetime.now(UTC)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             _require_conversation(connection, conversation_id)
@@ -879,7 +753,7 @@ class ConversationStore:
             ).fetchone()
             if existing is not None:
                 existing_expiry = existing["expires_at"]
-                if existing_expiry is None or _parse_datetime(str(existing_expiry)) > now:
+                if existing_expiry is None or datetime.fromisoformat(str(existing_expiry)) > now:
                     return _grant_from_row(existing)
                 connection.execute(
                     "UPDATE grants SET revoked_at = ? WHERE id = ?",
@@ -910,8 +784,9 @@ class ConversationStore:
             _touch_conversation(connection, conversation_id, now)
         return grant
 
-    def _get_session_policy(self, conversation_id: str) -> SessionPolicy:
-        now = _serialize_datetime(_utcnow())
+    @_offload
+    def get_session_policy(self, conversation_id: str) -> SessionPolicy:
+        now = _serialize_datetime(datetime.now(UTC))
         with self._connect() as connection:
             _require_conversation(connection, conversation_id)
             rows = connection.execute(
@@ -929,8 +804,9 @@ class ConversationStore:
             grants=tuple(_grant_from_row(row) for row in rows),
         )
 
-    def _revoke_grant(self, conversation_id: str, grant_id: str) -> Grant:
-        now = _utcnow()
+    @_offload
+    def revoke_grant(self, conversation_id: str, grant_id: str) -> Grant:
+        now = datetime.now(UTC)
         with self._connect() as connection:
             row = connection.execute(
                 """
@@ -948,14 +824,18 @@ class ConversationStore:
             _touch_conversation(connection, conversation_id, now)
         return _grant_from_row(row)
 
-    def _append_agent_step(
+    @_offload
+    def append_agent_step(
         self,
         turn_id: str,
+        *,
         seed: int,
-        tool_calls: tuple[ToolCall, ...],
-        tool_results: tuple[ToolResult, ...],
+        tool_calls: Sequence[ToolCall] = (),
+        tool_results: Sequence[ToolResult] = (),
     ) -> AgentStep:
-        now = _utcnow()
+        tool_calls = tuple(tool_calls)
+        tool_results = tuple(tool_results)
+        now = datetime.now(UTC)
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -1003,7 +883,8 @@ class ConversationStore:
         finally:
             connection.close()
 
-    def _list_agent_steps(self, turn_id: str) -> list[AgentStep]:
+    @_offload
+    def list_agent_steps(self, turn_id: str) -> list[AgentStep]:
         with self._connect() as connection:
             _require_turn(connection, turn_id)
             rows = connection.execute(
@@ -1011,16 +892,18 @@ class ConversationStore:
             ).fetchall()
         return [_agent_step_from_row(row) for row in rows]
 
-    def _finish_turn(
+    @_offload
+    def finish_turn(
         self,
         turn_id: str,
         kind: TerminalOutcomeKind,
+        *,
         reason_code: str,
-        detail: str | None,
+        detail: str | None = None,
     ) -> Turn:
         if not reason_code:
             raise ValueError("terminal outcome reason_code must not be empty")
-        now = _utcnow()
+        now = datetime.now(UTC)
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -1050,7 +933,8 @@ class ConversationStore:
         finally:
             connection.close()
 
-    def _append_canonical_history(
+    @_offload
+    def append_canonical_history(
         self,
         turn_id: str,
         kind: CanonicalHistoryEntryKind,
@@ -1058,7 +942,7 @@ class ConversationStore:
     ) -> CanonicalHistoryEntry:
         _reject_reasoning(payload)
         payload_json = _dump_json(payload)
-        now = _utcnow()
+        now = datetime.now(UTC)
         entry_id = str(uuid4())
         connection = self._connect()
         try:
@@ -1103,8 +987,9 @@ class ConversationStore:
         finally:
             connection.close()
 
-    def _list_canonical_history(
-        self, conversation_id: str, turn_id: str | None
+    @_offload
+    def list_canonical_history(
+        self, conversation_id: str, *, turn_id: str | None = None
     ) -> list[CanonicalHistoryEntry]:
         with self._connect() as connection:
             _require_conversation(connection, conversation_id)
@@ -1131,16 +1016,18 @@ class ConversationStore:
                 ).fetchall()
         return [_canonical_history_entry_from_row(row) for row in rows]
 
-    def _add_feedback(
+    @_offload
+    def add_feedback(
         self,
         conversation_id: str,
+        *,
         rating: int,
-        comment: str | None,
-        turn_id: str | None,
+        comment: str | None = None,
+        turn_id: str | None = None,
     ) -> Feedback:
         if rating < -1 or rating > 1:
             raise ValueError("feedback rating must be between -1 and 1")
-        now = _utcnow()
+        now = datetime.now(UTC)
         feedback = Feedback(
             id=str(uuid4()),
             conversation_id=conversation_id,
@@ -1172,7 +1059,8 @@ class ConversationStore:
             _touch_conversation(connection, conversation_id, now)
         return feedback
 
-    def _list_feedback(self, conversation_id: str) -> list[Feedback]:
+    @_offload
+    def list_feedback(self, conversation_id: str) -> list[Feedback]:
         with self._connect() as connection:
             _require_conversation(connection, conversation_id)
             rows = connection.execute(
@@ -1181,9 +1069,11 @@ class ConversationStore:
             ).fetchall()
         return [_feedback_from_row(row) for row in rows]
 
-    def _append_outbox_event(
+    @_offload
+    def append_outbox_event(
         self,
         conversation_id: str | None,
+        *,
         event_type: str,
         payload: Mapping[str, JsonValue],
         idempotency_key: str,
@@ -1191,7 +1081,7 @@ class ConversationStore:
         if not event_type or not idempotency_key:
             raise ValueError("event_type and idempotency_key must not be empty")
         payload_json = _dump_json(payload)
-        now = _utcnow()
+        now = datetime.now(UTC)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
@@ -1242,8 +1132,13 @@ class ConversationStore:
             conversation_id=conversation_id,
         )
 
-    def _list_outbox_events(
-        self, after_sequence: int, limit: int, unpublished_only: bool
+    @_offload
+    def list_outbox_events(
+        self,
+        *,
+        after_sequence: int = 0,
+        limit: int = 100,
+        unpublished_only: bool = False,
     ) -> list[DomainEvent]:
         if after_sequence < 0 or limit < 1:
             raise ValueError("after_sequence must be non-negative and limit must be positive")
@@ -1266,8 +1161,9 @@ class ConversationStore:
             rows = connection.execute(query, (after_sequence, limit)).fetchall()
         return [_domain_event_from_row(row) for row in rows]
 
-    def _mark_outbox_published(self, event_id: str) -> DomainEvent:
-        now = _utcnow()
+    @_offload
+    def mark_outbox_published(self, event_id: str) -> DomainEvent:
+        now = datetime.now(UTC)
         with self._connect() as connection:
             row = connection.execute("SELECT * FROM outbox WHERE id = ?", (event_id,)).fetchone()
             if row is None:
@@ -1284,7 +1180,8 @@ class ConversationStore:
             raise NotFoundError(f"outbox event not found: {event_id}")
         return _domain_event_from_row(row)
 
-    def _purge_inactive(self, before: datetime) -> list[str]:
+    @_offload
+    def purge_inactive(self, *, before: datetime) -> list[str]:
         serialized = _serialize_datetime(before)
         connection = self._connect()
         try:
@@ -1311,25 +1208,17 @@ class ConversationStore:
             connection.close()
 
 
-def _utcnow() -> datetime:
-    return datetime.now(UTC)
-
-
 def _serialize_datetime(value: datetime) -> str:
     if value.tzinfo is None:
         raise ValueError("datetime must be timezone-aware")
     return value.astimezone(UTC).isoformat()
 
 
-def _parse_datetime(value: str) -> datetime:
-    return datetime.fromisoformat(value)
-
-
 def _workspace_revision_from_row(row: sqlite3.Row) -> WorkspaceRevision:
     return WorkspaceRevision(
         workspace_id=str(row["id"]),
         revision=int(row["revision"]),
-        updated_at=_parse_datetime(str(row["updated_at"])),
+        updated_at=datetime.fromisoformat(str(row["updated_at"])),
     )
 
 
@@ -1338,11 +1227,11 @@ def _conversation_from_row(row: sqlite3.Row) -> Conversation:
     return Conversation(
         id=str(row["id"]),
         workspace_id=str(row["workspace_id"]),
-        created_at=_parse_datetime(str(row["created_at"])),
-        updated_at=_parse_datetime(str(row["updated_at"])),
-        last_active_at=_parse_datetime(str(row["last_active_at"])),
+        created_at=datetime.fromisoformat(str(row["created_at"])),
+        updated_at=datetime.fromisoformat(str(row["updated_at"])),
+        last_active_at=datetime.fromisoformat(str(row["last_active_at"])),
         name=str(row["name"]),
-        archived_at=(_parse_datetime(str(archived_at)) if archived_at is not None else None),
+        archived_at=(datetime.fromisoformat(str(archived_at)) if archived_at is not None else None),
     )
 
 
@@ -1353,8 +1242,8 @@ def _request_from_row(row: sqlite3.Row) -> PendingRequest:
         sequence=int(row["queue_sequence"]),
         content=str(row["content"]),
         status=RequestStatus(str(row["status"])),
-        created_at=_parse_datetime(str(row["created_at"])),
-        updated_at=_parse_datetime(str(row["updated_at"])),
+        created_at=datetime.fromisoformat(str(row["created_at"])),
+        updated_at=datetime.fromisoformat(str(row["updated_at"])),
     )
 
 
@@ -1365,8 +1254,8 @@ def _grant_from_row(row: sqlite3.Row) -> Grant:
         conversation_id=str(row["conversation_id"]),
         permission=str(row["permission"]),
         scope=str(row["scope"]),
-        granted_at=_parse_datetime(str(row["granted_at"])),
-        expires_at=_parse_datetime(str(expires_at)) if expires_at is not None else None,
+        granted_at=datetime.fromisoformat(str(row["granted_at"])),
+        expires_at=datetime.fromisoformat(str(expires_at)) if expires_at is not None else None,
     )
 
 
@@ -1377,7 +1266,7 @@ def _feedback_from_row(row: sqlite3.Row) -> Feedback:
         conversation_id=str(row["conversation_id"]),
         rating=int(row["rating"]),
         comment=str(row["comment"]) if row["comment"] is not None else None,
-        created_at=_parse_datetime(str(row["created_at"])),
+        created_at=datetime.fromisoformat(str(row["created_at"])),
         turn_id=str(turn_id) if turn_id is not None else None,
     )
 
@@ -1391,9 +1280,11 @@ def _domain_event_from_row(row: sqlite3.Row) -> DomainEvent:
         event_type=str(row["event_type"]),
         payload=_load_json_object(str(row["payload"])),
         idempotency_key=str(row["idempotency_key"]),
-        occurred_at=_parse_datetime(str(row["occurred_at"])),
+        occurred_at=datetime.fromisoformat(str(row["occurred_at"])),
         conversation_id=str(conversation_id) if conversation_id is not None else None,
-        published_at=_parse_datetime(str(published_at)) if published_at is not None else None,
+        published_at=datetime.fromisoformat(str(published_at))
+        if published_at is not None
+        else None,
     )
 
 
@@ -1410,7 +1301,7 @@ def _turn_from_row(row: sqlite3.Row) -> Turn:
         terminal_outcome = TerminalOutcome(
             kind=TerminalOutcomeKind(str(terminal_outcome_kind)),
             reason_code=str(reason_code),
-            recorded_at=_parse_datetime(str(ended_at)),
+            recorded_at=datetime.fromisoformat(str(ended_at)),
             detail=str(row["terminal_detail"]) if row["terminal_detail"] is not None else None,
         )
     return Turn(
@@ -1418,9 +1309,9 @@ def _turn_from_row(row: sqlite3.Row) -> Turn:
         conversation_id=str(row["conversation_id"]),
         request_id=str(row["request_id"]),
         status=TurnStatus(str(row["status"])),
-        started_at=_parse_datetime(str(row["started_at"])),
+        started_at=datetime.fromisoformat(str(row["started_at"])),
         base_seed=int(row["base_seed"]),
-        ended_at=_parse_datetime(str(ended_at)) if ended_at is not None else None,
+        ended_at=datetime.fromisoformat(str(ended_at)) if ended_at is not None else None,
         terminal_outcome=terminal_outcome,
     )
 
@@ -1433,7 +1324,7 @@ def _agent_step_from_row(row: sqlite3.Row) -> AgentStep:
         seed=int(row["seed"]),
         tool_calls=_deserialize_tool_calls(str(row["tool_calls"])),
         tool_results=_deserialize_tool_results(str(row["tool_results"])),
-        created_at=_parse_datetime(str(row["created_at"])),
+        created_at=datetime.fromisoformat(str(row["created_at"])),
     )
 
 
@@ -1445,7 +1336,7 @@ def _canonical_history_entry_from_row(row: sqlite3.Row) -> CanonicalHistoryEntry
         turn_id=str(row["turn_id"]),
         kind=CanonicalHistoryEntryKind(str(row["entry_type"])),
         payload=_load_json_object(str(row["payload"])),
-        created_at=_parse_datetime(str(row["created_at"])),
+        created_at=datetime.fromisoformat(str(row["created_at"])),
     )
 
 
