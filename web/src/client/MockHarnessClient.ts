@@ -152,6 +152,8 @@ export class MockHarnessClient implements HarnessClient {
     required: false,
     restart_required: false,
     token_expires_at: null,
+    suggested_state_dir: "/home/operator/.local/state/harness-2",
+    suggested_tokenizer_path: "/home/operator/.local/state/harness-2/tokenizer.json",
   };
   private runs = clone(initialRuns);
   private reports = clone(initialReports);
@@ -647,6 +649,7 @@ export class MockHarnessClient implements HarnessClient {
   async completeSetup(token: string, _submission: SetupSubmission) {
     if (!token) throw new Error("setup_token_required");
     this.setupStatus = {
+      ...this.setupStatus,
       configured: true,
       required: false,
       restart_required: true,
@@ -661,6 +664,8 @@ export class MockHarnessClient implements HarnessClient {
       required: true,
       restart_required: false,
       token_expires_at: tokenExpiresAt,
+      suggested_state_dir: "/home/operator/.local/state/harness-2",
+      suggested_tokenizer_path: "/home/operator/.local/state/harness-2/tokenizer.json",
     };
   }
 

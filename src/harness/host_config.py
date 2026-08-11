@@ -155,6 +155,15 @@ def default_host_config_path(environ: Mapping[str, str] | None = None) -> Path:
     return (base / "harness-2" / "host.json").resolve(strict=False)
 
 
+def default_state_dir(environ: Mapping[str, str] | None = None) -> Path:
+    environment = os.environ if environ is None else environ
+    configured = environment.get("XDG_STATE_HOME")
+    base = Path(configured).expanduser() if configured else Path.home() / ".local/state"
+    if not base.is_absolute():
+        raise ValueError("XDG_STATE_HOME must be an absolute path")
+    return (base / "harness-2").resolve(strict=False)
+
+
 def _canonical_path(path: Path, *, must_exist: bool) -> Path:
     if not path.is_absolute():
         raise ValueError("host paths must be absolute")

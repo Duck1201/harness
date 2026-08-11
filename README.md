@@ -24,54 +24,94 @@ o que deliberadamente não entra na primeira release está em
 
 ## Instalação
 
+Duas formas, mesmo resultado. Escolha uma.
+
+### Opção A: script
+
 ```bash
-uv sync                                   # dependências Python + .venv
-corepack enable && cd web && pnpm install && pnpm build && cd ..   # gera web/dist
+scripts/bootstrap.sh
 ```
 
-### Modelo local
+Idempotente — pode rodar de novo sem duplicar trabalho. Faz, nesta ordem:
 
-O perfil de execução é reproduzível a partir do [`Modelfile`](Modelfile) da raiz.
-O digest do perfil instalado é verificado contra `config/model-profiles.json` na
-inicialização — divergência é erro, não aviso.
+1. `uv sync` — instala as dependências Python e cria `.venv`.
+2. `corepack enable` + `pnpm install && pnpm build` em `web/` — gera `web/dist`.
+3. `ollama create mitos -f Modelfile` (só se o perfil `mitos` ainda não existir) e
+   confere o digest do perfil instalado contra
+   `installation.installed_profile_digest_sha256` em `config/model-profiles.json`,
+   avisando no stderr se divergir.
+4. Baixa o `tokenizer.json` do repositório do modelo base
+   (`huihui-ai/Huihui-Qwen3.5-4B-abliterated`) para
+   `$XDG_STATE_HOME/harness-2/tokenizer.json` (ou `~/.local/state/harness-2/` sem
+   `XDG_STATE_HOME`), só se o arquivo ainda não existir ali.
+
+Qualquer etapa que precise de uma ferramenta ausente no PATH (`corepack`, `ollama`)
+é pulada com aviso — o script não falha por isso.
+
+### Opção B: passo a passo manual
+
+```bash
+uv sync
+```
+Instala as dependências Python e cria `.venv`.
+
+```bash
+corepack enable && cd web && pnpm install && pnpm build && cd ..
+```
+Gera `web/dist`, servido pelo próprio backend.
 
 ```bash
 ollama create mitos -f Modelfile
-ollama show mitos --modelfile | sha256sum   # deve bater installation.installed_profile_digest_sha256
+ollama show mitos --modelfile | sha256sum
 ```
+Cria o perfil de execução a partir do [`Modelfile`](Modelfile) da raiz. O segundo
+comando deve bater com `installation.installed_profile_digest_sha256` em
+`config/model-profiles.json` — divergência é erro na inicialização, não aviso.
+
+```bash
+mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}/harness-2"
+curl -fsSL \
+  https://huggingface.co/huihui-ai/Huihui-Qwen3.5-4B-abliterated/resolve/main/tokenizer.json \
+  -o "${XDG_STATE_HOME:-$HOME/.local/state}/harness-2/tokenizer.json"
+```
+Baixa o `tokenizer.json` para o mesmo caminho que o setup vai sugerir por padrão
+(veja abaixo). Pode ir para qualquer outro caminho, desde que informe esse caminho
+no setup.
 
 ### Tokenizer
 
 O orçamento de contexto (24576 tokens) depende de uma contagem real de tokens, não
 de estimativa por caractere. O harness carrega um `tokenizer.json` no formato
-HuggingFace e **valida seu SHA-256** antes de aceitar qualquer turno: sem o arquivo,
-a aplicação sobe com `EngineReadiness(ready=False, reason_code="tokenizer_file_missing")`
-e recusa execuções.
+HuggingFace: sem o arquivo, a aplicação sobe com
+`EngineReadiness(ready=False, reason_code="tokenizer_file_missing")` e recusa
+execuções. O arquivo não é versionado neste repositório (12 MB, e o conteúdo
+correto depende de qual revisão do modelo você instalou). Download direto:
+[`tokenizer.json`](https://huggingface.co/huihui-ai/Huihui-Qwen3.5-4B-abliterated/resolve/main/tokenizer.json)
+do repositório do modelo base.
 
-Obtenha o `tokenizer.json` do repositório do modelo base
-(`huihui-ai/Huihui-Qwen3.5-4B-abliterated`), calcule seu digest e informe ambos no
-setup:
-
-```bash
-sha256sum /caminho/para/tokenizer.json
-```
-
-O arquivo não é versionado neste repositório (12 MB, e o digest correto depende de
-qual revisão do modelo você instalou). O tokenizer autoritativo do modelo está
-embutido no perfil Ollama; este arquivo existe apenas para a contagem de tokens do
-orçamento de contexto.
+O SHA-256 do tokenizer **não é digitado no setup**: o harness calcula o digest do
+arquivo apontado e grava esse valor em `host.json#tokenizer_digest`, usado depois
+em todo boot para detectar o arquivo trocado.
 
 ## Primeira execução
 
 ```bash
-harness              # ou: uv run uvicorn harness.api:create_app --factory --host 127.0.0.1 --port 8765
+uv run harness       # ou: uv run uvicorn harness.api:create_app --factory --host 127.0.0.1 --port 8765
 ```
 
 Na primeira execução o servidor imprime um **token de setup efêmero** no stderr
-(TTL de 600 s). O setup é concluído por `POST /api/setup` com o header
-`X-Harness-Setup-Token`, informando `allowed_workspace_roots`, `tokenizer_path`,
-`tokenizer_digest`, `state_dir`, `allowed_origins` e, opcionalmente, a chave da
-Brave Search. `GET /api/setup/status` diz se ainda é necessário.
+(TTL de 600 s). Abra `http://127.0.0.1:8765/setup`: o formulário já vem
+pré-preenchido com o diretório de estado e o caminho do tokenizer sugeridos (o
+mesmo que o `bootstrap.sh` usa) e com a origin atual — falta só colar o token,
+apontar as raízes de workspace e confirmar. Sem interface, o mesmo é feito por
+`POST /api/setup` com o header `X-Harness-Setup-Token`, informando
+`allowed_workspace_roots`, `tokenizer_path`, `state_dir`, `allowed_origins` e,
+opcionalmente, a chave da Brave Search. `GET /api/setup/status` diz se ainda é
+necessário e devolve os valores sugeridos em `suggested_state_dir` e
+`suggested_tokenizer_path`.
+
+- `allowed_workspace_roots` — diretórios que as tools de arquivo do agente (`workspace_read`/`workspace_write`) podem tocar, um caminho absoluto por linha. É o sandbox: caminho fora dessas raízes é recusado mesmo que o modelo peça. Tipicamente o(s) diretório(s) de projeto que você vai trabalhar com o agente.
+- `allowed_origins` — de onde o navegador pode chamar esta API: protocolo, host e porta (ex. `http://127.0.0.1:8765`), um por linha. Requisição HTTP com header `Origin` fora dessa lista é recusada. Normalmente é só a própria origin em que você está acessando o painel — a UI já pré-preenche com ela.
 
 Depois de configurado, o setup só reabre com `HARNESS_SETUP_REOPEN=1`.
 
@@ -162,7 +202,7 @@ server {
 ```
 
 ```bash
-HARNESS_ALLOWED_ORIGINS=https://harness.example harness
+HARNESS_ALLOWED_ORIGINS=https://harness.example uv run harness
 ```
 
 ## Uso

@@ -299,12 +299,13 @@ export interface SetupStatus {
   required: boolean;
   restart_required: boolean;
   token_expires_at: string | null;
+  suggested_state_dir: string;
+  suggested_tokenizer_path: string;
 }
 
 export interface SetupSubmission {
   allowed_workspace_roots: string[];
   tokenizer_path: string;
-  tokenizer_digest: string;
   state_dir: string;
   allowed_origins: string[];
   brave_api_key?: string | null;

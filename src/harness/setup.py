@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, SecretStr
 from tokenizers import Tokenizer
 
-from .host_config import CredentialStore, HostConfig, HostConfigStore
+from .host_config import CredentialStore, HostConfig, HostConfigStore, default_state_dir
 
 
 class SetupSubmission(BaseModel):
@@ -18,7 +18,6 @@ class SetupSubmission(BaseModel):
 
     allowed_workspace_roots: tuple[Path, ...]
     tokenizer_path: Path
-    tokenizer_digest: str
     state_dir: Path
     allowed_origins: tuple[str, ...]
     brave_api_key: SecretStr | None = None
@@ -31,6 +30,8 @@ class SetupStatus(BaseModel):
     required: bool
     restart_required: bool
     token_expires_at: datetime | None
+    suggested_state_dir: Path
+    suggested_tokenizer_path: Path
 
 
 class SetupError(Exception):
@@ -68,11 +69,14 @@ class SetupController:
 
     @property
     def status(self) -> SetupStatus:
+        suggested_state_dir = default_state_dir()
         return SetupStatus(
             configured=self._configured,
             required=self._active,
             restart_required=self._restart_required,
             token_expires_at=self._expires_at if self._active else None,
+            suggested_state_dir=suggested_state_dir,
+            suggested_tokenizer_path=suggested_state_dir / "tokenizer.json",
         )
 
     def boot_console_message(self, setup_url: str = "/setup") -> str | None:
@@ -142,7 +146,6 @@ def _validated_config(submission: SetupSubmission) -> tuple[HostConfig, str | No
             status_code=422,
         )
 
-    expected_digest = submission.tokenizer_digest.removeprefix("sha256:").lower()
     try:
         with canonical_tokenizer.open("rb") as tokenizer_file:
             actual_digest = hashlib.file_digest(tokenizer_file, "sha256").hexdigest()
@@ -152,12 +155,6 @@ def _validated_config(submission: SetupSubmission) -> tuple[HostConfig, str | No
             "The tokenizer file could not be validated.",
             status_code=422,
         ) from error
-    if not hmac.compare_digest(actual_digest, expected_digest):
-        raise SetupError(
-            "tokenizer_digest_mismatch",
-            "The tokenizer digest does not match the file.",
-            status_code=422,
-        )
     try:
         Tokenizer.from_file(  # pyright: ignore[reportUnknownMemberType]
             str(canonical_tokenizer)
@@ -190,7 +187,7 @@ def _validated_config(submission: SetupSubmission) -> tuple[HostConfig, str | No
         config = HostConfig(
             allowed_workspace_roots=submission.allowed_workspace_roots,
             tokenizer_path=canonical_tokenizer,
-            tokenizer_digest=expected_digest,
+            tokenizer_digest=actual_digest,
             state_dir=submission.state_dir,
             allowed_origins=origins,
             brave_credential_ref=("brave_api_key" if brave_api_key is not None else None),

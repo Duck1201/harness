@@ -41,7 +41,7 @@ from .evals import (
     EvalTier,
     RegressionDraft,
 )
-from .host_config import CredentialStore, HostConfig, HostConfigStore
+from .host_config import CredentialStore, HostConfig, HostConfigStore, default_state_dir
 from .observability_store import ObservabilityStore
 from .ollama_runtime import OllamaRuntime
 from .ports import ConfirmationRequest
@@ -274,11 +274,14 @@ def create_app(
     @app.get("/api/setup/status")
     async def setup_status() -> dict[str, Any]:
         if setup_controller is None:
+            state_dir = default_state_dir()
             return {
                 "configured": True,
                 "required": False,
                 "restart_required": False,
                 "token_expires_at": None,
+                "suggested_state_dir": str(state_dir),
+                "suggested_tokenizer_path": str(state_dir / "tokenizer.json"),
             }
         return setup_controller.status.model_dump(mode="json")
 
@@ -718,7 +721,7 @@ def _default_service(
     state_dir = (
         Path(state_override).expanduser().resolve(strict=False)
         if state_override is not None
-        else (host_config.state_dir if host_config is not None else _default_state_dir())
+        else (host_config.state_dir if host_config is not None else default_state_dir())
     )
     state_dir.mkdir(parents=True, exist_ok=True)
     roots_override = os.environ.get("HARNESS_WORKSPACE_ROOTS")
@@ -857,14 +860,6 @@ def _configured_port() -> int:
     except ValueError:
         return DEFAULT_PORT
     return port if 0 < port < 65536 else DEFAULT_PORT
-
-
-def _default_state_dir() -> Path:
-    configured = os.environ.get("XDG_STATE_HOME")
-    base = Path(configured).expanduser() if configured else Path.home() / ".local/state"
-    if not base.is_absolute():
-        raise ValueError("XDG_STATE_HOME must be an absolute path")
-    return (base / "harness-2").resolve(strict=False)
 
 
 def _setup_reopen_requested() -> bool:

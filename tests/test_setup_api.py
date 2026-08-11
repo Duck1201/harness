@@ -26,6 +26,7 @@ from harness import (
     create_app,
     load_config,
 )
+from harness.host_config import default_state_dir
 
 
 class FakeEstimator:
@@ -72,11 +73,10 @@ def _payload(tmp_path: Path) -> dict[str, object]:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     tokenizer_path = tmp_path / "tokenizer.json"
-    digest = _tokenizer(tokenizer_path)
+    _tokenizer(tokenizer_path)
     return {
         "allowed_workspace_roots": [str(workspace.resolve())],
         "tokenizer_path": str(tokenizer_path.resolve()),
-        "tokenizer_digest": digest,
         "state_dir": str((tmp_path / "state").resolve()),
         "allowed_origins": ["http://operator.test"],
         "brave_api_key": "brave-secret",
@@ -115,11 +115,17 @@ def test_loopback_setup_persists_host_and_secret_then_requires_restart(
         )
         after = client.get("/api/setup/status")
 
+    state_dir = default_state_dir()
+    suggested = {
+        "suggested_state_dir": str(state_dir),
+        "suggested_tokenizer_path": str(state_dir / "tokenizer.json"),
+    }
     assert before.json() == {
         "configured": False,
         "required": True,
         "restart_required": False,
         "token_expires_at": "2026-08-10T12:05:00Z",
+        **suggested,
     }
     assert response.status_code == 200
     assert response.json() == {"restart_required": True}
@@ -130,9 +136,14 @@ def test_loopback_setup_persists_host_and_secret_then_requires_restart(
         "required": False,
         "restart_required": True,
         "token_expires_at": None,
+        **suggested,
     }
     host = host_store.load()
     assert host.allowed_workspace_roots == (workspace.resolve(),)
+    assert (
+        host.tokenizer_digest
+        == hashlib.sha256(Path(str(payload["tokenizer_path"])).read_bytes()).hexdigest()
+    )
     assert host.brave_credential_ref == "brave_api_key"
     assert credential_store.read("brave_api_key") == "brave-secret"
     assert "brave-secret" not in host_store.path.read_text(encoding="utf-8")
@@ -237,7 +248,7 @@ def test_setup_rejects_blank_brave_key_without_exposing_it(tmp_path: Path) -> No
     assert host_store.exists() is False
 
 
-def test_setup_validates_workspace_tokenizer_and_digest_before_writing(
+def test_setup_validates_workspace_and_tokenizer_before_writing(
     tmp_path: Path,
 ) -> None:
     payload = _payload(tmp_path)
@@ -257,7 +268,7 @@ def test_setup_validates_workspace_tokenizer_and_digest_before_writing(
     with TestClient(app, client=("127.0.0.1", 50000)) as client:
         missing_root_payload = {**payload, "allowed_workspace_roots": [str(tmp_path / "missing")]}
         missing_root = client.post("/api/setup", json=missing_root_payload, headers=headers)
-        digest_mismatch = client.post(
+        unexpected_field = client.post(
             "/api/setup",
             json={**payload, "tokenizer_digest": "0" * 64},
             headers=headers,
@@ -266,16 +277,12 @@ def test_setup_validates_workspace_tokenizer_and_digest_before_writing(
         invalid_tokenizer_path.write_text("{}", encoding="utf-8")
         invalid_tokenizer = client.post(
             "/api/setup",
-            json={
-                **payload,
-                "tokenizer_path": str(invalid_tokenizer_path.resolve()),
-                "tokenizer_digest": hashlib.sha256(invalid_tokenizer_path.read_bytes()).hexdigest(),
-            },
+            json={**payload, "tokenizer_path": str(invalid_tokenizer_path.resolve())},
             headers=headers,
         )
 
     assert missing_root.status_code == 422
-    assert digest_mismatch.json()["error"]["code"] == "tokenizer_digest_mismatch"
+    assert unexpected_field.json()["error"]["code"] == "invalid_setup_request"
     assert invalid_tokenizer.json()["error"]["code"] == "invalid_tokenizer"
     assert host_store.exists() is False
 
