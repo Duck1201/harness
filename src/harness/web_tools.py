@@ -864,15 +864,9 @@ async def _system_lookup(
 
 
 def _is_non_public(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    return (
-        address.is_loopback
-        or address.is_private
-        or address.is_link_local
-        or address.is_multicast
-        or address.is_reserved
-        or address.is_unspecified
-        or not address.is_global
-    )
+    # `is_global` already subsumes loopback, private, link-local, reserved and
+    # unspecified in both families; multicast is the one range it calls global.
+    return address.is_multicast or not address.is_global
 
 
 class _ReadableHTMLParser(HTMLParser):
