@@ -51,7 +51,8 @@ exige alterar o documento, os contratos e as fixtures no mesmo commit.
 - **Autorização é por efeito, nunca por nome de tool**: `workspace_read` exige
   WorkspaceRootGrant; `workspace_write` exige também WriteGrant; `data_egress`
   exige WebAccessGrant. Adicionar um `if tool_name == ...` em caminho de policy
-  está errado por construção.
+  está errado por construção. O gate vive em dois executores independentes
+  (`local_tools.py` e `web_tools.py`): grant novo exige tocar os dois.
 - **O modelo é não confiável**: seleção, argumentos e resultados passam por
   validação, autorização, confirmação e sandbox do harness. `blocked` só pode ser
   emitido pelo harness; recusa de provedor é `failed`; sucesso sem itens é `empty`.
@@ -61,7 +62,7 @@ exige alterar o documento, os contratos e as fixtures no mesmo commit.
 - **Dois stores separados**: estado conversacional e telemetria. A telemetria
   recebe só IDs, digests, classes, tamanhos, contagens e tempos — nunca conteúdo.
   Falha de telemetria é não fatal.
-- **Todo ResultPayload** tem `status`, `retryable`, `data`, `error`, `meta`.
+- **Todo ToolResult** tem `status`, `retryable`, `data`, `error`, `meta`.
 - **Sem senha de Operator, só loopback direto é atendido**; com senha, toda rota
   exige sessão. Não há terceira opção nem flag que abra a porta sem autenticação.
 - **Medição inventada é proibida**: experimento sem execução fica com
@@ -69,7 +70,8 @@ exige alterar o documento, os contratos e as fixtures no mesmo commit.
 
 ## Arquitetura
 
-Composition root em `src/harness/__init__.py`; entrypoint em `__main__.py`
+Composition root em `api._default_service`, chamado por `create_app` quando nada
+é injetado — `__init__.py` só reexporta o pacote. Entrypoint em `__main__.py`
 (uvicorn sobre `api.create_app`).
 
 | Camada | Módulos |

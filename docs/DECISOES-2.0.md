@@ -43,7 +43,7 @@ O vocabulário canônico está em [`CONTEXT.md`](../CONTEXT.md). Em particular:
 | Execução de calls | Tool loop sem streaming; calls de um mesmo AgentStep são executadas em ordem, sem paralelismo |
 | Último passo | Nenhuma tool é oferecida e o TerminalOutcome é persistido uma única vez |
 | Tools | Somente `model_tools` são model-selectable; automações internas e capacidades proibidas são coleções separadas |
-| Resultados | Todo ResultPayload contém `status`, `retryable`, `data`, `error` e `meta`; `blocked` só pode ser emitido pelo harness |
+| Resultados | Todo ToolResult contém `status`, `retryable`, `data`, `error` e `meta`; `blocked` só pode ser emitido pelo harness |
 | Grants | Workspace requer WorkspaceRootGrant; escrita também exige WriteGrant; rede também exige WebAccessGrant |
 | Rede | Toda operação web é efeito `data_egress`, negado por padrão e autorizado mecanicamente |
 | Web | Brave Search e navegador Brave; HTTP pode anteceder browser dentro do executor, nunca por escolha do modelo |

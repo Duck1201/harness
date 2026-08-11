@@ -20,7 +20,7 @@ o que deliberadamente não entra na primeira release está em
 | Node.js | 22+ | Só para construir o frontend e validar contratos |
 | pnpm | 10.13.1 | Via `corepack enable` |
 | Ollama | 0.32.5 | Servindo em `http://127.0.0.1:11434` |
-| Brave | qualquer | `brave-browser` no PATH, para escalação do `web_fetch` |
+| Brave | qualquer | `brave-browser`, `brave-browser-stable` ou `brave` no PATH, para escalação do `web_fetch` |
 
 ## Instalação
 
@@ -93,7 +93,7 @@ setup, e a variável de ambiente tem precedência sobre ele.
 | `HARNESS_BRAVE_API_KEY` | — | Chave da Brave Search. Mutuamente exclusiva com a de arquivo |
 | `HARNESS_BRAVE_API_KEY_FILE` | — | Caminho absoluto de arquivo privado (modo `0600`, sem symlink) com a chave |
 | `HARNESS_HOST_CONFIG` | padrão do XDG | Caminho do HostConfig |
-| `HARNESS_ALLOWED_ORIGINS` | `http://127.0.0.1:8000,http://localhost:8000` | Allowlist de Origin, separada por vírgula |
+| `HARNESS_ALLOWED_ORIGINS` | `127.0.0.1` e `localhost` na porta do servidor | Allowlist de Origin, separada por vírgula |
 | `HARNESS_SETUP_REOPEN` | `0` | Reabre o setup numa instalação já configurada |
 
 Não existe `.env`: segredos entram pelo setup e ficam no CredentialStore, gravado
