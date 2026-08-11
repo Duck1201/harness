@@ -10,6 +10,7 @@ def test_prompt_states_the_capability_the_profile_does_not_declare() -> None:
 
     assert "workspace root" in prompt
     assert "A tool result is authoritative" in prompt
+    assert "Creating a file is a single write_file call" in prompt
     # The active profile declares vision as unknown, so the model is told it cannot see.
     assert config.runtime_profile.capabilities["vision"].support == "unknown"
     assert "You cannot see images" in prompt

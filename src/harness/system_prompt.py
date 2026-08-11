@@ -32,6 +32,17 @@ _RESULT_AUTHORITY = (
     "request is about their contents."
 )
 
+# write_file says replacing a file needs its SHA-256, and the model reads that as
+# "find the file first". Asked to create one, it burned ten steps on read_file and
+# glob for a path that never existed. The registry already answers this in
+# model_tools[write_file].executor_invariants; the prompt just has to say it.
+_MUTATION_DIRECTNESS = (
+    "Creating a file is a single write_file call: a path that does not exist yet "
+    "takes no expected_current_sha256 and nothing has to be read or located first. "
+    "Once a tool reports a path is absent, treat it as absent — do not call the "
+    "same tool again with different arguments to look for it."
+)
+
 # Only capabilities whose absence changes what the model should do. Streaming and
 # parallel tool calls are harness concerns and would be noise in the prompt.
 _MODEL_FACING_LIMITS: Mapping[str, str] = {
@@ -50,7 +61,7 @@ def build_system_prompt(config: HarnessConfig) -> str:
         for name, sentence in _MODEL_FACING_LIMITS.items()
         if (capability := capabilities.get(name)) is None or capability.support != "supported"
     ]
-    return " ".join([_BASE, _RESULT_AUTHORITY, *limits])
+    return " ".join([_BASE, _RESULT_AUTHORITY, _MUTATION_DIRECTNESS, *limits])
 
 
 __all__ = ["build_system_prompt"]
