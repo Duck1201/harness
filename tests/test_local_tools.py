@@ -128,6 +128,52 @@ def test_read_file_byte_limit_keeps_next_line_addressable(tmp_path: Path) -> Non
     asyncio.run(scenario())
 
 
+def test_empty_optional_argument_is_read_as_absent(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        executor = executor_for(tmp_path, "WorkspaceRootGrant", "WriteGrant")
+        # The runtime fills every property in the schema, this one included.
+        create = ToolCall(
+            id="write",
+            name="write_file",
+            arguments={
+                "file_path": "notes.md",
+                "content": "first\n",
+                "expected_current_sha256": "",
+            },
+        )
+
+        assert (await executor.preflight((create,))).allowed is True
+        assert (await executor.execute(create)).status.value == "success"
+        assert (tmp_path / "notes.md").read_bytes() == b"first\n"
+
+        # Absent is absent: replacing the file it just created still needs the digest.
+        replace_call = ToolCall(
+            id="replace",
+            name="write_file",
+            arguments={
+                "file_path": "notes.md",
+                "content": "second\n",
+                "expected_current_sha256": "",
+            },
+        )
+        batch = await executor.preflight((replace_call,))
+        assert batch.allowed is False
+        assert batch.reason_code == "expected_sha256_required"
+        assert (tmp_path / "notes.md").read_bytes() == b"first\n"
+
+        # An empty required argument is a value: an empty file is a real request.
+        empty_file = ToolCall(
+            id="empty",
+            name="write_file",
+            arguments={"file_path": "blank.md", "content": ""},
+        )
+        assert (await executor.preflight((empty_file,))).allowed is True
+        assert (await executor.execute(empty_file)).status.value == "success"
+        assert (tmp_path / "blank.md").read_bytes() == b""
+
+    asyncio.run(scenario())
+
+
 def test_write_file_atomically_creates_internal_parents(tmp_path: Path) -> None:
     async def scenario() -> None:
         executor = executor_for(tmp_path, "WorkspaceRootGrant", "WriteGrant")

@@ -1,4 +1,4 @@
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from enum import StrEnum
 from pathlib import Path
 
@@ -85,6 +85,25 @@ class ToolDefinitionConfig(ConfigModel):
             description=self.description,
             parameters=self.parameters,
         )
+
+    def normalized_arguments(self, arguments: Mapping[str, JsonValue]) -> Mapping[str, JsonValue]:
+        """Drops optional arguments the model filled with an empty string.
+
+        Offered a schema, the runtime fills every property in it, optional ones
+        included: asked to create a file it sent ``expected_current_sha256: ""``
+        alongside the content, and the whole batch died on the digest pattern.
+        An empty optional is the model saying nothing, so it is read as nothing —
+        the argument goes back to being absent, and absent is what the rest of
+        preflight already decides on. Required properties are left alone: an empty
+        string there is a value, and writing an empty file is a real request.
+        """
+        required = self.parameters.get("required")
+        names = (
+            frozenset(item for item in required if isinstance(item, str))
+            if isinstance(required, Sequence) and not isinstance(required, str)
+            else frozenset[str]()
+        )
+        return {key: value for key, value in arguments.items() if value != "" or key in names}
 
 
 class ToolRegistryConfig(ConfigModel):

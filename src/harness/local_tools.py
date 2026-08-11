@@ -73,7 +73,8 @@ class RegistryToolExecutor:
         issues: list[_PreflightIssue] = []
         seen_ids: set[str] = set()
         mutation_paths: set[tuple[str, ...]] = set()
-        for call in calls:
+        for raw_call in calls:
+            call = self._normalized(raw_call)
             try:
                 if not call.id or call.id in seen_ids:
                     raise _PreflightIssue(
@@ -104,6 +105,7 @@ class RegistryToolExecutor:
         return ToolBatchPreflight(allowed=True)
 
     async def execute(self, call: ToolCall) -> ToolResult:
+        call = self._normalized(call)
         try:
             ledger_entry = self._ledger_entry(call)
             self._validate_call(call, allow_known_replay=ledger_entry is not None)
@@ -847,6 +849,13 @@ class RegistryToolExecutor:
             meta=_meta(truncated=False, mutation=True),
         )
 
+    def _normalized(self, call: ToolCall) -> ToolCall:
+        definition = self._registry.get(call.name)
+        if definition is None:
+            return call
+        arguments = definition.normalized_arguments(call.arguments)
+        return call if arguments == call.arguments else replace(call, arguments=arguments)
+
     def _validate_call(
         self, call: ToolCall, *, allow_known_replay: bool = False
     ) -> ToolDefinitionConfig:
@@ -906,12 +915,13 @@ class RegistryToolExecutor:
         return definition
 
     def _effective_catalog(self) -> tuple[str, ...]:
+        # The same catalogue the model was offered, grants aside: this list answers
+        # "which names exist", and a name it cannot spend yet is still a real name.
+        # Whether the effect is authorized is preflight's answer, with its own code.
         return tuple(
             name
             for name, definition in self._registry.items()
-            if name in _LOCAL_TOOL_NAMES
-            and definition.status == "enabled"
-            and all(grant in self._effective_grants for grant in definition.required_grants)
+            if name in _LOCAL_TOOL_NAMES and definition.status == "enabled"
         )
 
     def _validate_call_paths(self, call: ToolCall) -> None:

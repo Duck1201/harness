@@ -592,13 +592,21 @@ class _ConversationToolExecutorFactory:
         self._browser_egress_guard = browser_egress_guard
 
     async def effective_tool_schemas(self, conversation_id: str) -> tuple[ToolSchema, ...]:
-        policy = await self._store.get_session_policy(conversation_id)
-        effective_grants = policy.effective_grants
+        """The enabled catalogue, whatever the conversation has been granted.
+
+        Hiding write_file until the Operator grants WriteGrant does not stop the
+        model from calling it: it calls the name it remembers, without the schema,
+        and the call arrives missing required arguments. What the Operator then
+        sees is invalid_tool_arguments, which names neither the grant nor the fix.
+        Offering the whole catalogue costs nothing — authorization is by effect in
+        preflight, and a schema grants no access — and the refusal becomes the one
+        the Operator can act on: write_grant_required.
+        """
+        del conversation_id
         return tuple(
             definition.tool_schema()
             for definition in self._registry.model_tools
             if definition.status == "enabled"
-            and all(grant in effective_grants for grant in definition.required_grants)
             and (definition.name != "web_search" or self._brave_api_key is not None)
         )
 

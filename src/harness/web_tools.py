@@ -370,7 +370,8 @@ class WebToolExecutor:
 
     async def preflight(self, calls: Sequence[ToolCall]) -> ToolBatchPreflight:
         seen_ids: set[str] = set()
-        for call in calls:
+        for raw_call in calls:
+            call = self._normalized(raw_call)
             try:
                 if not call.id or call.id in seen_ids:
                     raise _PreflightIssue(
@@ -388,6 +389,7 @@ class WebToolExecutor:
         return ToolBatchPreflight(allowed=True)
 
     async def execute(self, call: ToolCall) -> ToolResult:
+        call = self._normalized(call)
         try:
             self._validate_call(call)
         except _PreflightIssue as issue:
@@ -806,6 +808,13 @@ class WebToolExecutor:
         )
         self._search_cache[cache_key] = result
         return result
+
+    def _normalized(self, call: ToolCall) -> ToolCall:
+        definition = self._registry.get(call.name)
+        if definition is None:
+            return call
+        arguments = definition.normalized_arguments(call.arguments)
+        return call if arguments == call.arguments else replace(call, arguments=arguments)
 
     def _validate_call(self, call: ToolCall) -> ToolDefinitionConfig:
         definition = self._registry.get(call.name)

@@ -112,21 +112,21 @@ def test_service_exposes_effective_tool_schemas_without_disclosing_brave_key(
                 await service.enqueue_request(conversation.id, "after revocation")
                 await _wait_until_idle(service, conversation.id)
 
+            # The catalogue does not move with the grants: a schema authorizes
+            # nothing, and hiding one only makes the model call it from memory,
+            # without its required arguments. Preflight is what refuses.
+            catalogue = {
+                "read_file",
+                "write_file",
+                "edit",
+                "list_directory",
+                "glob",
+                "grep_search",
+                "web_fetch",
+                "web_search",
+            }
             offered = [{schema.name for schema in request.tools} for request in runtime.requests]
-            assert offered == [
-                {"read_file", "list_directory", "glob", "grep_search"},
-                {
-                    "read_file",
-                    "write_file",
-                    "edit",
-                    "list_directory",
-                    "glob",
-                    "grep_search",
-                    "web_fetch",
-                    "web_search",
-                },
-                {"read_file", "list_directory", "glob", "grep_search"},
-            ]
+            assert offered == [catalogue, catalogue, catalogue]
 
             snapshot_text = repr(await service.chat_snapshot(conversation.id))
             events_text = json.dumps(
