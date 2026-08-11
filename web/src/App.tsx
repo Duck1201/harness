@@ -35,6 +35,8 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { harnessClient, type HarnessClient } from "./client";
 import { PendingQueue } from "./components/PendingQueue";
 import { ToolCallCard } from "./components/ToolCallCard";
@@ -86,6 +88,15 @@ const areaItems = [
   { id: "evals" as const, label: "Avaliações", icon: FlaskConical },
   { id: "settings" as const, label: "Configurações", icon: SettingsIcon },
 ];
+
+const markdownComponents: Components = {
+  a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" />,
+  table: ({ node: _node, ...props }) => (
+    <div className="assistant-table-wrap">
+      <table {...props} />
+    </div>
+  ),
+};
 
 export function App({ client = harnessClient }: AppProps) {
   const [area, setArea] = useState<AppArea>("chat");
@@ -1135,7 +1146,9 @@ function TimelineMessage({
         ))}
         {message.content && (
           <div className="assistant-answer">
-            <p>{message.content}</p>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+              {message.content}
+            </ReactMarkdown>
           </div>
         )}
         {message.metrics && <Metrics metrics={message.metrics} />}
@@ -1296,7 +1309,7 @@ function Composer({
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+    if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       submit();
     }
@@ -1327,7 +1340,7 @@ function Composer({
             </button>
           </div>
           <div className="composer-actions">
-            <span>⌘ Enter</span>
+            <span>Enter envia · ⇧Enter quebra linha</span>
             <button
               className="stop-button"
               type="button"
