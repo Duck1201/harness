@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -517,7 +518,9 @@ class ApplicationService:
                 output_budget=self.config.loop.max_output_tokens,
             ),
             event_sink=self._event_sink,
-            system_prompt=build_system_prompt(self.config),
+            # An engine is built per Turn, so a conversation that crosses midnight
+            # gets the new date on its next Turn without anything having to refresh.
+            system_prompt=build_system_prompt(self.config, today=datetime.now(UTC).date()),
             tool_schemas=(),
             model_options={
                 "temperature": self.config.execution_route.sampling.temperature,

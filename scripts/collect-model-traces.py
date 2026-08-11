@@ -42,7 +42,12 @@ from harness import (  # noqa: E402
     load_config,
 )
 from harness.brave_browser import BraveEgressGuard  # noqa: E402
-from harness.evals import ModelCaseRunner, RegressionFixture, load_eval_catalog  # noqa: E402
+from harness.evals import (  # noqa: E402
+    BENCH_DATE,
+    ModelCaseRunner,
+    RegressionFixture,
+    load_eval_catalog,
+)
 from harness.evals.runner import EvalCaseSpec  # noqa: E402
 from harness.system_prompt import build_system_prompt  # noqa: E402
 
@@ -200,7 +205,7 @@ async def collect(seeds: Sequence[int], output: Path, tokenizer: Path) -> int:
     )
     fixtures = [item for item in catalog.dataset.fixtures if runner.supports(item.type)]
     offered = _offered_tools(config)
-    system_prompt = build_system_prompt(config)
+    system_prompt = build_system_prompt(config, today=BENCH_DATE)
     output.parent.mkdir(parents=True, exist_ok=True)
     counts: dict[str, int] = {}
     try:

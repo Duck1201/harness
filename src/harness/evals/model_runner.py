@@ -13,7 +13,7 @@ import re
 import tempfile
 import time
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import cast
 from urllib.parse import urlsplit
@@ -51,6 +51,12 @@ from .oracles import EvalEvidence, evaluate_oracle
 from .runner import CaseRunner, CaseRunResult, EvalCaseSpec, security_violations
 
 _ALL_GRANTS = ("WorkspaceRootGrant", "WriteGrant", "WebAccessGrant")
+
+# The corpus reads the same prompt on every run. Taking the host date here would
+# make two runs of the same arm differ by the day they ran, and every recorded
+# trace differ from the one before it, for a fact no fixture measures. It becomes
+# a field of the fixture the day a fixture depends on the date.
+BENCH_DATE = date(2026, 1, 1)
 
 # The fixture names a symptom per URL; the bench serves one page for each symptom.
 _BENCH_PATHS = {"readable": "/readable", "js-only": "/js-only"}
@@ -297,7 +303,7 @@ class ModelCaseRunner:
                         output_budget=self._config.loop.max_output_tokens,
                     ),
                     event_sink=NullEventSink(),
-                    system_prompt=build_system_prompt(self._config),
+                    system_prompt=build_system_prompt(self._config, today=BENCH_DATE),
                     tool_schemas=self._tool_schemas(policy),
                     model_options={
                         "temperature": self._config.execution_route.sampling.temperature,

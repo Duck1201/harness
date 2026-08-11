@@ -13,6 +13,7 @@ from .loader import (
     load_regression_dataset,
 )
 from .model_runner import (
+    BENCH_DATE,
     BrowserBenchCaseRunner,
     CompositeCaseRunner,
     ModelCaseRunner,
@@ -76,6 +77,7 @@ from .store import (
 )
 
 __all__ = [
+    "BENCH_DATE",
     "AssertionEvaluation",
     "BenchmarkLease",
     "BenchmarkLeaseCanceled",

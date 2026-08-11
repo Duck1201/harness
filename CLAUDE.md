@@ -90,7 +90,10 @@ Fluxo de um Turn: `PendingRequest` -> `AgentEngine` itera AgentSteps ->
 gera -> tool calls passam por preflight/policy -> `ToolResult` volta ao
 CanonicalHistory -> exatamente um `TerminalOutcome`.
 
-O `system_prompt` é **derivado dos contratos** (ADR 0007), não escrito à mão.
+O `system_prompt` é **derivado dos contratos e de fatos do host** (ADR 0007), não
+escrito à mão. A data corrente é o fato do host: `build_system_prompt` a recebe
+como argumento obrigatório — produção passa o relógio em UTC, o corpus passa
+`BENCH_DATE` — para que o prompt do bench não mude sozinho a cada dia.
 
 ## Convenções
 

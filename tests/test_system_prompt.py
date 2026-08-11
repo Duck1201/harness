@@ -1,12 +1,16 @@
+from datetime import date
+
 from harness import load_config
 from harness.config import CapabilityConfig
 from harness.system_prompt import build_system_prompt
+
+_TODAY = date(2026, 8, 11)
 
 
 def test_prompt_states_the_capability_the_profile_does_not_declare() -> None:
     config = load_config()
 
-    prompt = build_system_prompt(config)
+    prompt = build_system_prompt(config, today=_TODAY)
 
     assert "workspace root" in prompt
     assert "A tool result is authoritative" in prompt
@@ -34,7 +38,18 @@ def test_a_declared_capability_is_not_announced_as_missing() -> None:
     profiles = config.model_profiles.model_copy(update={"runtime_profiles": (seeing,)})
     sighted = config.model_copy(update={"model_profiles": profiles})
 
-    prompt = build_system_prompt(sighted)
+    prompt = build_system_prompt(sighted, today=_TODAY)
 
     assert "You cannot see images" not in prompt
     assert "A tool result is authoritative" in prompt
+
+
+def test_prompt_carries_the_date_it_was_given_and_forbids_looking_it_up() -> None:
+    config = load_config()
+
+    prompt = build_system_prompt(config, today=_TODAY)
+
+    assert "Today's date is 2026-08-11 (UTC)." in prompt
+    assert "do not call a tool to look it up" in prompt
+    # Nothing in the prompt reads the clock: another date in, another date out.
+    assert "2026-08-11" not in build_system_prompt(config, today=date(2027, 1, 2))

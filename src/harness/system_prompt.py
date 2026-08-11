@@ -13,6 +13,7 @@ is told becomes impossible rather than merely unlikely.
 """
 
 from collections.abc import Mapping
+from datetime import date
 
 from .config import HarnessConfig
 
@@ -43,6 +44,19 @@ _MUTATION_DIRECTNESS = (
     "same tool again with different arguments to look for it."
 )
 
+
+# The one line that is not derived from a contract: the host knows the date and the
+# model does not. It is a decision of the Operator, not a measurement — no run has
+# been observed spending a step on it — so it is stated in the same shape as the
+# lines above, fact plus the waste it forbids, and can be measured later.
+def _current_date(today: date) -> str:
+    return (
+        f"Today's date is {today.isoformat()} (UTC). It comes from the host and is "
+        "authoritative: do not derive the date from your training data and do not "
+        "call a tool to look it up."
+    )
+
+
 # Only capabilities whose absence changes what the model should do. Streaming and
 # parallel tool calls are harness concerns and would be noise in the prompt.
 _MODEL_FACING_LIMITS: Mapping[str, str] = {
@@ -53,15 +67,20 @@ _MODEL_FACING_LIMITS: Mapping[str, str] = {
 }
 
 
-def build_system_prompt(config: HarnessConfig) -> str:
-    """The prompt for the active RuntimeProfile, capability lines included."""
+def build_system_prompt(config: HarnessConfig, *, today: date) -> str:
+    """The prompt for the active RuntimeProfile, capability lines included.
+
+    ``today`` has no default on purpose: a prompt that reads the clock by itself
+    would make every bench run and every recorded trace differ by the day it ran.
+    Production passes the host clock, the corpus passes a fixed date.
+    """
     capabilities = config.runtime_profile.capabilities
     limits = [
         sentence
         for name, sentence in _MODEL_FACING_LIMITS.items()
         if (capability := capabilities.get(name)) is None or capability.support != "supported"
     ]
-    return " ".join([_BASE, _RESULT_AUTHORITY, _MUTATION_DIRECTNESS, *limits])
+    return " ".join([_BASE, _RESULT_AUTHORITY, _MUTATION_DIRECTNESS, _current_date(today), *limits])
 
 
 __all__ = ["build_system_prompt"]
