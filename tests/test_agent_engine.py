@@ -655,9 +655,61 @@ def test_registry_preflight_of_full_batch_prevents_earlier_write(tmp_path: Path)
         )
 
         assert finished.terminal_outcome is not None
-        assert finished.terminal_outcome.kind is TerminalOutcomeKind.BLOCKED
-        assert finished.terminal_outcome.reason_code == "invalid_tool_arguments"
+        # The batch is refused whole, so the valid write in it never runs — but a
+        # malformed argument is the model's to fix, so the Turn goes on.
         assert not (workspace_root / "must-not-exist.txt").exists()
+        assert finished.terminal_outcome.kind is TerminalOutcomeKind.COMPLETED
+        entries = await store.list_canonical_history(conversation_id)
+        automation = next(
+            entry
+            for entry in entries
+            if entry.kind is CanonicalHistoryEntryKind.INTERNAL_AUTOMATION
+        )
+        assert automation.payload["reason_code"] == "invalid_tool_arguments"
+
+    asyncio.run(scenario())
+
+
+def test_a_second_invalid_batch_ends_the_turn(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        workspace_root = tmp_path / "workspace"
+        workspace_root.mkdir()
+        now = datetime.now(UTC)
+        executor = RegistryToolExecutor(
+            registry=load_config().tool_registry,
+            workspace_root=workspace_root,
+            session_policy=SessionPolicy(
+                conversation_id=conversation_id,
+                grants=(
+                    Grant(
+                        id="workspace-grant",
+                        conversation_id=conversation_id,
+                        permission="WorkspaceRootGrant",
+                        scope="workspace",
+                        granted_at=now,
+                    ),
+                ),
+            ),
+        )
+        invalid = ModelResponse(
+            tool_calls=(
+                ToolCall(
+                    id="invalid-read",
+                    name="read_file",
+                    arguments={"file_path": "a.txt", "limit": 0},
+                ),
+            )
+        )
+        runtime = FakeRuntime([invalid, invalid])
+
+        finished = await engine(store, runtime, executor, FakeEventSink()).run(
+            conversation_id, "invalid twice"
+        )
+
+        assert finished.terminal_outcome is not None
+        assert finished.terminal_outcome.kind is TerminalOutcomeKind.FAILED
+        assert finished.terminal_outcome.reason_code == "rejected_model_attempt_limit"
 
     asyncio.run(scenario())
 

@@ -383,17 +383,33 @@ class AgentEngine:
             if _deadline_reached(deadline):
                 return await self._finish_time_limit(turn)
             if not preflight.allowed:
+                reason_code = preflight.reason_code or "tool_batch_blocked"
                 await self._append_blocked_automation(
                     turn,
-                    preflight.reason_code or "tool_batch_blocked",
+                    reason_code,
                     detail=preflight.detail,
                 )
                 await self._store.append_agent_step(turn.id, seed=step_seed, tool_calls=calls)
                 await self._emit_step_finished(turn, step_sequence)
+                if reason_code in _MODEL_FIXABLE_PREFLIGHT_REASONS:
+                    rejected_count += 1
+                    if rejected_count >= 2:
+                        return await self._finish(
+                            turn,
+                            TerminalOutcomeKind.FAILED,
+                            "rejected_model_attempt_limit",
+                        )
+                    if step_sequence == self._max_model_invocations:
+                        return await self._finish(
+                            turn,
+                            TerminalOutcomeKind.LIMIT_REACHED,
+                            "model_invocation_limit",
+                        )
+                    continue
                 return await self._finalize_blocked(
                     turn,
                     step_sequence,
-                    preflight.reason_code or "tool_batch_blocked",
+                    reason_code,
                     deadline=deadline,
                     detail=preflight.detail,
                 )
@@ -745,6 +761,21 @@ _WORD = re.compile(r"\w")
 # Effects that a Turn carrying UntrustedWebTaint may not spend without the Operator:
 # one changes the Operator's files, the other takes their content off the machine.
 _TAINT_CONFIRMED_EFFECTS = frozenset({"workspace_write", "data_egress"})
+
+# A preflight refusal the model itself can act on: it named a tool that does not
+# exist, or filled its arguments wrong. The blocked automation entry already tells
+# it what was wrong, so the Turn gives it the same second attempt an oversized
+# batch gets instead of ending. Every other refusal — grant, policy, path, taint —
+# stays terminal: no argument the model emits next can lift one.
+_MODEL_FIXABLE_PREFLIGHT_REASONS = frozenset(
+    {
+        "invalid_tool_arguments",
+        "expected_sha256_required",
+        "unknown_tool",
+        "tool_not_enabled",
+        "tool_not_available",
+    }
+)
 
 # The runtime also emits tool calls as markup, not only as JSON. A leaked payload
 # starts or ends on one of these tags.
