@@ -1,21 +1,40 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { MockHarnessClient } from "./client/MockHarnessClient";
 import { App } from "./App";
 
 describe("App", () => {
+  it("botão de estado vazio cria a primeira conversa direto, sem formulário", async () => {
+    const user = userEvent.setup();
+    const client = new MockHarnessClient();
+    await client.deleteConversation("chat-128");
+    await client.deleteConversation("chat-127");
+    const create = vi.spyOn(client, "createConversation");
+    render(<App client={client} />);
+
+    const heading = await screen.findByRole("heading", { name: "Crie a primeira conversa" });
+    const emptyState = heading.closest(".empty-transcript");
+    if (!emptyState) throw new Error("empty state container not found");
+    await user.click(within(emptyState as HTMLElement).getByRole("button", { name: "Nova conversa" }));
+
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith("/workspaces/harness-2", "Nova conversa"),
+    );
+    expect(screen.queryByRole("combobox", { name: "Raiz autorizada" })).toBeNull();
+  });
+
   it("navega entre as três áreas públicas", async () => {
     const user = userEvent.setup();
     render(<App client={new MockHarnessClient()} />);
 
     expect(await screen.findByRole("heading", { name: "Refinar retenção por conversa" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Evals" }));
-    expect(screen.getByRole("heading", { name: "Evals" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Avaliações" }));
+    expect(screen.getByRole("heading", { name: "Avaliações" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Settings" }));
-    expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Configurações" }));
+    expect(screen.getByRole("heading", { name: "Configurações" })).toBeInTheDocument();
     expect(screen.getByDisplayValue("local_mitos_ollama_reproduction")).toBeInTheDocument();
   });
 
@@ -40,9 +59,9 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Salvar solicitação 1" }));
     await waitFor(() => expect(edit).toHaveBeenCalledWith("chat-128", "pending-1", "Fila editada pela API"));
 
-    await user.click(screen.getByRole("button", { name: "Revogar Write" }));
+    await user.click(screen.getByRole("button", { name: "Revogar Escrita" }));
     await waitFor(() => expect(revoke).toHaveBeenCalledWith("chat-128", "grant-write"));
-    await user.click(await screen.findByRole("button", { name: "Ativar Write" }));
+    await user.click(await screen.findByRole("button", { name: "Ativar Escrita" }));
     await waitFor(() => expect(addGrant).toHaveBeenCalledWith("chat-128", "WriteGrant"));
 
     await user.click(screen.getByRole("button", { name: /Funcionou/ }));
@@ -54,7 +73,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: /Verificação de página/ }));
     await waitFor(() => expect(select).toHaveBeenCalledWith("chat-127"));
 
-    await user.click(screen.getByRole("button", { name: "Nova Conversation" }));
+    await user.click(screen.getByRole("button", { name: "Nova conversa" }));
     const name = screen.getByRole("textbox", { name: "Nome" });
     await user.clear(name);
     await user.type(name, "Conversation criada");
@@ -117,13 +136,15 @@ describe("App", () => {
       screen.getByLabelText("Raízes de Workspace autorizadas"),
       "/workspaces/harness-2",
     );
-    await user.type(screen.getByLabelText("Diretório de estado"), "/var/lib/harness-2");
-    await user.type(
-      screen.getByLabelText("Caminho do tokenizer.json"),
-      "/var/lib/harness-2/tokenizer.json",
-    );
-    await user.type(screen.getByLabelText("SHA-256 do tokenizer"), "a".repeat(64));
-    await user.type(screen.getByLabelText("Origins autorizadas"), "http://127.0.0.1:8765");
+    const stateDirField = screen.getByLabelText("Diretório de estado");
+    await user.clear(stateDirField);
+    await user.type(stateDirField, "/var/lib/harness-2");
+    const tokenizerPathField = screen.getByLabelText("Caminho do tokenizer.json");
+    await user.clear(tokenizerPathField);
+    await user.type(tokenizerPathField, "/var/lib/harness-2/tokenizer.json");
+    const originsField = screen.getByLabelText("Origins autorizadas");
+    await user.clear(originsField);
+    await user.type(originsField, "http://127.0.0.1:8765");
     await user.click(screen.getByRole("button", { name: "Concluir setup" }));
 
     await waitFor(() =>
@@ -131,7 +152,6 @@ describe("App", () => {
         allowed_workspace_roots: ["/workspaces/harness-2"],
         state_dir: "/var/lib/harness-2",
         tokenizer_path: "/var/lib/harness-2/tokenizer.json",
-        tokenizer_digest: "a".repeat(64),
         allowed_origins: ["http://127.0.0.1:8765"],
         brave_api_key: null,
       }),
@@ -191,7 +211,7 @@ describe("App", () => {
       threadId: "chat-128",
       messages: [{ role: "user", content: "Nova solicitação" }],
     });
-    await user.click(screen.getByRole("button", { name: /Stop/ }));
+    await user.click(screen.getByRole("button", { name: /Parar/ }));
     await waitFor(() => expect(stop).toHaveBeenCalledWith("chat-128"));
 
     view.unmount();

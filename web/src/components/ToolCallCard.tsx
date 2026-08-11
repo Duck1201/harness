@@ -81,10 +81,10 @@ export function UnifiedDiff({ diff }: { diff: string }) {
   return (
     <div className="diff-block">
       <div className="diff-heading">
-        <span>Unified diff</span>
+        <span>Diff unificado</span>
         <span>diff</span>
       </div>
-      <pre aria-label="Unified diff">
+      <pre aria-label="Diff unificado">
         {diff.split("\n").map((line, index) => {
           const className = line.startsWith("+")
             ? "diff-add"

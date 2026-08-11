@@ -116,7 +116,7 @@ a:focus-visible {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 74px minmax(0, 1fr);
+  grid-template-columns: 58px minmax(0, 1fr);
   height: 100dvh;
   overflow: hidden;
 }
@@ -135,14 +135,14 @@ a:focus-visible {
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 42px;
-  height: 42px;
-  margin-top: 16px;
+  width: 34px;
+  height: 34px;
+  margin-top: 14px;
   border: 1px solid rgb(255 255 255 / 18%);
-  border-radius: 13px;
+  border-radius: 11px;
   background: #fff;
   color: #111014;
-  font-size: 17px;
+  font-size: 14px;
   font-weight: 780;
   letter-spacing: -0.06em;
 }
@@ -157,28 +157,26 @@ a:focus-visible {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 7px;
+  gap: 8px;
   width: 100%;
-  padding: 38px 9px 12px;
+  padding: 30px 7px 12px;
 }
 
 .primary-nav nav button {
   position: relative;
   display: flex;
-  min-height: 54px;
-  flex-direction: column;
+  min-height: 42px;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  border-radius: 12px;
+  border-radius: 11px;
   background: transparent;
-  color: #8f8c97;
+  color: #a9a6b1;
   transition: background 160ms ease, color 160ms ease;
 }
 
 .primary-nav nav button::before {
   position: absolute;
-  left: -9px;
+  left: -7px;
   width: 3px;
   height: 21px;
   border-radius: 0 3px 3px 0;
@@ -188,22 +186,17 @@ a:focus-visible {
 }
 
 .primary-nav nav button:hover {
-  background: rgb(255 255 255 / 6%);
+  background: rgb(255 255 255 / 8%);
   color: #fff;
 }
 
 .primary-nav nav button.active {
-  background: rgb(121 78 246 / 18%);
+  background: rgb(121 78 246 / 24%);
   color: #fff;
 }
 
 .primary-nav nav button.active::before {
   opacity: 1;
-}
-
-.primary-nav nav button span {
-  font-size: 10px;
-  font-weight: 650;
 }
 
 .primary-nav-footer {
@@ -280,7 +273,7 @@ a:focus-visible {
 /* Chat */
 .chat-layout {
   display: grid;
-  grid-template-columns: 268px minmax(480px, 1fr) 230px;
+  grid-template-columns: 220px minmax(480px, 1fr) 230px;
   height: 100%;
   min-height: 0;
   background: var(--paper);
@@ -2230,7 +2223,7 @@ details[open] > summary .summary-chevron {
 
 @media (max-width: 1240px) {
   .chat-layout {
-    grid-template-columns: 254px minmax(0, 1fr);
+    grid-template-columns: 210px minmax(0, 1fr);
   }
 
   .chat-context {
@@ -2320,8 +2313,6 @@ details[open] > summary .summary-chevron {
 
   .primary-nav nav button {
     min-height: 50px;
-    flex-direction: row;
-    gap: 7px;
   }
 
   .primary-nav nav button::before {
@@ -2331,10 +2322,6 @@ details[open] > summary .summary-chevron {
     height: 3px;
     border-radius: 0 0 3px 3px;
     transform: translateX(-50%);
-  }
-
-  .primary-nav nav button span {
-    font-size: 11px;
   }
 
   .area-stage {

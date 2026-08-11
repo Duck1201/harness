@@ -83,8 +83,8 @@ interface LiveRun {
 
 const areaItems = [
   { id: "chat" as const, label: "Chat", icon: MessageSquare },
-  { id: "evals" as const, label: "Evals", icon: FlaskConical },
-  { id: "settings" as const, label: "Settings", icon: SettingsIcon },
+  { id: "evals" as const, label: "Avaliações", icon: FlaskConical },
+  { id: "settings" as const, label: "Configurações", icon: SettingsIcon },
 ];
 
 export function App({ client = harnessClient }: AppProps) {
@@ -188,9 +188,10 @@ export function App({ client = harnessClient }: AppProps) {
                 key={item.id}
                 onClick={() => setArea(item.id)}
                 aria-current={area === item.id ? "page" : undefined}
+                aria-label={item.label}
+                title={item.label}
               >
-                <Icon size={20} strokeWidth={1.8} />
-                <span>{item.label}</span>
+                <Icon size={23} strokeWidth={2} />
               </button>
             );
           })}
@@ -300,7 +301,7 @@ const setupFields = [
   {
     name: "allowed_workspace_roots",
     label: "Raízes de Workspace autorizadas",
-    hint: "Caminhos absolutos, um por linha. Nada fora daqui é legível ou gravável.",
+    hint: "Diretórios que as tools de arquivo do agente podem ler e gravar, um caminho absoluto por linha. Qualquer caminho fora daqui é recusado, mesmo que o modelo peça.",
     multiline: true,
     required: true,
   },
@@ -314,21 +315,14 @@ const setupFields = [
   {
     name: "tokenizer_path",
     label: "Caminho do tokenizer.json",
-    hint: "Arquivo HuggingFace usado para o orçamento de contexto.",
-    multiline: false,
-    required: true,
-  },
-  {
-    name: "tokenizer_digest",
-    label: "SHA-256 do tokenizer",
-    hint: "sha256sum do arquivo acima. O harness recusa qualquer outro conteúdo.",
+    hint: "Arquivo HuggingFace usado para o orçamento de contexto. O digest é calculado automaticamente.",
     multiline: false,
     required: true,
   },
   {
     name: "allowed_origins",
     label: "Origins autorizadas",
-    hint: "Uma por linha, por exemplo http://127.0.0.1:8765.",
+    hint: "De onde o navegador pode chamar esta API — protocolo, host e porta (ex.: http://127.0.0.1:8765), um por linha. Requisição com outro Origin é recusada. Já vem preenchido com a origin desta aba.",
     multiline: true,
     required: true,
   },
@@ -351,7 +345,11 @@ function SetupArea({
   onDone: (status: SetupStatus) => void;
 }) {
   const [token, setToken] = useState("");
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [values, setValues] = useState<Record<string, string>>({
+    state_dir: status.suggested_state_dir,
+    tokenizer_path: status.suggested_tokenizer_path,
+    allowed_origins: window.location.origin,
+  });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -371,7 +369,6 @@ function SetupArea({
         allowed_workspace_roots: lines("allowed_workspace_roots"),
         state_dir: (values.state_dir ?? "").trim(),
         tokenizer_path: (values.tokenizer_path ?? "").trim(),
-        tokenizer_digest: (values.tokenizer_digest ?? "").trim(),
         allowed_origins: lines("allowed_origins"),
         brave_api_key: brave === "" ? null : brave,
       })
@@ -480,6 +477,7 @@ function ChatArea({
   onSnapshot: (snapshot: ChatSnapshot) => void;
 }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [creatingConversation, setCreatingConversation] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [liveRuns, setLiveRuns] = useState<Record<string, LiveRun>>({});
@@ -538,7 +536,7 @@ function ChatArea({
 
   const renameConversation = () => {
     if (!snapshot.conversationId || !snapshot.conversationTitle) return;
-    const name = window.prompt("Novo nome da Conversation", snapshot.conversationTitle)?.trim();
+    const name = window.prompt("Novo nome da conversa", snapshot.conversationTitle)?.trim();
     if (!name || name === snapshot.conversationTitle) return;
     void runAction("rename", async () => {
       await client.renameConversation(snapshot.conversationId!, name);
@@ -556,7 +554,7 @@ function ChatArea({
 
   const deleteConversation = () => {
     if (!snapshot.conversationId) return;
-    if (!window.confirm("Excluir esta Conversation permanentemente?")) return;
+    if (!window.confirm("Excluir esta conversa permanentemente?")) return;
     void runAction("delete", async () => {
       await client.deleteConversation(snapshot.conversationId!);
       await replaceSnapshot(() => client.getChatSnapshot(null));
@@ -699,6 +697,8 @@ function ChatArea({
         groups={snapshot.workspaces}
         selectedId={snapshot.conversationId}
         open={sidebarOpen}
+        creating={creatingConversation}
+        onToggleCreating={setCreatingConversation}
         busy={busyAction === "create" || busyAction === "select"}
         onClose={() => setSidebarOpen(false)}
         onSelect={selectConversation}
@@ -720,7 +720,7 @@ function ChatArea({
             <span className="eyebrow">{snapshot.workspaceName ?? "Harness"}</span>
             <h1 id="conversation-title">
               {snapshot.conversationTitle ??
-                (hasWorkspaces ? "Nenhuma Conversation" : "Workspace não autorizado")}
+                (hasWorkspaces ? "Nenhuma conversa" : "Workspace não autorizado")}
             </h1>
           </div>
           {hasConversation && (
@@ -730,13 +730,13 @@ function ChatArea({
                 busyAction={busyAction}
                 onToggle={toggleGrant}
               />
-              <div className="conversation-actions" aria-label="Ações da Conversation">
+              <div className="conversation-actions" aria-label="Ações da conversa">
                 <button
                   className="icon-button"
                   type="button"
                   onClick={renameConversation}
                   disabled={busyAction !== null}
-                  aria-label="Renomear Conversation"
+                  aria-label="Renomear conversa"
                 >
                   <Pencil size={14} />
                 </button>
@@ -745,7 +745,7 @@ function ChatArea({
                   type="button"
                   onClick={archiveConversation}
                   disabled={busyAction !== null}
-                  aria-label="Arquivar Conversation"
+                  aria-label="Arquivar conversa"
                 >
                   <Archive size={14} />
                 </button>
@@ -754,7 +754,7 @@ function ChatArea({
                   type="button"
                   onClick={deleteConversation}
                   disabled={busyAction !== null}
-                  aria-label="Excluir Conversation"
+                  aria-label="Excluir conversa"
                 >
                   <Trash2 size={14} />
                 </button>
@@ -772,13 +772,16 @@ function ChatArea({
         {!hasWorkspaces ? (
           <EmptyState
             title="Nenhuma raiz de Workspace autorizada"
-            detail="Configure HARNESS_WORKSPACE_ROOTS no servidor para iniciar uma Conversation."
+            detail="Configure HARNESS_WORKSPACE_ROOTS no servidor para iniciar uma conversa."
           />
         ) : !hasConversation ? (
           <EmptyState
-            title="Crie a primeira Conversation"
-            detail="Escolha uma das raízes autorizadas no painel de Conversations."
-            action={() => setSidebarOpen(true)}
+            title="Crie a primeira conversa"
+            detail="Escolha uma das raízes autorizadas no painel de conversas."
+            action={() => {
+              const root = snapshot.workspaces[0]?.root;
+              if (root) void createConversation(root, "Nova conversa");
+            }}
           />
         ) : (
           <>
@@ -795,7 +798,7 @@ function ChatArea({
               {!snapshot.messages.length && !liveMessages.length && (
                 <div className="timeline-empty">
                   <MessageSquare size={21} />
-                  <h2>Conversation vazia</h2>
+                  <h2>Conversa vazia</h2>
                   <p>Envie uma solicitação para iniciar o CanonicalHistory.</p>
                 </div>
               )}
@@ -842,6 +845,8 @@ function ConversationSidebar({
   groups,
   selectedId,
   open,
+  creating,
+  onToggleCreating,
   busy,
   onClose,
   onSelect,
@@ -850,14 +855,15 @@ function ConversationSidebar({
   groups: WorkspaceGroup[];
   selectedId: string | null;
   open: boolean;
+  creating: boolean;
+  onToggleCreating: (creating: boolean | ((current: boolean) => boolean)) => void;
   busy: boolean;
   onClose: () => void;
   onSelect: (id: string) => void;
   onCreate: (root: string, name: string) => Promise<boolean>;
 }) {
-  const [creating, setCreating] = useState(false);
   const [root, setRoot] = useState(groups[0]?.root ?? "");
-  const [name, setName] = useState("New conversation");
+  const [name, setName] = useState("Nova conversa");
   const [search, setSearch] = useState("");
 
   useEffect(() => {
@@ -868,7 +874,7 @@ function ConversationSidebar({
     event.preventDefault();
     if (!root || !name.trim()) return;
     void onCreate(root, name.trim()).then((created) => {
-      if (created) setCreating(false);
+      if (created) onToggleCreating(false);
     });
   };
 
@@ -882,7 +888,7 @@ function ConversationSidebar({
       <div className="sidebar-topline">
         <div>
           <span className="eyebrow">Harness</span>
-          <strong>Conversations</strong>
+          <strong>Conversas</strong>
         </div>
         <button
           className="icon-button close-drawer"
@@ -897,10 +903,10 @@ function ConversationSidebar({
         className="new-chat-button"
         type="button"
         disabled={!groups.length || busy}
-        onClick={() => setCreating((current) => !current)}
+        onClick={() => onToggleCreating((current) => !current)}
         aria-expanded={creating}
       >
-        <Plus size={16} /> Nova Conversation
+        <Plus size={16} /> Nova conversa
       </button>
       {creating && (
         <form className="new-chat-form" onSubmit={submit}>
@@ -929,7 +935,7 @@ function ConversationSidebar({
       )}
       <label className="sidebar-search">
         <Search size={15} aria-hidden="true" />
-        <span className="sr-only">Buscar Conversations</span>
+        <span className="sr-only">Buscar conversas</span>
         <input
           type="search"
           placeholder="Buscar"
@@ -986,23 +992,23 @@ function GrantChips({
 }) {
   const root = grants.find((grant) => grant.permission === "WorkspaceRootGrant");
   return (
-    <div className="permission-chips" aria-label="Grants da Conversation">
+    <div className="permission-chips" aria-label="Grants da conversa">
       {root && (
         <span className="permission permission--active" title={root.scope}>
-          <Search size={12} /> Read
+          <Search size={12} /> Leitura
         </span>
       )}
       {(
         [
-          ["WriteGrant", "Write", FileCode2],
-          ["WebAccessGrant", "Web", Globe2],
+          ["WriteGrant", "Write", "Escrita", FileCode2],
+          ["WebAccessGrant", "Web", "Web", Globe2],
         ] as const
-      ).map(([permission, label, Icon]) => {
+      ).map(([permission, variant, label, Icon]) => {
         const active = grants.some((grant) => grant.permission === permission);
         return (
           <button
             type="button"
-            className={`permission permission--${label} ${active ? "permission--active" : ""}`}
+            className={`permission permission--${variant} ${active ? "permission--active" : ""}`}
             key={permission}
             onClick={() => onToggle(permission)}
             disabled={busyAction === `grant-${permission}`}
@@ -1099,7 +1105,7 @@ function TimelineMessage({
         <div className="message-meta">
           <span>Harness</span>
           <time>{formatTimestamp(message.createdAt)}</time>
-          {message.live && <em className="live-label">live</em>}
+          {message.live && <em className="live-label">ao vivo</em>}
         </div>
         {message.reasoning && (
           <details className="reasoning-block">
@@ -1218,7 +1224,7 @@ function Feedback({
     <div className="feedback-row" aria-label="Feedback da resposta">
       <span>
         {draftId
-          ? `Draft ${draftId} criado`
+          ? `Rascunho ${draftId} criado`
           : feedback
             ? "Feedback registrado"
             : "Esta resposta ajudou?"}
@@ -1243,7 +1249,7 @@ function Feedback({
       </button>
       {feedback?.rating === -1 && !draftId && (
         <button type="button" onClick={exportDraft} disabled={busy}>
-          Exportar draft
+          Exportar rascunho
         </button>
       )}
       {error && <span className="inline-error" role="alert">{error}</span>}
@@ -1328,7 +1334,7 @@ function Composer({
               onClick={onStop}
               disabled={!isRunning || isStopping}
             >
-              <Square size={13} fill="currentColor" /> Stop
+              <Square size={13} fill="currentColor" /> Parar
             </button>
             <button
               className="send-button"
@@ -1341,7 +1347,7 @@ function Composer({
           </div>
         </div>
       </form>
-      <p>Solicitações concorrentes permanecem na fila desta Conversation.</p>
+      <p>Solicitações concorrentes permanecem na fila desta conversa.</p>
     </div>
   );
 }
@@ -1362,7 +1368,7 @@ function EmptyState({
       <p>{detail}</p>
       {action && (
         <button className="secondary-button" type="button" onClick={action}>
-          Nova Conversation
+          Nova conversa
         </button>
       )}
     </div>
@@ -1480,8 +1486,8 @@ function EvalsArea({
     <div className="evals-page">
       <header className="area-header">
         <div>
-          <span className="eyebrow">Evaluation lab</span>
-          <h1>Evals</h1>
+          <span className="eyebrow">Laboratório de avaliação</span>
+          <h1>Avaliações</h1>
           <p>Runs e relatórios retornados pelo serviço de avaliação.</p>
         </div>
         <div className="area-header-actions">
@@ -1693,8 +1699,8 @@ function SettingsArea({ snapshot }: { snapshot: SettingsSnapshot }) {
     <div className="settings-page">
       <header className="area-header">
         <div>
-          <span className="eyebrow">Control plane</span>
-          <h1>Settings</h1>
+          <span className="eyebrow">Painel de controle</span>
+          <h1>Configurações</h1>
           <p>Snapshot somente leitura retornado pelo servidor.</p>
         </div>
         <div className="area-header-actions">
@@ -1706,7 +1712,7 @@ function SettingsArea({ snapshot }: { snapshot: SettingsSnapshot }) {
 
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="Seções de configuração">
-          <a href="#health"><Activity size={15} /> Health</a>
+          <a href="#health"><Activity size={15} /> Saúde</a>
           <a href="#workspaces"><HardDrive size={15} /> Workspaces</a>
           <a href="#runtime"><Bot size={15} /> Runtime</a>
           <a href="#loop"><SettingsIcon size={15} /> Loop</a>
@@ -1716,7 +1722,7 @@ function SettingsArea({ snapshot }: { snapshot: SettingsSnapshot }) {
           <section className="settings-card health-card" id="health">
             <SettingsHeading
               icon={Activity}
-              title="Health"
+              title="Saúde"
               description="Readiness e capabilities observadas em /api/health."
             />
             <div className="health-grid">
@@ -1752,7 +1758,7 @@ function SettingsArea({ snapshot }: { snapshot: SettingsSnapshot }) {
                       <strong>{workspace.id}</strong>
                       <code>{workspace.root}</code>
                     </div>
-                    <span className="access-pill">authorized root</span>
+                    <span className="access-pill">raiz autorizada</span>
                   </div>
                 ))
               ) : (
@@ -1925,7 +1931,7 @@ function liveRunMessage(run: LiveRun): ChatMessage {
     ...(run.reasoning
       ? {
           reasoning: {
-            summary: `Reasoning live · ${run.steps} step(s)`,
+            summary: `Raciocínio ao vivo · ${run.steps} passo(s)`,
             content: run.reasoning,
             transient: true as const,
           },
