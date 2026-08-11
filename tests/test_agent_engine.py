@@ -12,6 +12,7 @@ from harness import (
     CanonicalHistoryEntryKind,
     ConfirmationDecision,
     ConfirmationGate,
+    ConfirmationPreview,
     ConfirmationRequest,
     ContextBuilder,
     ConversationStore,
@@ -59,6 +60,10 @@ class FakeRuntime:
 
 
 class FakeToolExecutor:
+    async def preview(self, call: ToolCall) -> ConfirmationPreview | None:
+        del call
+        return None
+
     def __init__(self, preflight: ToolBatchPreflight | None = None) -> None:
         self.preflight_result = preflight or ToolBatchPreflight(allowed=True)
         self.preflight_batches: list[tuple[ToolCall, ...]] = []
@@ -793,7 +798,9 @@ def test_web_taint_blocks_write_before_executor_and_finalizes_without_tools(
         assert finished.terminal_outcome is not None
         assert finished.terminal_outcome.kind is TerminalOutcomeKind.BLOCKED
         assert finished.terminal_outcome.reason_code == "web_taint_confirmation_required"
-        assert executor.preflight_batches == [(web_call,)]
+        # The write is preflighted — the Operator is only asked about calls that
+        # could actually run — but never executed.
+        assert executor.preflight_batches == [(web_call,), (write_call,)]
         assert executor.executed == [web_call]
         assert len(runtime.requests) == 3
         assert runtime.requests[-1].tools == ()
@@ -900,6 +907,72 @@ def _web_taint_scenario() -> tuple[ToolCall, ToolCall, FakeRuntime, FakeToolExec
         ]
     )
     return web_call, write_call, runtime, WebTaintExecutor()
+
+
+def test_an_untainted_write_asks_the_operator_and_carries_its_preview(tmp_path: Path) -> None:
+    class PreviewingExecutor(FakeToolExecutor):
+        async def preview(self, call: ToolCall) -> ConfirmationPreview | None:
+            return ConfirmationPreview(
+                tool_call_id=call.id,
+                path="notes.md",
+                kind="create",
+                diff="@@ -0,0 +1 @@\n+first",
+                truncated=False,
+            )
+
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        write_call = ToolCall(
+            id="write-1",
+            name="write_file",
+            arguments={"file_path": "notes.md", "content": "first\n"},
+        )
+        runtime = FakeRuntime(
+            [ModelResponse(tool_calls=(write_call,)), ModelResponse(content="written")]
+        )
+        gate = RecordingConfirmationGate(approved=True)
+        executor = PreviewingExecutor()
+
+        finished = await engine(
+            store,
+            runtime,
+            executor,
+            FakeEventSink(),
+            confirmation_gate=gate,
+            tool_effects={"write_file": ["workspace_write"]},
+        ).run(conversation_id, "write without ever touching the web")
+
+        assert finished.terminal_outcome is not None
+        assert finished.terminal_outcome.kind is TerminalOutcomeKind.COMPLETED
+        # No taint anywhere: the write alone is what earned the question.
+        assert [request.reason_code for request in gate.requests] == ["write_confirmation_required"]
+        assert gate.requests[0].previews[0].diff == "@@ -0,0 +1 @@\n+first"
+        assert [call.id for call in executor.executed] == ["write-1"]
+
+    asyncio.run(scenario())
+
+
+def test_a_read_only_batch_is_never_confirmed(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        read_call = ToolCall(id="read-1", name="read_file", arguments={"file_path": "notes.md"})
+        runtime = FakeRuntime(
+            [ModelResponse(tool_calls=(read_call,)), ModelResponse(content="read it")]
+        )
+        gate = RecordingConfirmationGate(approved=True)
+
+        await engine(
+            store,
+            runtime,
+            FakeToolExecutor(),
+            FakeEventSink(),
+            confirmation_gate=gate,
+            tool_effects={"read_file": ["workspace_read"]},
+        ).run(conversation_id, "just read")
+
+        assert gate.requests == []
+
+    asyncio.run(scenario())
 
 
 def test_approved_web_taint_confirmation_executes_the_write_and_completes(

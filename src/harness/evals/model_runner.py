@@ -25,6 +25,7 @@ from ..config import HarnessConfig, ToolRegistryConfig
 from ..context_builder import ContextBuilder
 from ..conversation_store import ConversationStore
 from ..domain import (
+    MUTATION_EFFECT,
     Grant,
     JsonValue,
     SessionPolicy,
@@ -279,6 +280,11 @@ class ModelCaseRunner:
                 await store.initialize()
                 revision = await store.create_workspace(str(workspace))
                 conversation = await store.create_conversation(revision.workspace_id)
+                # No Operator watches a bench run, and the default gate denies, so
+                # every fixture that writes would measure a refusal instead of the
+                # model. The waiver is the Operator's own mechanism, used here in
+                # the open rather than a gate that only evals have.
+                await store.waive_confirmation(conversation.id, MUTATION_EFFECT)
                 policy = _eval_policy()
                 executor = self._executor(workspace, policy, bench)
                 engine = AgentEngine(

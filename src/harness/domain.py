@@ -7,6 +7,11 @@ from enum import StrEnum
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | Sequence[JsonValue] | Mapping[str, JsonValue]
 
+# The effect class the registry gives every tool that changes the Workspace. Named
+# once because three layers key on it: the mutation lock, the confirmation gate and
+# the waiver the Operator can grant.
+MUTATION_EFFECT = "workspace_write"
+
 
 class RequestStatus(StrEnum):
     QUEUED = "queued"

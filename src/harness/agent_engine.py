@@ -30,6 +30,7 @@ from .ports import (
     AgentEventKind,
     ConfirmationDecision,
     ConfirmationGate,
+    ConfirmationPreview,
     ConfirmationRequest,
     DenyingConfirmationGate,
     EngineReadiness,
@@ -353,8 +354,29 @@ class AgentEngine:
                     "tool_calls_per_turn_limit",
                 )
 
-            if _requires_web_taint_confirmation(calls, context, self._tool_effects):
-                decision = await self._await_confirmation(turn, step_sequence, calls)
+            tool_executor = await self._tool_executor_factory.create(turn.conversation_id)
+            if self._stop_signal.stop_requested:
+                return await self._finish(turn, TerminalOutcomeKind.CANCELLED, "operator_stop")
+            if _deadline_reached(deadline):
+                return await self._finish_time_limit(turn)
+            preflight = await tool_executor.preflight(calls)
+            if _deadline_reached(deadline):
+                return await self._finish_time_limit(turn)
+
+            # A missing WriteGrant used to end the Turn, so the Operator answered the
+            # same question twice: once by hunting for a chip before anything had
+            # happened, and again in the dialog. Asking here folds them into one
+            # decision, taken with the diff in view. The grant is still the thing
+            # policy requires — approving is how the Operator gives it.
+            granted_by_dialog = False
+            if not preflight.allowed and preflight.reason_code == "write_grant_required":
+                decision = await self._await_confirmation(
+                    turn,
+                    step_sequence,
+                    calls,
+                    reason_code="write_grant_required",
+                    previews=await _previews(tool_executor, calls),
+                )
                 if self._stop_signal.stop_requested:
                     return await self._finish(turn, TerminalOutcomeKind.CANCELLED, "operator_stop")
                 if _deadline_reached(deadline):
@@ -363,7 +385,7 @@ class AgentEngine:
                     await self._append_blocked_automation(
                         turn,
                         decision.reason_code,
-                        automation_id="web_taint_confirmation",
+                        automation_id=_CONFIRMATION_AUTOMATION_ID,
                     )
                     await self._store.append_agent_step(turn.id, seed=step_seed, tool_calls=calls)
                     await self._emit_step_finished(turn, step_sequence)
@@ -373,15 +395,12 @@ class AgentEngine:
                         decision.reason_code,
                         deadline=deadline,
                     )
+                # The gate records the grant; the executor is rebuilt so it reads the
+                # policy that now exists, and the batch is judged again against it.
+                tool_executor = await self._tool_executor_factory.create(turn.conversation_id)
+                preflight = await tool_executor.preflight(calls)
+                granted_by_dialog = preflight.allowed
 
-            tool_executor = await self._tool_executor_factory.create(turn.conversation_id)
-            if self._stop_signal.stop_requested:
-                return await self._finish(turn, TerminalOutcomeKind.CANCELLED, "operator_stop")
-            if _deadline_reached(deadline):
-                return await self._finish_time_limit(turn)
-            preflight = await tool_executor.preflight(calls)
-            if _deadline_reached(deadline):
-                return await self._finish_time_limit(turn)
             if not preflight.allowed:
                 reason_code = preflight.reason_code or "tool_batch_blocked"
                 await self._append_blocked_automation(
@@ -413,6 +432,44 @@ class AgentEngine:
                     deadline=deadline,
                     detail=preflight.detail,
                 )
+
+            # The Operator is asked only about a batch that already passed schema,
+            # grants and path validation: a dialog about a call that could never
+            # run teaches them nothing, and the preview below needs a path the
+            # executor has already resolved. One decision per batch — an Operator
+            # who just approved this same diff to give the grant is not asked to
+            # approve it again.
+            confirmation_reason = (
+                None
+                if granted_by_dialog
+                else _confirmation_reason_code(calls, context, self._tool_effects)
+            )
+            if confirmation_reason is not None:
+                decision = await self._await_confirmation(
+                    turn,
+                    step_sequence,
+                    calls,
+                    reason_code=confirmation_reason,
+                    previews=await _previews(tool_executor, calls),
+                )
+                if self._stop_signal.stop_requested:
+                    return await self._finish(turn, TerminalOutcomeKind.CANCELLED, "operator_stop")
+                if _deadline_reached(deadline):
+                    return await self._finish_time_limit(turn)
+                if not decision.approved:
+                    await self._append_blocked_automation(
+                        turn,
+                        decision.reason_code,
+                        automation_id=_CONFIRMATION_AUTOMATION_ID,
+                    )
+                    await self._store.append_agent_step(turn.id, seed=step_seed, tool_calls=calls)
+                    await self._emit_step_finished(turn, step_sequence)
+                    return await self._finalize_blocked(
+                        turn,
+                        step_sequence,
+                        decision.reason_code,
+                        deadline=deadline,
+                    )
 
             results: list[ToolResult] = []
             for call in calls:
@@ -593,6 +650,9 @@ class AgentEngine:
         turn: Turn,
         step_sequence: int,
         calls: Sequence[ToolCall],
+        *,
+        reason_code: str,
+        previews: tuple[ConfirmationPreview, ...] = (),
     ) -> ConfirmationDecision:
         request = ConfirmationRequest(
             id=f"{turn.id}-confirmation-{step_sequence}",
@@ -600,14 +660,15 @@ class AgentEngine:
             turn_id=turn.id,
             request_id=turn.request_id,
             step_sequence=step_sequence,
-            reason_code="web_taint_confirmation_required",
+            reason_code=reason_code,
             tool_calls=tuple(calls),
+            previews=previews,
         )
         await self._store.append_canonical_history(
             turn.id,
             CanonicalHistoryEntryKind.INTERNAL_AUTOMATION,
             {
-                "automation_id": "web_taint_confirmation",
+                "automation_id": _CONFIRMATION_AUTOMATION_ID,
                 "status": "requested",
                 "confirmation_id": request.id,
                 "reason_code": request.reason_code,
@@ -619,7 +680,7 @@ class AgentEngine:
             turn.id,
             CanonicalHistoryEntryKind.INTERNAL_AUTOMATION,
             {
-                "automation_id": "web_taint_confirmation",
+                "automation_id": _CONFIRMATION_AUTOMATION_ID,
                 "status": "approved" if decision.approved else "denied",
                 "confirmation_id": request.id,
                 "reason_code": decision.reason_code,
@@ -761,6 +822,11 @@ _WORD = re.compile(r"\w")
 # Effects that a Turn carrying UntrustedWebTaint may not spend without the Operator:
 # one changes the Operator's files, the other takes their content off the machine.
 _TAINT_CONFIRMED_EFFECTS = frozenset({"workspace_write", "data_egress"})
+
+# One id for every Operator decision, whatever prompted it. The registry declares
+# it under the same name, so the CanonicalHistory entry, the contract and the
+# dialog are talking about one automation instead of three.
+_CONFIRMATION_AUTOMATION_ID = "operator_confirmation"
 
 # A preflight refusal the model itself can act on: it named a tool that does not
 # exist, or filled its arguments wrong. The blocked automation entry already tells
@@ -905,20 +971,31 @@ def _tool_error_code(result: ToolResult) -> str | None:
     return code if isinstance(code, str) else None
 
 
-def _requires_web_taint_confirmation(
+def _confirmation_reason_code(
     calls: Sequence[ToolCall],
     context: ModelContext,
     tool_effects: Mapping[str, Sequence[str]],
-) -> bool:
-    """Gates by effect, never by tool name.
+) -> str | None:
+    """Why this batch needs the Operator, or None if it does not.
 
-    Content from the web can tell the model to write the Operator's files or to
-    carry them off the machine, and both legs need the same decision: a name list
-    only covers the tools that existed when it was written.
+    Gates by effect, never by tool name: a name list only covers the tools that
+    existed when it was written. Two reasons, kept apart because they are not the
+    same event and the Operator reads them differently — a write is a write, and
+    a write the web asked for is a write the web asked for.
     """
-    if "UntrustedWebTaint" not in context.taints:
-        return False
-    return any(_confirmable_under_taint(call, tool_effects) for call in calls)
+    tainted = "UntrustedWebTaint" in context.taints
+    if tainted and any(_confirmable_under_taint(call, tool_effects) for call in calls):
+        return "web_taint_confirmation_required"
+    if any("workspace_write" in tool_effects.get(call.name, ()) for call in calls):
+        return "write_confirmation_required"
+    return None
+
+
+async def _previews(
+    executor: ToolExecutor, calls: Sequence[ToolCall]
+) -> tuple[ConfirmationPreview, ...]:
+    previews = [await executor.preview(call) for call in calls]
+    return tuple(preview for preview in previews if preview is not None)
 
 
 def _confirmable_under_taint(call: ToolCall, tool_effects: Mapping[str, Sequence[str]]) -> bool:

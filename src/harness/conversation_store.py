@@ -343,6 +343,38 @@ class ConversationStore:
                     (_serialize_datetime(datetime.now(UTC)),),
                 )
 
+            applied = connection.execute(
+                "SELECT 1 FROM schema_migrations WHERE version = 7"
+            ).fetchone()
+            if applied is None:
+                # A waiver is not a grant: it does not widen an effect, it silences
+                # a question about one. It lives in its own table for the same
+                # reason — so nothing reads it as authority — and keeps the shape
+                # of grants because the Operator revokes it the same way.
+                connection.execute(
+                    """
+                    CREATE TABLE confirmation_waivers (
+                        id TEXT PRIMARY KEY,
+                        conversation_id TEXT NOT NULL
+                            REFERENCES conversations(id) ON DELETE CASCADE,
+                        effect TEXT NOT NULL,
+                        granted_at TEXT NOT NULL,
+                        revoked_at TEXT
+                    )
+                    """
+                )
+                connection.execute(
+                    """
+                    CREATE UNIQUE INDEX one_active_waiver
+                    ON confirmation_waivers(conversation_id, effect)
+                    WHERE revoked_at IS NULL
+                    """
+                )
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (7, ?)",
+                    (_serialize_datetime(datetime.now(UTC)),),
+                )
+
     @_offload
     def create_workspace(self, reference: str) -> WorkspaceRevision:
         if not reference:
@@ -783,6 +815,60 @@ class ConversationStore:
             )
             _touch_conversation(connection, conversation_id, now)
         return grant
+
+    @_offload
+    def waive_confirmation(self, conversation_id: str, effect: str) -> None:
+        """Stops asking the Operator about this effect for this Conversation."""
+        if not effect:
+            raise ValueError("effect must not be empty")
+        now = datetime.now(UTC)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            _require_conversation(connection, conversation_id)
+            existing = connection.execute(
+                """
+                SELECT 1 FROM confirmation_waivers
+                WHERE conversation_id = ? AND effect = ? AND revoked_at IS NULL
+                """,
+                (conversation_id, effect),
+            ).fetchone()
+            if existing is not None:
+                return
+            connection.execute(
+                """
+                INSERT INTO confirmation_waivers(id, conversation_id, effect, granted_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (str(uuid4()), conversation_id, effect, _serialize_datetime(now)),
+            )
+            _touch_conversation(connection, conversation_id, now)
+
+    @_offload
+    def revoke_confirmation_waiver(self, conversation_id: str, effect: str) -> None:
+        now = datetime.now(UTC)
+        with self._connect() as connection:
+            _require_conversation(connection, conversation_id)
+            connection.execute(
+                """
+                UPDATE confirmation_waivers SET revoked_at = ?
+                WHERE conversation_id = ? AND effect = ? AND revoked_at IS NULL
+                """,
+                (_serialize_datetime(now), conversation_id, effect),
+            )
+            _touch_conversation(connection, conversation_id, now)
+
+    @_offload
+    def waived_confirmations(self, conversation_id: str) -> frozenset[str]:
+        with self._connect() as connection:
+            _require_conversation(connection, conversation_id)
+            rows = connection.execute(
+                """
+                SELECT effect FROM confirmation_waivers
+                WHERE conversation_id = ? AND revoked_at IS NULL
+                """,
+                (conversation_id,),
+            ).fetchall()
+        return frozenset(str(row["effect"]) for row in rows)
 
     @_offload
     def get_session_policy(self, conversation_id: str) -> SessionPolicy:

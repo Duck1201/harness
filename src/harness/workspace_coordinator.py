@@ -2,10 +2,9 @@ import asyncio
 from collections.abc import Mapping, Sequence
 
 from .conversation_store import ConversationStore
+from .domain import MUTATION_EFFECT as _MUTATION_EFFECT
 from .domain import ToolCall, ToolResult, ToolResultStatus
 from .ports import ToolExecutor
-
-_MUTATION_EFFECT = "workspace_write"
 
 
 class WorkspaceCoordinator:

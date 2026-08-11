@@ -51,7 +51,24 @@
       "data_egress": ["WebAccessGrant"]
     },
     "grant_authority": "Operator",
-    "model_cannot_grant_or_expand_access": true
+    "model_cannot_grant_or_expand_access": true,
+    "operator_confirmation": {
+      "automation_id": "operator_confirmation",
+      "basis": "effects",
+      "effects_requiring_decision": ["workspace_write"],
+      "effects_requiring_decision_under_taint": ["workspace_write", "data_egress"],
+      "decision_scope": "single_call",
+      "decision_grants": { "write_grant_required": "WriteGrant" },
+      "taint_decision_never_creates_grant": true,
+      "preview": "unified_diff_from_executor",
+      "waiver": {
+        "scope": "conversation",
+        "effects": ["workspace_write"],
+        "authority": "Operator",
+        "revocable": true,
+        "covers_tainted_calls": false
+      }
+    }
   },
   "tool_exposure": {
     "source": "config/tool-registry.json",

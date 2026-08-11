@@ -341,6 +341,25 @@ def test_revoked_write_grant_is_revalidated_before_the_effect(tmp_path: Path) ->
         revoked = client.delete(f"/api/conversations/{conversation_id}/grants/{grant['id']}")
         runtime.release.set()
 
+        # The revocation is revalidated before the effect: the write does not run,
+        # it stops on the Operator. Approving would hand the grant back, so the
+        # denial below is what keeps a revoked grant revoked.
+        deadline = monotonic() + 3
+        while monotonic() < deadline:
+            pending = client.get(f"/api/conversations/{conversation_id}/confirmation").json()[
+                "confirmation"
+            ]
+            if pending is not None:
+                break
+            sleep(0.01)
+        else:
+            raise AssertionError("the revoked write never reached the Operator")
+        assert pending["reason_code"] == "write_grant_required"
+        client.post(
+            f"/api/conversations/{conversation_id}/confirmation/{pending['id']}",
+            json={"approved": False},
+        )
+
         deadline = monotonic() + 3
         while monotonic() < deadline:
             snapshot = client.get(
@@ -355,8 +374,9 @@ def test_revoked_write_grant_is_revalidated_before_the_effect(tmp_path: Path) ->
     outcome = snapshot["turns"][0]["terminal_outcome"]
     assert revoked.status_code == 204
     assert outcome["kind"] == "blocked"
-    assert outcome["reason_code"] == "write_grant_required"
+    assert outcome["reason_code"] == "write_grant_denied"
     assert not (workspace / "effect.txt").exists()
+    assert snapshot["confirmation_waivers"] == []
 
 
 def test_stop_is_cooperative_and_the_next_pending_request_starts(tmp_path: Path) -> None:
@@ -447,6 +467,81 @@ def test_feedback_and_ui_snapshots_are_query_projections(tmp_path: Path) -> None
     assert evals["experiments"]
     assert settings["mutable"] is False
     assert settings["default_execution_route"] == "local_web_tools"
+
+
+def test_approving_the_dialog_is_how_the_write_grant_is_given(tmp_path: Path) -> None:
+    class WritingRuntime(FakeRuntime):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def generate(self, request: ModelRequest) -> ModelResponse:
+            del request
+            self.calls += 1
+            if self.calls == 1:
+                return ModelResponse(
+                    tool_calls=(
+                        ToolCall(
+                            id="write-1",
+                            name="write_file",
+                            arguments={"file_path": "nota.md", "content": "aprovado\n"},
+                        ),
+                    )
+                )
+            return ModelResponse(content="escrito")
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    app = create_app(
+        service=_service(tmp_path, workspace, runtime=WritingRuntime()),
+        static_dir=tmp_path / "missing-dist",
+    )
+
+    with TestClient(app, client=LOOPBACK) as client:
+        conversation_id = client.post(
+            "/api/conversations", json={"workspace_root": str(workspace)}
+        ).json()["conversation"]["id"]
+        # No WriteGrant is given up front: the dialog is where it is asked for.
+        client.post(
+            f"/api/conversations/{conversation_id}/requests",
+            json={"content": "cria nota.md"},
+        )
+
+        deadline = monotonic() + 3
+        while monotonic() < deadline:
+            pending = client.get(f"/api/conversations/{conversation_id}/confirmation").json()[
+                "confirmation"
+            ]
+            if pending is not None:
+                break
+            sleep(0.01)
+        else:
+            raise AssertionError("the write never reached the Operator")
+
+        assert pending["reason_code"] == "write_grant_required"
+        assert [preview["path"] for preview in pending["previews"]] == ["nota.md"]
+        assert "+aprovado" in pending["previews"][0]["diff"]
+        client.post(
+            f"/api/conversations/{conversation_id}/confirmation/{pending['id']}",
+            json={"approved": True},
+        )
+
+        deadline = monotonic() + 3
+        while monotonic() < deadline:
+            snapshot = client.get(
+                "/api/ui/chat", params={"conversation_id": conversation_id}
+            ).json()
+            if snapshot["active_turn"] is None:
+                break
+            sleep(0.01)
+        else:
+            raise AssertionError("approved turn did not finish")
+
+    assert snapshot["turns"][0]["terminal_outcome"]["kind"] == "completed"
+    assert (workspace / "nota.md").read_text(encoding="utf-8") == "aprovado\n"
+    granted = client.get(f"/api/conversations/{conversation_id}/grants").json()["grants"]
+    assert [item["permission"] for item in granted if item["permission"] == "WriteGrant"] == [
+        "WriteGrant"
+    ]
 
 
 def test_confirmation_is_absent_until_required_and_cannot_be_answered_blindly(

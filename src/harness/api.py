@@ -75,6 +75,7 @@ class GrantRequest(ApiModel):
 
 class ConfirmationDecisionRequest(ApiModel):
     approved: bool
+    waive: bool = False
 
 
 class LoginRequest(ApiModel):
@@ -481,9 +482,20 @@ def create_app(
         payload: ConfirmationDecisionRequest,
     ) -> dict[str, bool]:
         await application_service.resolve_confirmation(
-            conversation_id, confirmation_id, approved=payload.approved
+            conversation_id,
+            confirmation_id,
+            approved=payload.approved,
+            waive=payload.waive,
         )
         return {"approved": payload.approved}
+
+    @app.delete(
+        "/api/conversations/{conversation_id}/confirmation-waivers/{effect}",
+        status_code=204,
+    )
+    async def revoke_confirmation_waiver(conversation_id: str, effect: str) -> Response:
+        await application_service.revoke_confirmation_waiver(conversation_id, effect)
+        return Response(status_code=204)
 
     @app.post("/api/conversations/{conversation_id}/stop", status_code=202)
     async def stop(conversation_id: str) -> dict[str, bool]:
@@ -583,6 +595,7 @@ def create_app(
             "turns": [_turn_json(item) for item in turns],
             "feedback": [_feedback_json(item) for item in feedback_items],
             "pending_confirmation": _confirmation_json(confirmation),
+            "confirmation_waivers": cast(list[str], snapshot["confirmation_waivers"]),
         }
 
     @app.get("/api/ui/evals")
@@ -936,6 +949,16 @@ def _confirmation_json(request: ConfirmationRequest | None) -> dict[str, Any] | 
         "tool_calls": [
             {"id": call.id, "name": call.name, "arguments": dict(call.arguments)}
             for call in request.tool_calls
+        ],
+        "previews": [
+            {
+                "tool_call_id": preview.tool_call_id,
+                "path": preview.path,
+                "kind": preview.kind,
+                "diff": preview.diff,
+                "truncated": preview.truncated,
+            }
+            for preview in request.previews
         ],
     }
 

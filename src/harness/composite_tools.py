@@ -2,7 +2,7 @@ import asyncio
 from collections.abc import Mapping, Sequence
 
 from .domain import ToolCall, ToolResult, ToolResultStatus
-from .ports import ToolBatchPreflight, ToolExecutor
+from .ports import ConfirmationPreview, ToolBatchPreflight, ToolExecutor
 
 
 class CompositeToolExecutor:
@@ -54,6 +54,10 @@ class CompositeToolExecutor:
         self._approved = {call.id: call for call in calls}
         self._approved_order = [call.id for call in calls]
         return ToolBatchPreflight(allowed=True)
+
+    async def preview(self, call: ToolCall) -> ConfirmationPreview | None:
+        executor = self._routes.get(call.name)
+        return None if executor is None else await executor.preview(call)
 
     async def execute(self, call: ToolCall) -> ToolResult:
         approved = self._approved.get(call.id)

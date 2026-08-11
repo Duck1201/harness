@@ -128,6 +128,81 @@ def test_read_file_byte_limit_keeps_next_line_addressable(tmp_path: Path) -> Non
     asyncio.run(scenario())
 
 
+def test_preview_shows_what_the_mutation_would_change(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        executor = executor_for(tmp_path, "WorkspaceRootGrant", "WriteGrant")
+        (tmp_path / "notes.md").write_bytes(b"first\nsecond\n")
+        digest = hashlib.sha256(b"first\nsecond\n").hexdigest()
+
+        created = await executor.preview(
+            ToolCall(
+                id="create",
+                name="write_file",
+                arguments={"file_path": "new.md", "content": "hello\n"},
+            )
+        )
+        assert created is not None
+        assert (created.path, created.kind, created.truncated) == ("new.md", "create", False)
+        assert "+hello" in created.diff
+
+        replaced = await executor.preview(
+            ToolCall(
+                id="replace",
+                name="write_file",
+                arguments={
+                    "file_path": "notes.md",
+                    "content": "first\nthird\n",
+                    "expected_current_sha256": digest,
+                },
+            )
+        )
+        assert replaced is not None
+        assert replaced.kind == "replace"
+        assert "-second" in replaced.diff
+        assert "+third" in replaced.diff
+
+        edited = await executor.preview(
+            ToolCall(
+                id="edit",
+                name="edit",
+                arguments={
+                    "file_path": "notes.md",
+                    "start_line": 2,
+                    "end_line": 2,
+                    "replacement": "changed\n",
+                    "expected_current_sha256": digest,
+                },
+            )
+        )
+        assert edited is not None
+        assert edited.kind == "edit"
+        assert "+changed" in edited.diff
+
+        # Previewing is not writing.
+        assert (tmp_path / "notes.md").read_bytes() == b"first\nsecond\n"
+        assert not (tmp_path / "new.md").exists()
+
+        # Nothing to show for a read, and nothing at all for a denied path.
+        assert (
+            await executor.preview(
+                ToolCall(id="read", name="read_file", arguments={"file_path": "notes.md"})
+            )
+            is None
+        )
+        assert (
+            await executor.preview(
+                ToolCall(
+                    id="denied",
+                    name="write_file",
+                    arguments={"file_path": ".ssh/id_rsa", "content": "no"},
+                )
+            )
+            is None
+        )
+
+    asyncio.run(scenario())
+
+
 def test_empty_optional_argument_is_read_as_absent(tmp_path: Path) -> None:
     async def scenario() -> None:
         executor = executor_for(tmp_path, "WorkspaceRootGrant", "WriteGrant")

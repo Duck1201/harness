@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from harness import (
+    ConfirmationPreview,
     ConversationStore,
     ToolBatchPreflight,
     ToolCall,
@@ -24,6 +25,10 @@ class ConcurrentExecutor:
     async def preflight(self, calls: Sequence[ToolCall]) -> ToolBatchPreflight:
         del calls
         return ToolBatchPreflight(allowed=True)
+
+    async def preview(self, call: ToolCall) -> ConfirmationPreview | None:
+        del call
+        return None
 
     async def execute(self, call: ToolCall) -> ToolResult:
         if call.name == "read_file":

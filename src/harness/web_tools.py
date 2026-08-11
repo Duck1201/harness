@@ -18,7 +18,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 from .config import ToolDefinitionConfig, ToolRegistryConfig
 from .domain import SessionPolicy, ToolCall, ToolResult, ToolResultStatus
-from .ports import EngineReadiness, ToolBatchPreflight
+from .ports import ConfirmationPreview, EngineReadiness, ToolBatchPreflight
 
 type SocketAddress = tuple[str, int] | tuple[str, int, int, int]
 type AddressInfo = tuple[int, int, int, str, SocketAddress]
@@ -808,6 +808,11 @@ class WebToolExecutor:
         )
         self._search_cache[cache_key] = result
         return result
+
+    async def preview(self, call: ToolCall) -> ConfirmationPreview | None:
+        # Nothing here mutates the Workspace, so there is no diff to show.
+        del call
+        return None
 
     def _normalized(self, call: ToolCall) -> ToolCall:
         definition = self._registry.get(call.name)

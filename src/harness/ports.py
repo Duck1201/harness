@@ -121,10 +121,28 @@ class MalformedModelResponseError(ModelRuntimeError):
         self.raw = raw
 
 
+@dataclass(frozen=True, slots=True)
+class ConfirmationPreview:
+    """What a mutation would do, for an Operator deciding whether to allow it.
+
+    Approving a blob of arguments is approving nothing anyone read. The preview
+    is produced by the executor because only it resolves a path under the policy
+    guards; reading the file anywhere else would be a way around them.
+    """
+
+    tool_call_id: str
+    path: str
+    kind: str
+    diff: str
+    truncated: bool
+
+
 class ToolExecutor(Protocol):
     async def preflight(self, calls: Sequence[ToolCall]) -> ToolBatchPreflight: ...
 
     async def execute(self, call: ToolCall) -> ToolResult: ...
+
+    async def preview(self, call: ToolCall) -> ConfirmationPreview | None: ...
 
 
 class ToolExecutorFactory(Protocol):
@@ -153,6 +171,7 @@ class ConfirmationRequest:
     step_sequence: int
     reason_code: str
     tool_calls: tuple[ToolCall, ...]
+    previews: tuple[ConfirmationPreview, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

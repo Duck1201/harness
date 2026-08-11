@@ -5,6 +5,7 @@ from pathlib import Path
 
 from harness import (
     CompositeToolExecutor,
+    ConfirmationPreview,
     Grant,
     HttpResponse,
     RegistryToolExecutor,
@@ -31,6 +32,9 @@ class RecordingExecutor:
 
     async def execute(self, call: ToolCall) -> ToolResult:
         return await self.delegate.execute(call)
+
+    async def preview(self, call: ToolCall) -> ConfirmationPreview | None:
+        return await self.delegate.preview(call)
 
 
 class NoEffectHttpTransport:
@@ -76,6 +80,10 @@ class OrderedChildExecutor:
     async def preflight(self, calls: Sequence[ToolCall]) -> ToolBatchPreflight:
         self.preflight_batches.append(tuple(calls))
         return ToolBatchPreflight(allowed=True)
+
+    async def preview(self, call: ToolCall) -> ConfirmationPreview | None:
+        del call
+        return None
 
     async def execute(self, call: ToolCall) -> ToolResult:
         self.events.append(call.id)

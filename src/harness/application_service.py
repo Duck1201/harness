@@ -11,6 +11,7 @@ from .config import HarnessConfig, ToolRegistryConfig
 from .context_builder import ContextBuilder
 from .conversation_store import ConversationStore
 from .domain import (
+    MUTATION_EFFECT,
     Conversation,
     Feedback,
     Grant,
@@ -38,6 +39,7 @@ from .ports import (
     AgentEvent,
     AgentEventKind,
     ConfirmationDecision,
+    ConfirmationPreview,
     ConfirmationRequest,
     EngineReadiness,
     EventSink,
@@ -160,7 +162,7 @@ class ApplicationService:
         )
         self._event_bus = _LiveEventBus()
         self._event_sink = _ServiceEventSink(self._event_bus, observability_store)
-        self._confirmation_gate = OperatorConfirmationGate(self._event_sink)
+        self._confirmation_gate = OperatorConfirmationGate(self._event_sink, self.store)
 
     async def initialize(self) -> None:
         if self._initialized:
@@ -416,6 +418,7 @@ class ApplicationService:
             "turns": turns,
             "feedback": feedback,
             "pending_confirmation": self._confirmation_gate.pending(conversation_id),
+            "confirmation_waivers": sorted(await self.store.waived_confirmations(conversation_id)),
         }
 
     async def stop(self, conversation_id: str) -> None:
@@ -437,10 +440,25 @@ class ApplicationService:
         return self._confirmation_gate.pending(conversation_id)
 
     async def resolve_confirmation(
-        self, conversation_id: str, confirmation_id: str, *, approved: bool
+        self,
+        conversation_id: str,
+        confirmation_id: str,
+        *,
+        approved: bool,
+        waive: bool = False,
     ) -> None:
         await self.store.get_conversation(conversation_id)
-        self._confirmation_gate.resolve(conversation_id, confirmation_id, approved=approved)
+        await self._confirmation_gate.resolve(
+            conversation_id, confirmation_id, approved=approved, waive=waive
+        )
+
+    async def confirmation_waivers(self, conversation_id: str) -> frozenset[str]:
+        await self.store.get_conversation(conversation_id)
+        return await self.store.waived_confirmations(conversation_id)
+
+    async def revoke_confirmation_waiver(self, conversation_id: str, effect: str) -> None:
+        await self.store.get_conversation(conversation_id)
+        await self.store.revoke_confirmation_waiver(conversation_id, effect)
 
     def subscribe(self, conversation_id: str) -> asyncio.Queue[AgentEvent]:
         return self._event_bus.subscribe(conversation_id)
@@ -656,6 +674,10 @@ class _CoordinatedToolExecutor:
     async def execute(self, call: ToolCall) -> ToolResult:
         return await self._coordinator.execute(self._workspace_id, call, self._executor)
 
+    async def preview(self, call: ToolCall) -> ConfirmationPreview | None:
+        # A preview reads; the coordinator's lock exists to serialise writes.
+        return await self._executor.preview(call)
+
 
 class _CooperativeStopSignal:
     def __init__(self) -> None:
@@ -677,8 +699,9 @@ class OperatorConfirmationGate:
     matters while its Turn is alive, and a Turn does not survive a restart.
     """
 
-    def __init__(self, event_sink: EventSink) -> None:
+    def __init__(self, event_sink: EventSink, store: ConversationStore) -> None:
         self._event_sink = event_sink
+        self._store = store
         self._pending: dict[str, tuple[ConfirmationRequest, asyncio.Future[ConfirmationDecision]]]
         self._pending = {}
 
@@ -689,6 +712,14 @@ class OperatorConfirmationGate:
     async def confirm(self, request: ConfirmationRequest) -> ConfirmationDecision:
         if request.conversation_id in self._pending:
             raise RuntimeError("a Conversation runs one Turn at a time")
+        if request.reason_code in _WAIVABLE_REASONS and MUTATION_EFFECT in (
+            await self._store.waived_confirmations(request.conversation_id)
+        ):
+            # The Operator said to stop asking for this Conversation. The waiver
+            # covers the plain write, never the tainted one: the web asking for a
+            # write is a different question, and it was never answered.
+            await self._record_grant(request)
+            return ConfirmationDecision(approved=True, reason_code="write_confirmation_waived")
         future: asyncio.Future[ConfirmationDecision] = asyncio.get_running_loop().create_future()
         self._pending[request.conversation_id] = (request, future)
         try:
@@ -708,6 +739,16 @@ class OperatorConfirmationGate:
                             }
                             for call in request.tool_calls
                         ],
+                        "previews": [
+                            {
+                                "tool_call_id": preview.tool_call_id,
+                                "path": preview.path,
+                                "kind": preview.kind,
+                                "diff": preview.diff,
+                                "truncated": preview.truncated,
+                            }
+                            for preview in request.previews
+                        ],
                     },
                     conversation_id=request.conversation_id,
                     request_id=request.request_id,
@@ -717,7 +758,14 @@ class OperatorConfirmationGate:
         finally:
             self._pending.pop(request.conversation_id, None)
 
-    def resolve(self, conversation_id: str, confirmation_id: str, *, approved: bool) -> None:
+    async def resolve(
+        self,
+        conversation_id: str,
+        confirmation_id: str,
+        *,
+        approved: bool,
+        waive: bool = False,
+    ) -> None:
         entry = self._pending.get(conversation_id)
         if entry is None or entry[0].id != confirmation_id:
             raise ApplicationServiceError(
@@ -725,17 +773,19 @@ class OperatorConfirmationGate:
                 "There is no pending confirmation with this identifier.",
                 status_code=409,
             )
-        future = entry[1]
+        request, future = entry
         if future.done():
             return
+        if waive and approved and request.reason_code in _WAIVABLE_REASONS:
+            # Waiving is its own act, not a side effect of approving: the Operator
+            # ticked a box that says so, and it is recorded where it can be revoked.
+            await self._store.waive_confirmation(conversation_id, MUTATION_EFFECT)
+        if approved:
+            await self._record_grant(request)
         future.set_result(
             ConfirmationDecision(
                 approved=approved,
-                reason_code=(
-                    "web_taint_confirmation_approved"
-                    if approved
-                    else "web_taint_confirmation_denied"
-                ),
+                reason_code=_decision_reason_code(request.reason_code, approved=approved),
             )
         )
 
@@ -744,6 +794,29 @@ class OperatorConfirmationGate:
         if entry is None or entry[1].done():
             return
         entry[1].set_result(ConfirmationDecision(approved=False, reason_code=reason_code))
+
+    async def _record_grant(self, request: ConfirmationRequest) -> None:
+        """Gives the WriteGrant the approved batch is missing.
+
+        Policy still requires the grant for every workspace_write; what changed is
+        where the Operator gives it. Being asked to find a chip before anything has
+        happened, and then to approve the same write in a dialog, is one decision
+        charged twice — so the dialog is where it is taken, with the diff in view.
+        """
+        if request.reason_code != "write_grant_required":
+            return
+        await self._store.grant(request.conversation_id, "WriteGrant", "workspace")
+
+
+# Reasons whose question is "may the model write here": the Operator can answer
+# them once for the whole Conversation. A tainted write is never one of them.
+_WAIVABLE_REASONS = frozenset({"write_confirmation_required", "write_grant_required"})
+
+
+def _decision_reason_code(requested: str, *, approved: bool) -> str:
+    """Answers in the words of the question: …_required becomes …_approved/_denied."""
+    stem = requested.removesuffix("_required")
+    return f"{stem}_approved" if approved else f"{stem}_denied"
 
 
 class _LiveEventBus:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import json
 import os
 import re
@@ -16,7 +17,7 @@ from jsonschema import Draft202012Validator
 
 from .config import ReplayPolicy, ToolDefinitionConfig, ToolRegistryConfig
 from .domain import SessionPolicy, ToolCall, ToolResult, ToolResultStatus
-from .ports import ToolBatchPreflight
+from .ports import ConfirmationPreview, ToolBatchPreflight
 
 _LOCAL_TOOL_NAMES = frozenset(
     {"read_file", "write_file", "edit", "list_directory", "glob", "grep_search"}
@@ -27,6 +28,9 @@ _CREDENTIAL_DIRECTORIES = frozenset(
 _PRIVATE_KEY_NAMES = frozenset({"id_dsa", "id_ecdsa", "id_ed25519", "id_rsa", "identity"})
 _PRIVATE_KEY_SUFFIXES = frozenset({".jks", ".key", ".p12", ".pem", ".pfx", ".pkcs12"})
 _ENV_EXAMPLE_SUFFIXES = (".example", ".sample", ".template")
+# A confirmation dialog is read, not scrolled forever. Past this the diff is cut
+# and says so, so the Operator knows they are deciding on a summary.
+_PREVIEW_DIFF_MAX_LINES = 400
 
 
 class _PreflightIssue(Exception):
@@ -849,6 +853,62 @@ class RegistryToolExecutor:
             meta=_meta(truncated=False, mutation=True),
         )
 
+    async def preview(self, call: ToolCall) -> ConfirmationPreview | None:
+        """The diff an Operator is being asked to approve, or None if there is none.
+
+        Runs the same path guards as a mutation, so a preview cannot read what a
+        write could not touch. Anything that stops it from producing a readable
+        diff — a binary file, a path the policy denies, a tool that changes
+        nothing — returns None rather than a half-answer: the dialog then says
+        it could not preview, instead of showing an empty diff as if nothing
+        would change.
+        """
+        call = self._normalized(call)
+        if call.name not in {"write_file", "edit"}:
+            return None
+        try:
+            parts = _relative_parts(_string_argument(call, "file_path"), allow_dot=False)
+            self._validate_policy_path(parts)
+            self._validate_mutation_path(parts)
+        except _PreflightIssue:
+            return None
+        path = self._workspace_root.joinpath(*parts)
+        relative_path = "/".join(parts)
+        try:
+            before = path.read_bytes() if path.is_file() else b""
+            exists = path.is_file()
+            after = self._previewed_bytes(call, before)
+        except (OSError, ValueError):
+            return None
+        if after is None:
+            return None
+        try:
+            before_text = before.decode("utf-8")
+            after_text = after.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        diff, truncated = _unified_diff(before_text, after_text, relative_path)
+        return ConfirmationPreview(
+            tool_call_id=call.id,
+            path=relative_path,
+            kind="edit" if call.name == "edit" else ("replace" if exists else "create"),
+            diff=diff,
+            truncated=truncated,
+        )
+
+    def _previewed_bytes(self, call: ToolCall, before: bytes) -> bytes | None:
+        if call.name == "write_file":
+            return _string_argument(call, "content").encode("utf-8")
+        lines = before.splitlines(keepends=True)
+        start_line = cast(int, call.arguments["start_line"])
+        end_line = cast(int, call.arguments["end_line"])
+        if start_line > len(lines) or end_line > len(lines):
+            return None
+        start_offset = sum(len(line) for line in lines[: start_line - 1])
+        end_offset = sum(len(line) for line in lines[:end_line])
+        replacement = _string_argument(call, "replacement").encode("utf-8")
+        return before[:start_offset] + replacement + before[end_offset:]
+
     def _normalized(self, call: ToolCall) -> ToolCall:
         definition = self._registry.get(call.name)
         if definition is None:
@@ -1080,6 +1140,22 @@ def _arguments_fingerprint(call: ToolCall) -> str:
         sort_keys=True,
     ).encode("utf-8")
     return sha256(call.name.encode("utf-8") + b"\x00" + serialized).hexdigest()
+
+
+def _unified_diff(before: str, after: str, path: str) -> tuple[str, bool]:
+    lines = list(
+        difflib.unified_diff(
+            before.splitlines(keepends=True),
+            after.splitlines(keepends=True),
+            fromfile=f"a/{path}",
+            tofile=f"b/{path}",
+            n=3,
+        )
+    )
+    truncated = len(lines) > _PREVIEW_DIFF_MAX_LINES
+    if truncated:
+        lines = lines[:_PREVIEW_DIFF_MAX_LINES]
+    return "".join(lines).rstrip("\n"), truncated
 
 
 def _corrected_replacement(removed: bytes, replacement: bytes) -> str:

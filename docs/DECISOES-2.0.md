@@ -54,7 +54,9 @@ O vocabulário canônico está em [`CONTEXT.md`](../CONTEXT.md). Em particular:
 | Retenção | Uma policy global remove Conversation inteira; nunca cria buracos no histórico |
 | UI | AG-UI é projeção do estado, não fonte canônica; UX e evals são web-first |
 | Acesso | Sem senha de Operator, só loopback direto é atendido; com senha, toda rota exige sessão. Não há terceira opção |
-| Confirmação | Sob UntrustedWebTaint, todo efeito `workspace_write` ou `data_egress` exige decisão do Operator para aquela chamada; o gate lê o efeito no registry, nunca o nome da tool; aprovar não cria grant nem amplia acesso |
+| Confirmação | Todo efeito `workspace_write` exige decisão do Operator para aquela chamada, e sob UntrustedWebTaint `data_egress` também; o gate lê o efeito no registry, nunca o nome da tool; sob taint, aprovar não cria grant nem amplia acesso |
+| Concessão | Falta de WriteGrant é perguntada, não fatal: o Operator concede aprovando o diálogo, e o grant continua exigido pela policy e revogável |
+| Dispensa | O Operator pode dispensar a confirmação de `workspace_write` numa Conversation; é ato próprio e revogável, nunca efeito colateral de aprovar, e não cobre chamada sob taint |
 | Roadmap | Qwen2.5 está fora do roadmap e não é challenger de nenhum experimento |
 
 ## Estado, projeções e persistência
@@ -72,6 +74,12 @@ Nomes de tools não autorizam nada. A policy resolve os efeitos declarados no re
 - `data_egress` exige WebAccessGrant e controles de destino, DNS e redirect.
 
 WebAccessGrant não é consentimento para backend remoto. Conteúdo obtido da web recebe UntrustedWebTaint, que acompanha derivações e nunca cria grant, confirmação ou permissão. Uma página hostil pode instruir o modelo tanto a alterar arquivos quanto a levá-los embora numa consulta ou URL, então as duas pernas passam pela mesma confirmação enquanto o taint estiver no contexto, e um efeito desconhecido é tratado como se precisasse dela. Paths continuam relativos, canonicalizados, com symlinks resolvidos e confinados ao Workspace.
+
+Toda `workspace_write` para no Operator, que decide vendo o diff que o executor produziu — aprovar argumentos que ninguém leu não é aprovar nada. A pergunta chega depois do preflight: um diálogo sobre chamada que jamais rodaria não ensina nada, e o preview precisa de um path já canonicalizado.
+
+Grant e confirmação já foram duas perguntas: ligar WriteGrant antes de qualquer coisa acontecer e depois aprovar a escrita. É uma decisão cobrada duas vezes, e a primeira é feita às cegas. Então a falta de WriteGrant não encerra mais o Turn: ela é perguntada, com o diff à vista, e aprovar concede o grant. A policy não mudou — `workspace_write` continua exigindo WorkspaceRootGrant e WriteGrant, o grant continua visível e revogável, e revogar durante o Turn continua sendo revalidado antes do efeito. Mudou onde o Operator concede. Aprovar sob UntrustedWebTaint segue sem criar grant algum: ali a pergunta é outra e a resposta vale para uma chamada só.
+
+Quem não quer ser perguntado a cada escrita registra uma dispensa para a Conversation, que é revogável, aparece no estado como qualquer autorização e vale só para a escrita sem taint. Nenhum caminho de decisão lê nome de tool: quem decide é o efeito declarado em [`config/tool-registry.json`](../config/tool-registry.json), configurado em [`config/harness.json#policy`](../config/harness.json).
 
 ## Tools, automações e resultados
 

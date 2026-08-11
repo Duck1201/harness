@@ -22,6 +22,7 @@ from ..domain import (
 )
 from ..local_tools import RegistryToolExecutor
 from ..ports import (
+    ConfirmationPreview,
     EngineReadiness,
     ModelMessage,
     ModelRequest,
@@ -319,6 +320,10 @@ class _NoopToolExecutor:
 
     async def execute(self, call: ToolCall) -> ToolResult:
         raise RuntimeError(f"unexpected final-step tool execution: {call.name}")
+
+    async def preview(self, call: ToolCall) -> ConfirmationPreview | None:
+        del call
+        return None
 
 
 def _tool_call(raw: Mapping[str, JsonValue], index: int) -> ToolCall:

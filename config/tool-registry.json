@@ -347,6 +347,15 @@
       "required_grants": [],
       "model_selectable": false,
       "config": "config/harness.json#context"
+    },
+    {
+      "id": "operator_confirmation",
+      "kind": "InternalAutomation",
+      "trigger": "batch_requires_operator_decision",
+      "effects": [],
+      "required_grants": [],
+      "model_selectable": false,
+      "config": "config/harness.json#policy.operator_confirmation"
     }
   ],
   "prohibited_capabilities": [
