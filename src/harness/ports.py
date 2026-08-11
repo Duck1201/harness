@@ -107,7 +107,26 @@ class ModelRuntime(Protocol):
 
 
 class ModelRuntimeError(Exception):
-    pass
+    """The provider refused or was unavailable.
+
+    Carries the class of the failure, not just its text: a Turn that dies on a
+    provider is a different event from a Turn that dies on a harness bug, and
+    telling them apart afterwards needs more than the exception's name. The
+    runtime that raises it fills these; whoever ends the Turn reads them.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error: Mapping[str, JsonValue] | None = None,
+        retryable: bool = False,
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.error = error
+        self.retryable = retryable
+        self.status_code = status_code
 
 
 class MalformedModelResponseError(ModelRuntimeError):
@@ -192,6 +211,15 @@ class ConfirmationGate(Protocol):
     the request is known would be dropped.
     """
 
+    async def will_announce(self, request: ConfirmationRequest) -> bool:
+        """Whether this request actually reaches a human.
+
+        A gate that answers from a standing decision — a waiver, a policy of
+        refusing everything — decides without asking. The Turn's history says so
+        instead of recording a question nobody heard.
+        """
+        ...
+
     async def confirm(self, request: ConfirmationRequest) -> ConfirmationDecision: ...
 
 
@@ -202,6 +230,10 @@ class DenyingConfirmationGate:
     reason code is the request's own, because from the Turn's point of view the
     confirmation was required and never obtained.
     """
+
+    async def will_announce(self, request: ConfirmationRequest) -> bool:
+        del request
+        return False
 
     async def confirm(self, request: ConfirmationRequest) -> ConfirmationDecision:
         return ConfirmationDecision(approved=False, reason_code=request.reason_code)

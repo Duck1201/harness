@@ -132,6 +132,46 @@ def test_ollama_runtime_returns_structured_http_error() -> None:
     asyncio.run(scenario())
 
 
+def test_a_gateway_answering_in_html_is_still_a_provider_failure() -> None:
+    async def scenario() -> None:
+        # A proxy in the way answers its 502 in HTML. Reading that body used to
+        # raise ValueError from inside the raise it was building, and the Turn
+        # blamed the harness for what the provider did.
+        runtime = OllamaRuntime(
+            base_url="http://ollama.test",
+            model="mitos:latest",
+            expected_digest="abc123",
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    502,
+                    text="<html><body>Bad Gateway</body></html>",
+                    request=request,
+                )
+            ),
+        )
+
+        with pytest.raises(OllamaRuntimeError) as captured:
+            await runtime.generate(
+                ModelRequest(
+                    messages=(ModelMessage(ModelRole.USER, "hello"),),
+                    tools=(),
+                    options={},
+                    seed=1,
+                )
+            )
+        await runtime.aclose()
+
+        assert captured.value.status_code == 502
+        assert captured.value.retryable is True
+        assert captured.value.error == {
+            "code": "ollama_http_error",
+            "message": "Bad Gateway",
+            "status_code": 502,
+        }
+
+    asyncio.run(scenario())
+
+
 def test_ollama_profile_verification_uses_tags_digest() -> None:
     async def scenario() -> None:
         requested_paths: list[str] = []

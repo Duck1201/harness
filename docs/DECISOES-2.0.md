@@ -91,6 +91,8 @@ Quem não quer ser perguntado a cada escrita registra uma dispensa para a Conver
 
 `blocked` significa que o harness recusou a operação por policy, grant, validação ou limite. Indisponibilidade ou recusa de provedor é `failed`, com classe em `error`; `empty` é sucesso sem itens. Nenhum deles pode virar string vazia ambígua.
 
+A mesma separação vale no TerminalOutcome do Turn: provedor indisponível e provedor que recusa têm reason code próprio, e o `detail` carrega a classe que o runtime reportou. Erro interno do harness continua sendo `engine_error` e não se disfarça de problema do provedor — quem lê o outcome precisa saber se reinicia o runtime ou abre um bug.
+
 ## Web e browser
 
 `web_search` usa Brave Search. `web_fetch` tenta HTTP guardado e pode escalar internamente para Brave por sintoma. Ambos são `data_egress`, revalidam SSRF em redirects e produzem dados com UntrustedWebTaint.

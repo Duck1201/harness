@@ -39,6 +39,7 @@ from .ports import (
     ModelRequest,
     ModelResponse,
     ModelRuntime,
+    ModelRuntimeError,
     NeverStopSignal,
     StopSignal,
     ToolExecutor,
@@ -166,6 +167,27 @@ class AgentEngine:
         except asyncio.CancelledError:
             await self._finish(turn, TerminalOutcomeKind.CANCELLED, "engine_cancelled")
             raise
+        except MalformedModelResponseError as error:
+            # The loop catches these to spend a retry, so nothing should reach
+            # here. If something does, it is still an answer the harness refused
+            # to read — not the provider refusing to answer, which is what the
+            # clause below means.
+            return await self._finish(
+                turn,
+                TerminalOutcomeKind.FAILED,
+                "malformed_model_response",
+                detail=str(error),
+            )
+        except ModelRuntimeError as error:
+            # The provider refused or was unreachable. That is not the harness
+            # crashing, and an Operator reading engine_error for both has no way
+            # to tell whether to restart Ollama or report a bug.
+            return await self._finish(
+                turn,
+                TerminalOutcomeKind.FAILED,
+                ("model_provider_unavailable" if error.retryable else "model_provider_error"),
+                detail=_provider_detail(error),
+            )
         except Exception as error:
             return await self._finish(
                 turn,
@@ -664,26 +686,33 @@ class AgentEngine:
             tool_calls=tuple(calls),
             previews=previews,
         )
-        await self._store.append_canonical_history(
-            turn.id,
-            CanonicalHistoryEntryKind.INTERNAL_AUTOMATION,
-            {
-                "automation_id": _CONFIRMATION_AUTOMATION_ID,
-                "status": "requested",
-                "confirmation_id": request.id,
-                "reason_code": request.reason_code,
-                "tool_calls": [_tool_call_payload(call) for call in calls],
-            },
-        )
+        # The question is recorded before the wait, not after: a Turn that dies
+        # parked on a confirmation has this entry and nothing else to explain it.
+        # It is only recorded when there is a question — a gate answering from a
+        # waiver decides without asking, and the history says so.
+        announced = await self._confirmation_gate.will_announce(request)
+        if announced:
+            await self._store.append_canonical_history(
+                turn.id,
+                CanonicalHistoryEntryKind.INTERNAL_AUTOMATION,
+                {
+                    "automation_id": _CONFIRMATION_AUTOMATION_ID,
+                    "status": "requested",
+                    "confirmation_id": request.id,
+                    "reason_code": request.reason_code,
+                    "tool_calls": [_tool_call_payload(call) for call in calls],
+                },
+            )
         decision = await self._confirmation_gate.confirm(request)
         await self._store.append_canonical_history(
             turn.id,
             CanonicalHistoryEntryKind.INTERNAL_AUTOMATION,
             {
                 "automation_id": _CONFIRMATION_AUTOMATION_ID,
-                "status": "approved" if decision.approved else "denied",
+                "status": _decision_status(decision.approved, announced=announced),
                 "confirmation_id": request.id,
                 "reason_code": decision.reason_code,
+                **({} if announced else {"tool_calls": [_tool_call_payload(c) for c in calls]}),
             },
         )
         await self._emit(
@@ -962,6 +991,22 @@ def _is_reasoning_key(key: str) -> bool:
     return normalized in {"reasoning", "thinking"} or normalized.endswith(
         ("_reasoning", "_thinking")
     )
+
+
+def _decision_status(approved: bool, *, announced: bool) -> str:
+    if not approved:
+        return "denied"
+    return "approved" if announced else "waived"
+
+
+def _provider_detail(error: ModelRuntimeError) -> str:
+    """The provider's own class and message, with its status when it gave one."""
+    payload = error.error or {}
+    code = payload.get("code")
+    status = payload.get("status_code", error.status_code)
+    parts = [str(code) if isinstance(code, str) else type(error).__name__, str(error)]
+    detail = ": ".join(part for part in parts if part)
+    return f"{detail} (HTTP {status})" if isinstance(status, int) else detail
 
 
 def _tool_error_code(result: ToolResult) -> str | None:

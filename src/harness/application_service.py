@@ -709,12 +709,18 @@ class OperatorConfirmationGate:
         entry = self._pending.get(conversation_id)
         return None if entry is None else entry[0]
 
+    async def will_announce(self, request: ConfirmationRequest) -> bool:
+        return not await self._waived(request)
+
+    async def _waived(self, request: ConfirmationRequest) -> bool:
+        return request.reason_code in _WAIVABLE_REASONS and MUTATION_EFFECT in (
+            await self._store.waived_confirmations(request.conversation_id)
+        )
+
     async def confirm(self, request: ConfirmationRequest) -> ConfirmationDecision:
         if request.conversation_id in self._pending:
             raise RuntimeError("a Conversation runs one Turn at a time")
-        if request.reason_code in _WAIVABLE_REASONS and MUTATION_EFFECT in (
-            await self._store.waived_confirmations(request.conversation_id)
-        ):
+        if await self._waived(request):
             # The Operator said to stop asking for this Conversation. The waiver
             # covers the plain write, never the tainted one: the web asking for a
             # write is a different question, and it was never answered.

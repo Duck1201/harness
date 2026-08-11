@@ -21,6 +21,7 @@ from harness import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelRuntimeError,
     RegistryToolExecutor,
     SessionPolicy,
     TerminalOutcomeKind,
@@ -102,9 +103,14 @@ async def conversation_store(tmp_path: Path) -> tuple[ConversationStore, str]:
 
 
 class RecordingConfirmationGate:
-    def __init__(self, *, approved: bool) -> None:
+    def __init__(self, *, approved: bool, announces: bool = True) -> None:
         self.approved = approved
+        self.announces = announces
         self.requests: list[ConfirmationRequest] = []
+
+    async def will_announce(self, request: ConfirmationRequest) -> bool:
+        del request
+        return self.announces
 
     async def confirm(self, request: ConfirmationRequest) -> ConfirmationDecision:
         self.requests.append(request)
@@ -438,6 +444,62 @@ def test_a_refusal_repeated_verbatim_still_spends_the_budget(tmp_path: Path) -> 
         assert finished.terminal_outcome is not None
         assert finished.terminal_outcome.kind is TerminalOutcomeKind.LIMIT_REACHED
         assert finished.terminal_outcome.reason_code == "tool_calls_per_turn_limit"
+
+    asyncio.run(scenario())
+
+
+def test_a_provider_failure_is_not_reported_as_a_harness_crash(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        unreachable = ModelRuntimeError(
+            "connection refused",
+            error={"code": "ollama_transport_error", "message": "connection refused"},
+            retryable=True,
+        )
+        finished = await engine(
+            store, FakeRuntime([unreachable]), FakeToolExecutor(), FakeEventSink()
+        ).run(conversation_id, "provider is down")
+
+        assert finished.terminal_outcome is not None
+        assert finished.terminal_outcome.kind is TerminalOutcomeKind.FAILED
+        assert finished.terminal_outcome.reason_code == "model_provider_unavailable"
+        # The class survives, so the Operator knows to look at Ollama.
+        assert finished.terminal_outcome.detail is not None
+        assert "ollama_transport_error" in finished.terminal_outcome.detail
+
+    asyncio.run(scenario())
+
+
+def test_a_refusing_provider_and_a_broken_harness_get_different_codes(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        refused = ModelRuntimeError(
+            "model unavailable",
+            error={"code": "ollama_http_error", "message": "model unavailable"},
+            retryable=False,
+            status_code=404,
+        )
+        refusal = await engine(
+            store, FakeRuntime([refused]), FakeToolExecutor(), FakeEventSink()
+        ).run(conversation_id, "provider refuses")
+
+        assert refusal.terminal_outcome is not None
+        assert refusal.terminal_outcome.reason_code == "model_provider_error"
+        assert refusal.terminal_outcome.detail is not None
+        assert "HTTP 404" in refusal.terminal_outcome.detail
+
+        # A bug in the harness keeps the generic code: it is not the provider's.
+        crash = await engine(
+            store,
+            FakeRuntime([ValueError("harness bug")]),
+            FakeToolExecutor(),
+            FakeEventSink(),
+        ).run(conversation_id, "harness breaks")
+
+        assert crash.terminal_outcome is not None
+        assert crash.terminal_outcome.reason_code == "engine_error"
 
     asyncio.run(scenario())
 
@@ -1005,6 +1067,32 @@ def test_approved_web_taint_confirmation_executes_the_write_and_completes(
             if item.kind is CanonicalHistoryEntryKind.INTERNAL_AUTOMATION
         ]
         assert [item["status"] for item in automation] == ["requested", "approved"]
+
+    asyncio.run(scenario())
+
+
+def test_a_decision_taken_without_asking_records_no_question(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        _, write_call, runtime, executor = _web_taint_scenario()
+        # A gate answering from a standing waiver never reaches a human.
+        gate = RecordingConfirmationGate(approved=True, announces=False)
+
+        finished = await engine(
+            store, runtime, executor, FakeEventSink(), confirmation_gate=gate
+        ).run(conversation_id, "research then write")
+
+        assert finished.terminal_outcome is not None
+        assert finished.terminal_outcome.kind is TerminalOutcomeKind.COMPLETED
+        assert write_call.id in [call.id for call in executor.executed]
+        automation = [
+            item.payload
+            for item in await store.list_canonical_history(conversation_id)
+            if item.kind is CanonicalHistoryEntryKind.INTERNAL_AUTOMATION
+        ]
+        assert [item["status"] for item in automation] == ["waived"]
+        # The single entry still says what was waived.
+        assert automation[0]["tool_calls"] is not None
 
     asyncio.run(scenario())
 

@@ -80,18 +80,11 @@ class OllamaTagsResponse(OllamaWireModel):
 
 
 class OllamaRuntimeError(ModelRuntimeError):
-    def __init__(
-        self,
-        message: str,
-        *,
-        error: Mapping[str, JsonValue],
-        retryable: bool,
-        status_code: int | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.error = error
-        self.retryable = retryable
-        self.status_code = status_code
+    """A provider failure with Ollama's own class attached.
+
+    The fields live on ModelRuntimeError so the engine can end a Turn on them
+    without importing this module or knowing which runtime is behind the port.
+    """
 
 
 class OllamaProfileVerification(BaseModel):
@@ -298,7 +291,15 @@ def _durations(response: OllamaChatResponse) -> ModelDurations | None:
 
 
 def _http_error_payload(response: httpx.Response) -> Mapping[str, JsonValue]:
-    decoded = _safe_json_object(response)
+    # Not every failure answers in Ollama's dialect: a proxy in the way returns
+    # HTML with its 502. Reading that body has to fail into the status we already
+    # have, or the ValueError escapes the raise it was building and the Operator
+    # is told the harness crashed instead of the provider refusing.
+    decoded: Mapping[str, JsonValue]
+    try:
+        decoded = _safe_json_object(response)
+    except ValueError:
+        decoded = {}
     message = decoded.get("error")
     return {
         "code": "ollama_http_error",
