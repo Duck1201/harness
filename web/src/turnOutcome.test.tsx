@@ -26,6 +26,33 @@ describe("TurnOutcome", () => {
     expect(onGrant).toHaveBeenCalledWith("WriteGrant");
   });
 
+  it("separa falha do provedor de falha do harness e mostra o detalhe", () => {
+    const { rerender } = render(
+      <TurnOutcome
+        kind="failed"
+        reasonCode="model_provider_unavailable"
+        detail="ollama_transport_error: connection refused"
+        grants={[]}
+        onGrant={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/Ollama não respondeu/)).toBeInTheDocument();
+    expect(
+      screen.getByText("ollama_transport_error: connection refused"),
+    ).toBeInTheDocument();
+
+    rerender(
+      <TurnOutcome
+        kind="failed"
+        reasonCode="engine_error"
+        detail="ValueError: harness bug"
+        grants={[]}
+        onGrant={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/Falha interna do harness/)).toBeInTheDocument();
+  });
+
   it("não oferece grant já ativo nem dica para código sem mapeamento", () => {
     const { rerender } = render(
       <TurnOutcome

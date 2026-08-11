@@ -1198,6 +1198,14 @@ details[open] > summary .summary-chevron {
   font-size: 10px;
 }
 
+.turn-outcome-detail {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  color: var(--soft);
+  font-family: "Geist Mono Variable", monospace;
+  font-size: 9px;
+}
+
 .turn-outcome-block .secondary-button {
   margin-top: 6px;
 }

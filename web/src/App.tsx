@@ -1031,6 +1031,16 @@ const OUTCOME_HINTS: Record<string, string> = {
   tool_calls_per_turn_limit: "O turno atingiu o limite de tool calls. Divida a tarefa.",
   tool_calls_per_step_limit: "O passo pediu tool calls demais de uma vez.",
   rejected_model_attempt_limit: "O modelo insistiu em chamadas inválidas e o turno foi encerrado.",
+  model_provider_unavailable:
+    "O Ollama não respondeu. Verifique se o serviço está no ar e reenvie o pedido.",
+  model_provider_error: "O Ollama recusou a chamada. O detalhe abaixo traz a resposta dele.",
+  malformed_model_response: "A resposta do modelo não pôde ser lida e o turno parou aqui.",
+  engine_error: "Falha interna do harness, não do modelo. O detalhe abaixo identifica onde.",
+  model_not_installed: "O modelo do perfil ativo não está instalado no Ollama.",
+  model_digest_mismatch:
+    "O modelo instalado não bate com o digest do perfil. Reinstale a partir do Modelfile.",
+  runtime_not_verified: "O runtime ainda não foi verificado nesta inicialização.",
+  turn_time_budget_exhausted: "O turno estourou o tempo máximo. Divida a tarefa.",
 };
 
 const GRANT_FOR_REASON: Record<string, "WriteGrant" | "WebAccessGrant"> = {
@@ -1041,11 +1051,13 @@ const GRANT_FOR_REASON: Record<string, "WriteGrant" | "WebAccessGrant"> = {
 export function TurnOutcome({
   kind,
   reasonCode,
+  detail,
   grants,
   onGrant,
 }: {
   kind: string;
   reasonCode: string;
+  detail?: string | null;
   grants: Grant[];
   onGrant: (permission: "WriteGrant" | "WebAccessGrant") => void;
 }) {
@@ -1059,6 +1071,8 @@ export function TurnOutcome({
         <code>{reasonCode}</code>
       </div>
       {hint && <p className="turn-outcome-hint">{hint}</p>}
+      {/* The provider's own class lives here and nowhere else. */}
+      {detail && <p className="turn-outcome-detail">{detail}</p>}
       {missing && permission && (
         <button type="button" className="secondary-button" onClick={() => onGrant(permission)}>
           Ativar grant {permission === "WriteGrant" ? "Write" : "Web"}
@@ -1187,6 +1201,7 @@ function TimelineMessage({
           <TurnOutcome
             kind={message.terminalOutcome.kind}
             reasonCode={message.terminalOutcome.reason_code}
+            detail={message.terminalOutcome.detail}
             grants={grants}
             onGrant={onGrant}
           />
