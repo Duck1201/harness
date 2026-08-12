@@ -13,6 +13,7 @@ from harness.corpus_ingestion import (
     extract,
     extract_html,
     extract_markdown,
+    furniture_key,
     source_digest,
 )
 from harness.corpus_store import CorpusStore, EmbeddingMismatchError
@@ -322,6 +323,50 @@ def test_a_document_shorter_than_the_floor_is_still_retrievable() -> None:
     )
 
     assert len(draft.chunks) == 1
+
+
+def test_a_block_the_size_of_a_page_is_cut_at_the_end_of_a_sentence() -> None:
+    """Medido num livro em PDF: 92% dos Chunks saíam com o triplo do orçamento.
+
+    O extrator de PDF não marca fim de parágrafo, então a limpeza remonta a
+    página inteira como um bloco só. Emitido inteiro, ele vira passagem grossa —
+    a frase que responde chega diluída e ainda ocupa a vaga de outras duas.
+    """
+    pagina = " ".join(f"Frase numero {number} da mesma pagina corrida." for number in range(40))
+    extracted = extract_markdown(f"# Livro\n\n{pagina}\n", title_fallback="livro")
+
+    draft = build_document(
+        extracted,
+        origin_kind="upload",
+        origin_ref="livro.md",
+        source_digest="c" * 64,
+        counter=WordCounter(),
+        chunk_tokens=60,
+    )
+
+    assert len(draft.chunks) > 1
+    assert all(chunk.token_count <= 60 for chunk in draft.chunks)
+    # Cada Chunk começa uma frase, não o meio de uma.
+    for chunk in draft.chunks:
+        assert draft.text[chunk.start_offset : chunk.end_offset].startswith("Frase numero ")
+    # E a cobertura é contínua: nada do bloco se perde no corte.
+    assert draft.chunks[0].start_offset == 0
+    assert draft.chunks[-1].end_offset == len(draft.text)
+
+
+def test_a_running_header_is_recognised_without_its_page_number() -> None:
+    """Cabeçalho corrente carrega o número da página, então nenhuma linha é igual
+    a outra. Comparando linha inteira, o detector não achava nada e o cabeçalho
+    sobreviveu em 53% dos Chunks do livro."""
+    assert furniture_key("XIV : REDES DE COMPUTADORES E A INTERNET") == furniture_key(
+        "36 • REDES DE COMPUTADORES E A INTERNET"
+    )
+    # O OCR lê o número da página como letra solta: "6" vira "o", "9" vira "g".
+    assert furniture_key("o REDES DE COMPUTADORES E A INTERNET") == furniture_key(
+        "36 • REDES DE COMPUTADORES E A INTERNET"
+    )
+    # Uma linha de texto de verdade não colapsa com outra.
+    assert furniture_key("Camada de rede") != furniture_key("Camada de enlace")
 
 
 def test_an_unsupported_extension_is_refused_by_name() -> None:

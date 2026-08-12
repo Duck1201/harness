@@ -179,7 +179,7 @@
       "chunk_target_tokens": 512,
       "chunk_overlap_tokens": 64,
       "chunk_minimum_tokens": 8,
-      "chunk_boundary": "paragraph_or_heading",
+      "chunk_boundary": "paragraph_or_heading_then_sentence_when_oversized",
       "context_prefix": "document_title_heading_path_and_page",
       "commit_unit": "document",
       "deduplicate_by": ["source_digest", "chunk_digest"]

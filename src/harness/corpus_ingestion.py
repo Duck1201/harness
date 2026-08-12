@@ -34,6 +34,9 @@ _BLOCK_HTML_TAGS = frozenset(
 )  # fmt: skip
 _HEADING_HTML_TAGS = {f"h{level}": level for level in range(1, 7)}
 _MARKDOWN_HEADING = re.compile(r"^(#{1,6})\s+(.*\S)\s*#*$")
+# Fim de frase seguido de espaço. Não tenta resolver abreviação nem "1.22": errar
+# a fronteira aqui custa um Chunk que começa uma frase adiante, não um fato torto.
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?…])\s+")
 _CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _HORIZONTAL_SPACE = re.compile(r"[^\S\n]+")
 # "recupera-\nção": hífen de quebra de linha, não hífen de palavra composta. Só
@@ -47,10 +50,18 @@ _PAGE_FURNITURE = re.compile(
 # é baixo de propósito: "HP: 320" numa wiki é fato, não ruído.
 _MINIMUM_LETTER_RATIO = 0.25
 _MINIMUM_BLOCK_CHARACTERS = 3
+# O que muda de página para página dentro de um cabeçalho: o número, em arábico
+# ou romano maiúsculo, e a pontuação que o separa do título. Romano só em caixa
+# alta para não comer "civil" nem "mil" de uma linha de texto de verdade.
+_FURNITURE_NUMBERING = re.compile(r"\b[IVXLCDM]+\b|\d+|[^\w\s]")
 # Um cabeçalho ou rodapé de PDF se repete em quase toda página; três páginas é o
 # mínimo para a repetição significar alguma coisa.
 _FURNITURE_PAGE_FLOOR = 3
-_FURNITURE_SHARE = 0.6
+# Livro impresso alterna cabeçalho: o verso leva o título da obra e o recto o do
+# capítulo, então nenhum dos dois chega perto de toda página — por construção,
+# não passa de metade. Medido no Kurose: 43% no título do livro, e limiar de 60%
+# não pegava nada. O piso mora abaixo do teto que a alternância impõe.
+_FURNITURE_SHARE = 0.4
 
 
 class UnsupportedSourceError(Exception):
@@ -177,7 +188,7 @@ def extract_pdf(filename: str, data: bytes) -> ExtractedDocument:
             stripped
             for line in page.split("\n")
             if (stripped := line.strip())
-            and stripped not in furniture
+            and furniture_key(stripped) not in furniture
             and not _PAGE_FURNITURE.match(stripped)
         ]
         for paragraph in _paragraphs(_reflowed("\n".join(kept))):
@@ -212,6 +223,28 @@ def build_document(
     chunks: list[ChunkDraft] = []
     index = 0
     while index < len(blocks):
+        # Um bloco sozinho maior que o orçamento é cortado em fim de frase.
+        # Medido num livro em PDF: o extrator não marca fim de parágrafo, a
+        # limpeza remonta a página inteira como um bloco só, e 92% dos Chunks
+        # saíam com o triplo do orçamento — passagem grossa, onde a frase que
+        # responde chega diluída e ainda ocupa a vaga de outras duas.
+        if counter.count_text(blocks[index].text) > chunk_tokens:
+            block = blocks[index]
+            offset = spans[index][0]
+            for piece_start, piece_end, piece_tokens in _sentence_pieces(
+                block.text, counter, chunk_tokens
+            ):
+                chunks.append(
+                    ChunkDraft(
+                        start_offset=offset + piece_start,
+                        end_offset=offset + piece_end,
+                        context_prefix=_context_prefix(extracted.title, block),
+                        page=block.page,
+                        token_count=piece_tokens,
+                    )
+                )
+            index += 1
+            continue
         used = 0
         end = index
         # Um Chunk pertence a uma seção só: o endereço que ele carrega é o da
@@ -224,9 +257,6 @@ def build_document(
                 break
             used += block_tokens
             end += 1
-        if end == index:  # um bloco sozinho maior que o orçamento ainda vira Chunk
-            end = index + 1
-            used = counter.count_text(blocks[index].text)
         start_offset = spans[index][0]
         end_offset = spans[end - 1][1]
         chunks.append(
@@ -378,6 +408,43 @@ class _BlockHTMLParser(HTMLParser):
         self.blocks = [block for block in self.blocks if block.text in kept]
 
 
+def _sentence_pieces(
+    text: str,
+    counter: TextTokenCounter,
+    budget: int,
+) -> tuple[tuple[int, int, int], ...]:
+    """Cuts an oversized block into pieces of whole sentences.
+
+    The rule that a Chunk never starts in the middle of a paragraph exists so a
+    citation quotes something that reads on its own. A block that is an entire
+    page was never a paragraph — the extractor just could not tell where the
+    paragraphs were — and cutting it at the end of a sentence keeps the promise
+    the rule was making. A single sentence past the budget is left whole: there
+    is nowhere honest left to cut.
+    """
+    pieces: list[tuple[int, int, int]] = []
+    for start, stop in _sentence_spans(text):
+        tokens = counter.count_text(text[start:stop])
+        if pieces and pieces[-1][2] + tokens <= budget:
+            first, _, used = pieces[-1]
+            pieces[-1] = (first, stop, used + tokens)
+            continue
+        pieces.append((start, stop, tokens))
+    return tuple(pieces)
+
+
+def _sentence_spans(text: str) -> tuple[tuple[int, int], ...]:
+    spans: list[tuple[int, int]] = []
+    start = 0
+    for boundary in _SENTENCE_BOUNDARY.finditer(text):
+        if boundary.start() > start:
+            spans.append((start, boundary.start()))
+        start = boundary.end()
+    if start < len(text):
+        spans.append((start, len(text)))
+    return tuple(spans)
+
+
 def _next_index(
     blocks: Sequence[SourceBlock],
     start: int,
@@ -444,15 +511,36 @@ def _context_prefix(title: str, block: SourceBlock) -> str:
 
 
 def _repeated_page_furniture(pages: Sequence[str]) -> frozenset[str]:
+    """The header and footer that repeat, recognised without their page number.
+
+    A running header carries the number of the page it sits on, so comparing the
+    whole line finds nothing: every page has its own. Measured on a textbook,
+    `XIV : REDES DE COMPUTADORES E A INTERNET` and `36 • REDES DE COMPUTADORES E
+    A INTERNET` are the same furniture, and both survived into the passages.
+    """
     if len(pages) < _FURNITURE_PAGE_FLOOR:
         return frozenset()
     counts: dict[str, int] = {}
     for page in pages:
         lines = [line.strip() for line in page.split("\n") if line.strip()]
         for line in {*lines[:2], *lines[-2:]}:
-            counts[line] = counts.get(line, 0) + 1
+            key = furniture_key(line)
+            if key:
+                counts[key] = counts.get(key, 0) + 1
     threshold = max(_FURNITURE_PAGE_FLOOR - 1, int(len(pages) * _FURNITURE_SHARE))
-    return frozenset(line for line, count in counts.items() if count >= threshold)
+    return frozenset(key for key, count in counts.items() if count >= threshold)
+
+
+def furniture_key(line: str) -> str:
+    """What a header looks like once the page number is taken out of it."""
+    words = _FURNITURE_NUMBERING.sub(" ", line).split()
+    # O OCR lê o número da página como letra solta — "o" e "g" no lugar de "6" e
+    # "9" —, e sobra um token de uma letra numa das pontas, que não é palavra.
+    if words and len(words[0]) == 1:
+        words = words[1:]
+    if words and len(words[-1]) == 1:
+        words = words[:-1]
+    return " ".join(words).casefold()
 
 
 def _pdf_title(reader: object) -> str:
@@ -527,5 +615,6 @@ __all__ = [
     "extract_markdown",
     "extract_pdf",
     "extract_plain",
+    "furniture_key",
     "source_digest",
 ]
