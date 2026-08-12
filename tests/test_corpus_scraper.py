@@ -105,11 +105,18 @@ def _mediawiki_pages() -> dict[str, tuple[int, str, bytes]]:
                         # Como a API responde de verdade: heading de wikitext e
                         # um parágrafo por linha, sem linha em branco entre eles.
                         "1": {
-                            "extract": "O chefe final tem 320 pontos de vida e resiste a fogo.\n"
-                            "\n\n== Fraquezas ==\nEle recua diante de gelo.\n"
-                            "A segunda fase ignora veneno."
+                            "extract": "O chefe final tem 320 pontos de vida e resiste a fogo, "
+                            "e so aparece depois que as tres tochas do patio estao acesas.\n"
+                            "\n\n== Fraquezas ==\nEle recua diante de gelo, que corta a armadura "
+                            "dele pela metade durante dez segundos inteiros.\n"
+                            "A segunda fase ignora veneno e cura o dobro a cada investida."
                         },
-                        "2": {"extract": "A espada longa custa 500 moedas na loja da vila."},
+                        "2": {
+                            "extract": "A espada longa custa 500 moedas na loja da vila e some do "
+                            "estoque depois da terceira compra.\n"
+                            "Ela volta quando o mercador viaja para a capital, o que acontece "
+                            "sempre no primeiro dia do inverno seguinte ao ultimo cerco."
+                        },
                     }
                 }
             }
@@ -145,14 +152,70 @@ def test_a_mediawiki_seed_is_collected_by_api_without_following_a_single_link() 
         # seção e a página inteira é remontada como um parágrafo só.
         assert collected[0].data.decode() == (
             "# Chefe Final\n\n"
-            "O chefe final tem 320 pontos de vida e resiste a fogo.\n\n"
+            "O chefe final tem 320 pontos de vida e resiste a fogo, e so aparece depois "
+            "que as tres tochas do patio estao acesas.\n\n"
             "## Fraquezas\n\n"
-            "Ele recua diante de gelo.\n\n"
-            "A segunda fase ignora veneno.\n"
+            "Ele recua diante de gelo, que corta a armadura dele pela metade durante dez "
+            "segundos inteiros.\n\n"
+            "A segunda fase ignora veneno e cura o dobro a cada investida.\n"
         )
         # Nenhuma requisição fora do api.php: a rota da wiki não navega por HTML.
         # As sondas de descoberta também são api.php, em prefixos diferentes.
         assert all(urlsplit(url).path.endswith("api.php") for url in transport.requested)
+
+    asyncio.run(scenario())
+
+
+def test_a_page_whose_facts_live_in_a_template_is_collected_rendered() -> None:
+    """`extracts` não renderiza template, e há wiki que guarda o fato lá dentro.
+
+    Medido em `wiki.warframe.com`: a página da habilidade `Absorb` volta com
+    vinte caracteres — o `See also` e mais nada —, enquanto `action=parse`
+    devolve a descrição e os números. Sem o fallback, 9% das páginas entram no
+    Corpus vazias e a recuperação nunca sabe que elas existiam.
+    """
+
+    async def scenario() -> None:
+        pages = _mediawiki_pages()
+        # Só a página 1 emagrece; a 2 continua gorda para provar que o fallback
+        # é por página, não uma troca de rota para a wiki inteira.
+        extracts = json.loads(pages["https://wiki.test/api.php?prop=extracts"][2])
+        extracts["query"]["pages"]["1"] = {"extract": "== See also ==\n Nyx"}
+        pages["https://wiki.test/api.php?prop=extracts"] = (
+            200,
+            "application/json",
+            json.dumps(extracts).encode(),
+        )
+        pages["https://wiki.test/api.php?prop=text"] = (
+            200,
+            "application/json",
+            json.dumps(
+                {
+                    "parse": {
+                        "text": {
+                            "*": "<h2>Efeito</h2><p>Nyx absorve o dano recebido e devolve "
+                            "num estouro radial.</p><table><tr><td>Forca</td>"
+                            "<td>800 / 900 / 1000 / 1500</td></tr></table>"
+                        }
+                    }
+                }
+            ).encode(),
+        )
+        transport = FakeTransport(pages)
+        scraper = _scraper(transport)
+
+        plan = ScrapePlan(seed=WIKI, source="mediawiki", detail=ENDPOINT)
+        collected = [page async for page in scraper.collect(plan)]
+
+        rendered = collected[0]
+        # A extensão é o que decide o extrator: HTML entra pelo extrator de HTML.
+        assert rendered.filename.endswith(".html")
+        assert b"800 / 900 / 1000 / 1500" in rendered.data
+        # O nome do Documento é o que a wiki listou, não o primeiro heading do
+        # fragmento — senão o endereço de todo Chunk aponta para outra página.
+        assert b"<title>Chefe Final</title>" in rendered.data
+        # A página gorda não paga a requisição extra.
+        assert collected[1].filename.endswith(".md")
 
     asyncio.run(scenario())
 

@@ -17,6 +17,7 @@ import json
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from html import escape
 from html.parser import HTMLParser
 from typing import cast
 from urllib.parse import SplitResult, urlencode, urljoin, urlsplit
@@ -183,16 +184,17 @@ class Scraper:
                     },
                 )
                 for identifier, title, url in batch:
-                    text = _mediawiki_extract(extracts, identifier)
-                    if not text:
+                    page = await self._mediawiki_page(
+                        endpoint,
+                        identifier=identifier,
+                        title=title,
+                        url=url,
+                        extract=_mediawiki_extract(extracts, identifier),
+                    )
+                    if page is None:
                         continue
                     collected += 1
-                    yield ScrapedPage(
-                        url=url,
-                        title=title,
-                        filename=f"{title}.md",
-                        data=_mediawiki_markdown(title, text).encode(),
-                    )
+                    yield page
                     if collected >= limit:
                         return
                 await self._wait()
@@ -200,6 +202,68 @@ class Scraper:
             if not following:
                 return
             continuation = following
+
+    async def _mediawiki_page(
+        self,
+        endpoint: str,
+        *,
+        identifier: int,
+        title: str,
+        url: str,
+        extract: str,
+    ) -> ScrapedPage | None:
+        """Prefers the extract, and falls back to the rendered page when it is hollow.
+
+        `extracts` does not render templates. A wiki that keeps its facts inside
+        them answers with the navigation around the page and nothing else: an
+        ability page of a game wiki came back as twenty characters of "See also".
+        The rendered HTML costs one more request and arrives dirtier — infobox,
+        edit links, navbox — but the numbers a question is actually about live
+        exactly in the table the extract dropped.
+        """
+        if len(extract) >= self._config.mediawiki.thin_extract_chars:
+            return ScrapedPage(
+                url=url,
+                title=title,
+                filename=f"{title}.md",
+                data=_mediawiki_markdown(title, extract).encode(),
+            )
+        rendered = await self._mediawiki_rendered(endpoint, identifier)
+        if rendered:
+            # `parse` devolve o corpo da página, sem <title>. Sem ele o extrator
+            # adota o primeiro heading do fragmento como nome do Documento: a
+            # página `Absorb` entrou no Corpus chamada `See also`, e o endereço
+            # de todo Chunk dela apontava para o lugar errado. A wiki já disse o
+            # nome na listagem, e é ele que manda.
+            return ScrapedPage(
+                url=url,
+                title=title,
+                filename=f"{title}.html",
+                data=f"<title>{escape(title)}</title>{rendered}".encode(),
+            )
+        if not extract:
+            return None
+        return ScrapedPage(
+            url=url,
+            title=title,
+            filename=f"{title}.md",
+            data=_mediawiki_markdown(title, extract).encode(),
+        )
+
+    async def _mediawiki_rendered(self, endpoint: str, identifier: int) -> str:
+        payload = await self._api(
+            endpoint,
+            {
+                "action": "parse",
+                "pageid": str(identifier),
+                "prop": "text",
+                "format": "json",
+            },
+        )
+        parse = _object(payload.get("parse"))
+        rendered = _object(parse.get("text")) if parse is not None else None
+        html = rendered.get("*") if rendered is not None else None
+        return html if isinstance(html, str) else ""
 
     async def _collect_html(self, seed: str) -> AsyncIterator[ScrapedPage]:
         settings = self._config.html_crawl

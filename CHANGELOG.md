@@ -32,7 +32,11 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
   endereço na listagem, antes de virar requisição, então uma wiki maior que o
   teto é coletada em rodadas sucessivas em vez de recomeçar do alfabeto. O
   extrato de artigo inteiro vem um por requisição porque é o que o MediaWiki
-  concede — pedir vinte devolve dezenove páginas vazias.
+  concede — pedir vinte devolve dezenove páginas vazias. Extrato que volta magro
+  cai para `action=parse`: `extracts` não renderiza template, e a wiki que guarda
+  o fato dentro de um responde a página de habilidade com o `See also` e mais
+  nada. Custa uma requisição a mais nas páginas magras e chega mais sujo, mas o
+  número que a pergunta procura mora justamente na tabela que o extrato descarta.
 - **Piso de tamanho de Chunk.** Seção mais curta que `chunk_minimum_tokens` não
   é indexada como passagem; o texto continua no Document. Medido numa wiki de
   jogo: abaixo de oito tokens a faixa é lista de links e andaime de citação, que

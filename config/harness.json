@@ -208,6 +208,8 @@
         "list": "allpages",
         "extract": "extracts_explaintext",
         "page_batch": 1,
+        "thin_extract_chars": 200,
+        "thin_extract_fallback": "parse_rendered_html",
         "backoff_seconds": [5, 10, 20, 40, 80]
       },
       "html_crawl": {

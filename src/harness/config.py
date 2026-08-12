@@ -68,6 +68,7 @@ class CorpusCrawlConfig(ConfigModel):
 
 class CorpusMediaWikiConfig(ConfigModel):
     page_batch: int
+    thin_extract_chars: int
     backoff_seconds: tuple[float, ...]
 
 
