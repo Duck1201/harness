@@ -116,7 +116,10 @@ próprio bloco injetado, não no prompt base.
 
 Nenhum fato ingerido passa por paráfrase: o Document é armazenado como foi
 extraído e limpo por regras determinísticas, e o que o Chunk acrescenta é um
-prefixo de contexto tirado da estrutura do próprio documento. Tradução existe só
+prefixo de contexto tirado da estrutura do próprio documento. Uma seção mais
+curta que `chunk_minimum_tokens` não vira Chunk — o texto continua no Document,
+mas para de disputar as poucas passagens que cabem num Turn, porque lista de
+links casa com a pergunta ao pé da letra sem responder nada. Tradução existe só
 na query. Chunk vindo do scraper carrega UntrustedWebTaint e o ToolResult declara
 a união dos taints que devolveu, de modo que material coletado da web continua
 custando confirmação de `data_egress` enquanto estiver no contexto. Coletar é ato

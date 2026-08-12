@@ -178,6 +178,7 @@
       "model_written_text_is_never_indexed_as_fact": true,
       "chunk_target_tokens": 512,
       "chunk_overlap_tokens": 64,
+      "chunk_minimum_tokens": 8,
       "chunk_boundary": "paragraph_or_heading",
       "context_prefix": "document_title_heading_path_and_page",
       "commit_unit": "document",

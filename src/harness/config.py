@@ -45,6 +45,7 @@ class CorpusIngestionConfig(ConfigModel):
     max_upload_bytes: int
     chunk_target_tokens: int
     chunk_overlap_tokens: int
+    chunk_minimum_tokens: int
 
 
 class CorpusRetrievalConfig(ConfigModel):

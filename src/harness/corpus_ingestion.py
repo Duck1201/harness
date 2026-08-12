@@ -194,12 +194,18 @@ def build_document(
     counter: TextTokenCounter,
     chunk_tokens: int = 512,
     overlap_tokens: int = 64,
+    minimum_tokens: int = 8,
 ) -> DocumentDraft:
     """Cleans the blocks and cuts them into Chunks, offsets included.
 
     A Chunk never starts in the middle of a paragraph: blocks accumulate until
     the budget is spent, and the overlap is the trailing blocks of the previous
     Chunk, re-included by range instead of copied.
+
+    A section shorter than the floor does not become a Chunk. Its text stays in
+    the Document — nothing is thrown away — it just stops competing for one of
+    the few passages a Turn can carry, which is what a bare list of links wins
+    by matching the question literally while answering nothing.
     """
     blocks = _useful_blocks(extracted.blocks)
     text, spans = _joined(blocks)
@@ -232,7 +238,18 @@ def build_document(
                 token_count=used,
             )
         )
-        index = _next_index(blocks, index, end, counter, overlap_tokens)
+        # O overlap só existe para costurar o corte com o que vem depois dele.
+        # Se a seção terminou aqui, não há "depois": rebobinar emitiria um Chunk
+        # que é só o sufixo do anterior, e a seção inteira entraria no índice
+        # várias vezes, disputando as mesmas vagas na recuperação.
+        section_continues = end < len(blocks) and blocks[end].heading_path == section
+        index = (
+            _next_index(blocks, index, end, counter, overlap_tokens) if section_continues else end
+        )
+    # Um Documento que é todo ele mais curto que o piso continua recuperável:
+    # a página existe, e o piso está aqui para escolher entre passagens, não
+    # para decidir que a página não conta.
+    above_floor = [chunk for chunk in chunks if chunk.token_count >= minimum_tokens]
     taints = (UNTRUSTED_WEB_TAINT,) if origin_kind == "scrape" else ()
     return DocumentDraft(
         origin_kind=origin_kind,
@@ -241,7 +258,7 @@ def build_document(
         text=text,
         source_digest=source_digest,
         taints=taints,
-        chunks=tuple(chunks),
+        chunks=tuple(above_floor or chunks),
     )
 
 

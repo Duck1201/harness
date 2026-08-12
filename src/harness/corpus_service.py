@@ -483,6 +483,7 @@ class CorpusIngestionService:
             counter=self._counter,
             chunk_tokens=settings.chunk_target_tokens,
             overlap_tokens=settings.chunk_overlap_tokens,
+            minimum_tokens=settings.chunk_minimum_tokens,
         )
         del title
         if not draft.chunks:

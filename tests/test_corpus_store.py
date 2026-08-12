@@ -109,7 +109,8 @@ def test_retrieval_quotes_the_stored_passage_with_its_address(tmp_path: Path) ->
     _ingest(
         store,
         filename="manual.md",
-        data=b"# Manual\n\n## 4. Rede\n\n### 4.2 Proxy\n\nO proxy escuta na porta 8899.\n\n"
+        data=b"# Manual\n\n## 4. Rede\n\n### 4.2 Proxy\n\n"
+        b"O proxy escuta na porta 8899 e recusa conexao vinda de fora da rede local.\n\n"
         b"## 5. Backup\n\nO backup roda toda madrugada em fita magnetica.\n",
     )
 
@@ -128,7 +129,7 @@ def test_retrieval_quotes_the_stored_passage_with_its_address(tmp_path: Path) ->
     assert top.taints == ()
     # O trecho é fatiado do Document guardado, nunca reescrito, e não atravessa
     # a seção seguinte — senão o endereço citaria a metade errada.
-    assert top.text == "O proxy escuta na porta 8899."
+    assert top.text == "O proxy escuta na porta 8899 e recusa conexao vinda de fora da rede local."
 
 
 def test_the_lexical_leg_finds_what_the_dense_one_smooths_away(tmp_path: Path) -> None:
@@ -244,6 +245,83 @@ def test_a_vector_of_another_width_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(EmbeddingMismatchError):
         asyncio.run(store.add_document(draft, [(0.0,) * (DIMENSIONS + 1)] * len(draft.chunks)))
+
+
+def test_the_end_of_a_section_does_not_become_a_chunk_that_repeats_its_tail() -> None:
+    """O overlap costura o corte com o que vem depois — e só isso.
+
+    Medido contra a wiki: com parágrafos curtos, rebobinar no fim da seção
+    emitia a seção inteira, depois o seu sufixo, depois o sufixo do sufixo. O
+    mesmo texto três vezes no índice, disputando as mesmas vagas na resposta.
+    """
+    extracted = extract_markdown(
+        "# Chefe\n\n## Fraquezas\n\n"
+        + "\n\n".join(f"Paragrafo numero {number} da mesma secao." for number in range(4))
+        + "\n\n## Recompensas\n\nA espada longa cai com vinte por cento.\n",
+        title_fallback="chefe",
+    )
+
+    draft = build_document(
+        extracted,
+        origin_kind="upload",
+        origin_ref="chefe.md",
+        source_digest="a" * 64,
+        counter=WordCounter(),
+    )
+
+    ranges = [(chunk.start_offset, chunk.end_offset) for chunk in draft.chunks]
+    assert ranges == sorted(set(ranges))
+    # Nenhum Chunk termina onde o anterior já terminava: é isso que distingue
+    # cobrir a seção de recontá-la.
+    assert len({end for _, end in ranges}) == len(ranges)
+    assert [chunk.context_prefix for chunk in draft.chunks] == [
+        "Chefe > Fraquezas",
+        "Chefe > Recompensas",
+    ]
+
+
+def test_a_section_too_short_to_answer_anything_does_not_become_a_chunk() -> None:
+    """O piso escolhe entre passagens, não decide o que a página diz.
+
+    Medido na wiki: `See Also` de uma palavra vencia a busca lexical por casar
+    com a pergunta ao pé da letra, e ocupava uma das seis vagas do Turn sem
+    responder nada. O corte fica abaixo do fato de uma linha, que a wiki tem aos
+    milhares e que é exatamente o que a recuperação existe para achar.
+    """
+    extracted = extract_markdown(
+        "# Ani\n\n## Overview\n\nAni is a Survival Mission node on Void.\n\n"
+        "## See Also\n\nMastery Rank\n",
+        title_fallback="ani",
+    )
+
+    draft = build_document(
+        extracted,
+        origin_kind="upload",
+        origin_ref="ani.md",
+        source_digest="a" * 64,
+        counter=WordCounter(),
+        minimum_tokens=8,
+    )
+
+    assert [chunk.context_prefix for chunk in draft.chunks] == ["Ani > Overview"]
+    # O texto cortado continua no Documento: o piso não apaga, só deixa de
+    # indexar como passagem independente.
+    assert "Mastery Rank" in draft.text
+
+
+def test_a_document_shorter_than_the_floor_is_still_retrievable() -> None:
+    extracted = extract_markdown("# Nota\n\nFica frio.\n", title_fallback="nota")
+
+    draft = build_document(
+        extracted,
+        origin_kind="upload",
+        origin_ref="nota.md",
+        source_digest="b" * 64,
+        counter=WordCounter(),
+        minimum_tokens=8,
+    )
+
+    assert len(draft.chunks) == 1
 
 
 def test_an_unsupported_extension_is_refused_by_name() -> None:

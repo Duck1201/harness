@@ -33,6 +33,11 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
   teto é coletada em rodadas sucessivas em vez de recomeçar do alfabeto. O
   extrato de artigo inteiro vem um por requisição porque é o que o MediaWiki
   concede — pedir vinte devolve dezenove páginas vazias.
+- **Piso de tamanho de Chunk.** Seção mais curta que `chunk_minimum_tokens` não
+  é indexada como passagem; o texto continua no Document. Medido numa wiki de
+  jogo: abaixo de oito tokens a faixa é lista de links e andaime de citação, que
+  vencia a busca lexical por casar com a pergunta ao pé da letra e ocupava uma
+  das seis vagas do Turn sem responder nada. É onde começa o fato de uma linha.
 - **Modo yolo.** Decisão permanente do Operator, global e desligada de fábrica,
   com opt-out por Conversation: enquanto estiver ligada o gate aprova toda
   confirmação — inclusive escrita sob `UntrustedWebTaint` — e concede WriteGrant
