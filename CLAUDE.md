@@ -17,6 +17,7 @@ uv run python scripts/seal-system-prompt.py    # resela o espelho de SYSTEM-PROM
 cd web && pnpm test && pnpm exec tsc -b && pnpm build
 harness                                        # sobe o servidor (uvicorn)
 harness --setup --port 8899                    # reabre o setup em outra porta
+scripts/searxng.sh                             # sobe/configura o SearXNG opcional
 ```
 
 CI (`.github/workflows/ci.yml`) roda três jobs: backend (ruff + pyright +

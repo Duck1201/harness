@@ -159,14 +159,19 @@ metadados e ranking que você controla.
 Self-hosted, com Docker ou Podman:
 
 ```bash
-mkdir -p ~/searxng
-docker run -d --name searxng --restart unless-stopped \
-  -p 127.0.0.1:8080:8080 -v ~/searxng:/etc/searxng \
-  docker.io/searxng/searxng:latest
+scripts/searxng.sh          # sobe em 127.0.0.1:8080 e já aplica a configuração
+scripts/searxng.sh --down   # para e remove o container
 ```
 
-O primeiro boot escreve `~/searxng/settings.yml`. **Duas edições são
-obrigatórias**, senão toda busca cai no fallback:
+O script é idempotente: rodar de novo reaplica a configuração e religa o
+container sem duplicar nada, preservando o `secret_key` do primeiro boot. Ele
+termina verificando a instância de verdade e falha se ela não devolver JSON.
+`PORT`, `NAME`, `CONFIG_DIR` e `IMAGE` são variáveis de ambiente se você quiser
+outra coisa que não `~/searxng` na 8080.
+
+Se preferir na mão, o que o script faz é subir o container e reescrever
+`~/searxng/settings.yml` com **duas edições obrigatórias**, sem as quais toda
+busca cai no fallback:
 
 ```yaml
 server:
