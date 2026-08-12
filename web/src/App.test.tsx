@@ -97,6 +97,7 @@ describe("App", () => {
           id: "write-1",
           name: "write_file",
           arguments: { file_path: "relatorio.md", content: "vindo da web" },
+          effects: ["workspace_write"],
         },
       ],
       previews: [

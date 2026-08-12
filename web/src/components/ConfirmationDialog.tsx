@@ -24,6 +24,11 @@ export function ConfirmationDialog({
   const dialog = useRef<HTMLDivElement>(null);
   const deny = useRef<HTMLButtonElement>(null);
   const tainted = confirmation.reason_code.startsWith("web_taint");
+  // Sob taint o mesmo diálogo cobre escrita e saída para a rede: perguntar
+  // "aprovar escrita" sobre um web_search descreve a decisão errada.
+  const writes = confirmation.tool_calls.some((call) =>
+    call.effects?.includes("workspace_write"),
+  );
   const grants = confirmation.reason_code === "write_grant_required";
   const webGrant = confirmation.reason_code === "web_access_grant_required";
   // Só o waiver de escrita existe no servidor: oferecê-lo aqui para o grant de
@@ -69,7 +74,9 @@ export function ConfirmationDialog({
           </span>
           <h2 id="confirmation-title">
             {tainted
-              ? "Escrita com dado da web"
+              ? writes
+                ? "Escrita com dado da web"
+                : "Novo acesso à web com dado da web"
               : webGrant
                 ? "Permitir acesso à web nesta conversa"
                 : grants
@@ -79,7 +86,9 @@ export function ConfirmationDialog({
         </header>
         <p>
           {tainted
-            ? "O Turn leu conteúdo da web e agora quer escrever no Workspace. Aprovar vale só para esta chamada: não cria grant nem amplia acesso."
+            ? writes
+              ? "O Turn leu conteúdo da web e agora quer escrever no Workspace. Aprovar vale só para esta chamada: não cria grant nem amplia acesso."
+              : "O Turn leu conteúdo da web e agora quer sair para a rede de novo, levando o que leu. Aprovar vale só para esta chamada: não cria grant nem amplia acesso."
             : webGrant
               ? "A conversa ainda não pode acessar a web. Aprovar concede o WebAccessGrant e segue com esta chamada sem reenviar o prompt; o grant fica visível no cabeçalho e pode ser revogado a qualquer momento."
               : grants
@@ -153,7 +162,9 @@ export function ConfirmationDialog({
                 ? "Permitir acesso"
                 : grants
                   ? "Permitir escrita"
-                  : "Aprovar escrita"}
+                  : tainted && !writes
+                    ? "Aprovar acesso"
+                    : "Aprovar escrita"}
             </button>
           </div>
         </div>

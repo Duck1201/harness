@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 import { ConfirmationDialog } from "./ConfirmationDialog";
 import type { PendingConfirmation } from "../types";
 
-function confirmation(reason_code: string): PendingConfirmation {
+function confirmation(
+  reason_code: string,
+  overrides: Partial<PendingConfirmation> = {},
+): PendingConfirmation {
   return {
     id: "turn-1-confirmation-1",
     conversation_id: "chat-1",
@@ -23,6 +26,7 @@ function confirmation(reason_code: string): PendingConfirmation {
         truncated: true,
       },
     ],
+    ...overrides,
   };
 }
 
@@ -66,6 +70,35 @@ describe("ConfirmationDialog", () => {
     expect(screen.queryByRole("checkbox")).toBeNull();
 
     await user.click(screen.getByRole("button", { name: "Permitir acesso" }));
+    expect(onResolve).toHaveBeenCalledWith(true, false);
+  });
+
+  it("sob taint, nomeia a decisão pelo efeito da chamada e não sempre por escrita", async () => {
+    const user = userEvent.setup();
+    const onResolve = vi.fn();
+    render(
+      <ConfirmationDialog
+        confirmation={confirmation("web_taint_confirmation_required", {
+          tool_calls: [
+            {
+              id: "search-1",
+              name: "web_search",
+              arguments: { query: "searxng" },
+              effects: ["data_egress"],
+            },
+          ],
+          previews: [],
+        })}
+        busy={false}
+        onResolve={onResolve}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Novo acesso à web com dado da web" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/sair para a rede de novo/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Aprovar acesso" }));
     expect(onResolve).toHaveBeenCalledWith(true, false);
   });
 

@@ -113,6 +113,9 @@ export interface PendingConfirmation {
     id: string;
     name: string;
     arguments: Record<string, JsonValue>;
+    // Efeitos declarados no registry: é o que diz se esta decisão é sobre
+    // escrever no Workspace ou sobre sair de novo para a rede.
+    effects?: string[];
   }>;
   previews: ConfirmationPreview[];
 }

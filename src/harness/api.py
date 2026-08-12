@@ -1,7 +1,7 @@
 # pyright: reportUnusedFunction=false
 
 import sys
-from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from ipaddress import ip_address
@@ -510,7 +510,11 @@ def create_app(
     @app.get("/api/conversations/{conversation_id}/confirmation")
     async def get_confirmation(conversation_id: str) -> dict[str, Any]:
         pending = await application_service.pending_confirmation(conversation_id)
-        return {"confirmation": _confirmation_json(pending)}
+        return {
+            "confirmation": _confirmation_json(
+                pending, application_service.config.tool_registry.effects_by_tool
+            )
+        }
 
     @app.post("/api/conversations/{conversation_id}/confirmation/{confirmation_id}")
     async def resolve_confirmation(
@@ -631,7 +635,9 @@ def create_app(
             "active_turn": _turn_json(active) if active is not None else None,
             "turns": [_turn_json(item) for item in turns],
             "feedback": [_feedback_json(item) for item in feedback_items],
-            "pending_confirmation": _confirmation_json(confirmation),
+            "pending_confirmation": _confirmation_json(
+                confirmation, application_service.config.tool_registry.effects_by_tool
+            ),
             "confirmation_waivers": cast(list[str], snapshot["confirmation_waivers"]),
             "yolo": cast(bool, snapshot["yolo"]),
         }
@@ -888,9 +894,13 @@ def _turn_json(turn: Turn) -> dict[str, Any]:
     }
 
 
-def _confirmation_json(request: ConfirmationRequest | None) -> dict[str, Any] | None:
+def _confirmation_json(
+    request: ConfirmationRequest | None,
+    effects_by_tool: Mapping[str, Sequence[str]] | None = None,
+) -> dict[str, Any] | None:
     if request is None:
         return None
+    effects = effects_by_tool or {}
     return {
         "id": request.id,
         "conversation_id": request.conversation_id,
@@ -898,7 +908,14 @@ def _confirmation_json(request: ConfirmationRequest | None) -> dict[str, Any] | 
         "step_sequence": request.step_sequence,
         "reason_code": request.reason_code,
         "tool_calls": [
-            {"id": call.id, "name": call.name, "arguments": dict(call.arguments)}
+            {
+                "id": call.id,
+                "name": call.name,
+                "arguments": dict(call.arguments),
+                # A UI precisa saber o que a chamada faz para nomear a decisão: sob
+                # taint o mesmo diálogo cobre escrita e saída para a rede.
+                "effects": list(effects.get(call.name, ())),
+            }
             for call in request.tool_calls
         ],
         "previews": [
