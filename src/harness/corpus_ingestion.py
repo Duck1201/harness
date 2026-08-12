@@ -54,6 +54,13 @@ _MINIMUM_BLOCK_CHARACTERS = 3
 # ou romano maiúsculo, e a pontuação que o separa do título. Romano só em caixa
 # alta para não comer "civil" nem "mil" de uma linha de texto de verdade.
 _FURNITURE_NUMBERING = re.compile(r"\b[IVXLCDM]+\b|\d+|[^\w\s]")
+# "Fragmentação de datagramas, 247": termo seguido do número da página. Sumário e
+# índice remissivo são feitos disso, e nenhum dos dois responde pergunta alguma.
+_LISTING_ENTRY = re.compile(r"[^\W\d_]{3,}[,.]?\s+\d{1,3}\b")
+_LISTING_RATIO = 0.08
+# Corrida mínima de páginas. Uma página solta cheia de número é figura ou tabela
+# — medido: a página de prefixos `200.23.16.0/23` bate a razão e não é listagem.
+_LISTING_RUN = 5
 # Um cabeçalho ou rodapé de PDF se repete em quase toda página; três páginas é o
 # mínimo para a repetição significar alguma coisa.
 _FURNITURE_PAGE_FLOOR = 3
@@ -187,9 +194,12 @@ def extract_pdf(filename: str, data: bytes) -> ExtractedDocument:
         )
     cleaned_pages = [_normalized(page) for page in pages]
     furniture = _repeated_page_furniture(cleaned_pages)
+    listing = listing_pages(cleaned_pages)
     title = _pdf_title(reader) or _stem(filename)
     blocks: list[SourceBlock] = []
     for number, page in enumerate(cleaned_pages, start=1):
+        if number in listing:
+            continue
         # A linha vazia é a fronteira de parágrafo, e some se for filtrada junto
         # com a mobília: o que sobrava era a página inteira num bloco só.
         kept: list[str] = []
@@ -548,6 +558,31 @@ def _repeated_page_furniture(pages: Sequence[str]) -> frozenset[str]:
     return frozenset(key for key, count in counts.items() if count >= threshold)
 
 
+def listing_pages(pages: Sequence[str]) -> frozenset[int]:
+    """As páginas de sumário e de índice remissivo, por número de página (1-based).
+
+    Elas são texto e passam por qualquer limpeza, mas não respondem nada: o que
+    têm é termo e número. Medido num livro, o índice remissivo ocupou uma das
+    seis vagas de passagem de um Turn. O que separa listagem de figura cheia de
+    número é a corrida: sumário e índice ocupam páginas seguidas, a figura é uma.
+    """
+    dense = [
+        number
+        for number, page in enumerate(pages, start=1)
+        if len(_LISTING_ENTRY.findall(page)) / max(len(page.split()), 1) >= _LISTING_RATIO
+    ]
+    listing: set[int] = set()
+    run: list[int] = []
+    for number in [*dense, 0]:
+        if run and number == run[-1] + 1:
+            run.append(number)
+            continue
+        if len(run) >= _LISTING_RUN:
+            listing.update(run)
+        run = [number]
+    return frozenset(listing)
+
+
 def furniture_key(line: str) -> str:
     """What a header looks like once the page number is taken out of it."""
     words = _FURNITURE_NUMBERING.sub(" ", line).split()
@@ -636,5 +671,6 @@ __all__ = [
     "extract_pdf",
     "extract_plain",
     "furniture_key",
+    "listing_pages",
     "source_digest",
 ]

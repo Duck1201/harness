@@ -20,7 +20,11 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
   dimensões, via `sqlite-vec`) e BM25 (FTS5) fundidas por rank recíproco. O piso
   é lido na similaridade cosseno e não no escore de fusão — rank recíproco ordena
   e não mede, e o primeiro colocado pontua igual respondendo ou não à pergunta.
-  Nada acima do piso é `empty`, com a instrução de dizer que não sabe.
+  Nada acima do piso é `empty`, com a instrução de dizer que não sabe. O piso
+  vale por passagem, inclusive para quem só a perna lexical trouxe, e está em
+  0,55 porque a calibragem original só tinha perguntas: medido depois, um comando
+  como "cria um arquivo .md" pontua 0,50-0,54 contra um livro técnico, enquanto
+  pergunta respondível começa em 0,56. A margem é fina e vale para o `bge-m3`.
 - **Tradução só na query.** Documento é indexado como foi extraído; uma geração
   curta produz a versão autônoma em inglês que alimenta só a perna lexical,
   enquanto a densa usa o texto do Operator. Medição local: a pergunta crua em

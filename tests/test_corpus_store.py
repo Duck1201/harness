@@ -14,6 +14,7 @@ from harness.corpus_ingestion import (
     extract_html,
     extract_markdown,
     furniture_key,
+    listing_pages,
     source_digest,
 )
 from harness.corpus_store import CorpusStore, EmbeddingMismatchError
@@ -411,6 +412,25 @@ def test_every_chunk_carries_the_sentence_that_came_before_it() -> None:
     assert pares
     # Todo Chunk seguinte começa antes de o anterior terminar.
     assert all(seguinte.start_offset < anterior.end_offset for anterior, seguinte in pares)
+
+
+def test_the_index_at_the_back_of_a_book_is_not_indexed() -> None:
+    """Sumário e índice remissivo são texto e não respondem nada.
+
+    Medido: o índice remissivo do livro ocupou uma das seis vagas de passagem de
+    um Turn. O que o separa de uma figura cheia de número é a corrida — listagem
+    ocupa páginas seguidas, figura é uma só.
+    """
+    listagem = "Fragmentação de datagramas, 247 redes domésticas, 12 Fragmentos superpostos, 338"
+    figura = "A Figura 4.18 mostra 200.23.16.0/23 e 200.23.18.0/23 na tabela de rotas, 254"
+    prosa = "O protocolo divide a mensagem em segmentos e entrega cada um deles em ordem."
+
+    paginas = [prosa, figura, prosa, *[listagem] * 6, prosa]
+
+    descartadas = listing_pages(paginas)
+
+    # A corrida de seis vira listagem; a figura solta, não.
+    assert descartadas == frozenset({4, 5, 6, 7, 8, 9})
 
 
 def test_a_running_header_is_recognised_without_its_page_number() -> None:

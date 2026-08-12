@@ -191,7 +191,7 @@
       "reciprocal_rank_constant": 60,
       "floor_measured_on": "dense_cosine_similarity",
       "floor_applies_to": "every_injected_passage",
-      "dense_similarity_floor": 0.5,
+      "dense_similarity_floor": 0.55,
       "injected_passages": 6,
       "max_injected_tokens": 4000,
       "query_language_strategy": "dense_uses_operator_text_lexical_uses_both_operator_text_and_generated_query",
