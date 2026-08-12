@@ -22,7 +22,6 @@ from harness.web_tools import (
     EgressPolicyError,
     ResolvedAddress,
     ResolvedTarget,
-    ResponseByteLimitError,
 )
 
 PAGE = (
@@ -160,15 +159,16 @@ def test_browser_renders_javascript_and_leaves_no_process_or_profile() -> None:
 
 
 @brave_required
-def test_browser_enforces_the_byte_limit() -> None:
+def test_browser_cuts_the_document_at_the_byte_limit() -> None:
     async def scenario() -> None:
         server, port = await _bench_server(PAGE)
         async with server:
             capability = BraveBrowserCapability(egress_guard=BenchEgressGuard(port))
-            with pytest.raises(ResponseByteLimitError):
-                await capability.fetch(
-                    f"http://bench.test:{port}/", max_bytes=32, timeout_seconds=60
-                )
+            page = await capability.fetch(
+                f"http://bench.test:{port}/", max_bytes=32, timeout_seconds=60
+            )
+            # Um documento grande demais é cortado, não descartado.
+            assert len(page.body) == 32
 
     asyncio.run(scenario())
 

@@ -312,24 +312,27 @@ def test_web_fetch_extracts_html_once_and_discards_raw_markup() -> None:
     asyncio.run(scenario())
 
 
-def test_web_fetch_enforces_body_cap_and_reuses_exact_url_cache() -> None:
+def test_web_fetch_cuts_an_oversized_body_and_reuses_exact_url_cache() -> None:
     async def scenario() -> None:
+        oversized = b"A page far larger than the body cap still has readable text on top. " * 5
         oversized_transport = FakeHttpTransport(
-            (HttpResponse(status=200, headers={"Content-Type": "text/plain"}, body=b"x" * 65),)
+            (HttpResponse(status=200, headers={"Content-Type": "text/plain"}, body=oversized),)
         )
         oversized_executor = WebToolExecutor(
             registry=load_config().tool_registry,
             session_policy=web_policy("WebAccessGrant"),
             egress_guard=public_guard(),
             http_transport=oversized_transport,
-            max_response_bytes=64,
+            max_response_bytes=200,
         )
-        oversized = await oversized_executor.execute(
+        large = await oversized_executor.execute(
             ToolCall(id="large", name="web_fetch", arguments={"url": "https://example.com/large"})
         )
-        assert oversized.status.value == "blocked"
-        assert oversized.error is not None
-        assert oversized.error["code"] == "response_byte_limit_exceeded"
+        # Uma página maior que o cap é cortada, não descartada: o que coube
+        # continua chegando ao modelo.
+        assert large.status.value == "success"
+        assert isinstance(large.data, Mapping)
+        assert large.data["content"] == oversized[:200].decode()
 
         content = (
             b"A sufficiently long plain text response demonstrates exact URL caching without "
@@ -491,8 +494,9 @@ def test_web_fetch_enforces_redirect_content_type_and_character_limits() -> None
         assert limited.status.value == "success"
         assert isinstance(limited.data, Mapping)
         assert limited.data["content"] == "x" * 100
+        # Truncou: o sinal é esse. Não há parâmetro de offset para prometer.
         assert limited.meta["truncated"] is True
-        assert limited.meta["continuation"] == {"offset": 100}
+        assert "continuation" not in limited.meta
 
     asyncio.run(scenario())
 
@@ -552,7 +556,6 @@ def test_web_search_reads_searxng_limits_results_and_normalizes_cache_key() -> N
             "taints": ["UntrustedWebTaint"],
             "engine": "searxng",
             "cache_hit": False,
-            "continuation": {"offset": 2},
         }
         assert second.tool_call_id == "search-2"
         assert second.meta["cache_hit"] is True
@@ -891,5 +894,45 @@ def test_get_weather_without_a_grant_is_blocked_and_an_unknown_place_is_empty() 
 
         assert empty.status.value == "empty"
         assert empty.error is None
+
+    asyncio.run(scenario())
+
+
+def test_link_menus_do_not_crowd_out_the_readable_text() -> None:
+    async def scenario() -> None:
+        menu = "".join(
+            f'<li><a href="https://x{index}.example.com/">Idioma {index}</a></li>'
+            for index in range(60)
+        )
+        body = (
+            "<html><body><ul>"
+            + menu
+            + '</ul><p>Brasília é a capital federal do Brasil, com <a href="'
+            'https://example.com/page#nota">nota</a> e <a href="https://outro.example.com/">um '
+            "destino real</a> no meio do texto corrido que o modelo precisa mesmo ler.</p>"
+            "</body></html>"
+        ).encode()
+        executor = WebToolExecutor(
+            registry=load_config().tool_registry,
+            session_policy=web_policy("WebAccessGrant"),
+            egress_guard=public_guard(),
+            http_transport=FakeHttpTransport(
+                (HttpResponse(status=200, headers={"Content-Type": "text/html"}, body=body),)
+            ),
+        )
+        result = await executor.execute(
+            ToolCall(id="menu", name="web_fetch", arguments={"url": "https://example.com/page"})
+        )
+
+        assert result.status.value == "success"
+        assert isinstance(result.data, Mapping)
+        content = result.data["content"]
+        assert isinstance(content, str)
+        # O menu de idiomas some, a âncora para a própria página não vira URL e
+        # o destino externo continua disponível junto do texto.
+        assert "Idioma 30" not in content
+        assert "#nota" not in content
+        assert "https://outro.example.com/" in content
+        assert "capital federal do Brasil" in content
 
     asyncio.run(scenario())

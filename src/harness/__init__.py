@@ -138,7 +138,6 @@ from .web_tools import (
     HttpResponse,
     ResolvedAddress,
     ResolvedTarget,
-    ResponseByteLimitError,
     WebToolExecutor,
 )
 from .workspace_coordinator import WorkspaceCoordinator
@@ -228,7 +227,6 @@ __all__ = [
     "RequestStatus",
     "ResolvedAddress",
     "ResolvedTarget",
-    "ResponseByteLimitError",
     "ResultPayload",
     "SessionController",
     "SessionPolicy",

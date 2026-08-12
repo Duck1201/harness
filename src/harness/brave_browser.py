@@ -43,7 +43,6 @@ from .web_tools import (
     EgressGuard,
     EgressPolicyError,
     EgressResolutionError,
-    ResponseByteLimitError,
 )
 
 # Any Chromium answers the same DevTools Protocol. Brave stays first because a
@@ -441,9 +440,9 @@ class BraveBrowserCapability:
 
         if not isinstance(html, str):
             raise BraveBrowserError("The browser returned no document.")
-        body = html.encode("utf-8")
-        if len(body) > max_bytes:
-            raise ResponseByteLimitError
+        # Documento grande demais é cortado, não descartado: a extração e o
+        # `limit` do web_fetch já entregam bem menos do que isso ao modelo.
+        body = html.encode("utf-8")[:max_bytes]
         return BrowserPage(
             final_url=final_url if isinstance(final_url, str) and final_url else target.url,
             content_type="text/html; charset=utf-8",

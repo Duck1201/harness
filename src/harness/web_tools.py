@@ -6,7 +6,7 @@ import json
 import re
 import socket
 import unicodedata
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from html.parser import HTMLParser
 from typing import Any, Protocol, cast
@@ -106,6 +106,7 @@ class HttpResponse:
     status: int
     headers: Mapping[str, str]
     body: bytes
+    truncated: bool = False
 
 
 class HttpTransport(Protocol):
@@ -117,10 +118,6 @@ class HttpTransport(Protocol):
         max_bytes: int,
         timeout_seconds: float,
     ) -> HttpResponse: ...
-
-
-class ResponseByteLimitError(Exception):
-    pass
 
 
 class _PinnedResolver(AbstractResolver):
@@ -184,14 +181,20 @@ class AiohttpHttpTransport:
             ) as response,
         ):
             body = bytearray()
+            truncated = False
             async for chunk in response.content.iter_chunked(64 * 1024):
                 body.extend(chunk)
-                if len(body) > max_bytes:
-                    raise ResponseByteLimitError
+                if len(body) >= max_bytes:
+                    # Página grande demais ainda é página: corta o corpo e segue,
+                    # que o resultado sai truncado de qualquer jeito no `limit`.
+                    del body[max_bytes:]
+                    truncated = True
+                    break
             return HttpResponse(
                 status=response.status,
                 headers=dict(response.headers),
                 body=bytes(body),
+                truncated=truncated,
             )
 
 
@@ -503,16 +506,6 @@ class WebToolExecutor:
                         max_bytes=self._max_response_bytes,
                         timeout_seconds=self._timeout_seconds,
                     )
-            except ResponseByteLimitError:
-                return _web_error(
-                    call,
-                    ToolResultStatus.BLOCKED,
-                    "response_byte_limit_exceeded",
-                    "The web response exceeded the byte limit.",
-                    retryable=False,
-                    producer="web_fetch",
-                    final_url=current_url,
-                )
             except TimeoutError:
                 return _web_error(
                     call,
@@ -535,15 +528,7 @@ class WebToolExecutor:
                 )
 
             if len(response.body) > self._max_response_bytes:
-                return _web_error(
-                    call,
-                    ToolResultStatus.BLOCKED,
-                    "response_byte_limit_exceeded",
-                    "The web response exceeded the byte limit.",
-                    retryable=False,
-                    producer="web_fetch",
-                    final_url=current_url,
-                )
+                response = replace(response, body=response.body[: self._max_response_bytes])
             if response.status in _REDIRECT_STATUSES:
                 location = _header(response.headers, "location")
                 if location is None:
@@ -618,16 +603,6 @@ class WebToolExecutor:
                     max_bytes=self._max_response_bytes,
                     timeout_seconds=self._timeout_seconds,
                 )
-        except ResponseByteLimitError:
-            return _web_error(
-                call,
-                ToolResultStatus.BLOCKED,
-                "response_byte_limit_exceeded",
-                "The browser response exceeded the byte limit.",
-                retryable=False,
-                producer="browser",
-                final_url=url,
-            )
         except (OSError, TimeoutError):
             return _web_error(
                 call,
@@ -812,7 +787,6 @@ class WebToolExecutor:
         except (
             EgressPolicyError,
             EgressResolutionError,
-            ResponseByteLimitError,
             OSError,
             TimeoutError,
             aiohttp.ClientError,
@@ -1017,7 +991,7 @@ class _ReadableHTMLParser(HTMLParser):
 
     def content(self) -> str:
         lines = (" ".join(line.split()) for line in "".join(self._parts).splitlines())
-        return "\n".join(line for line in lines if line).strip()
+        return "\n".join(_without_link_menus(line for line in lines if line)).strip()
 
 
 def _response_artifact(
@@ -1070,8 +1044,6 @@ def _fetch_result(
         "final_url": artifact.final_url,
         "cache_hit": cache_hit,
     }
-    if truncated:
-        meta["continuation"] = {"offset": limit}
     return ToolResult(
         tool_call_id=call.id,
         status=ToolResultStatus.SUCCESS,
@@ -1091,9 +1063,41 @@ def _useful_link(base_url: str, href: str | None) -> str | None:
     if href is None:
         return None
     absolute = urljoin(base_url, href.strip())
-    if urlsplit(absolute).scheme.casefold() not in {"http", "https"}:
+    split = urlsplit(absolute)
+    if split.scheme.casefold() not in {"http", "https"}:
+        return None
+    # Uma âncora para a própria página (nota de rodapé, índice) não acrescenta
+    # destino nenhum e ocupa mais espaço do que o texto que acompanha.
+    if split._replace(fragment="").geturl() == urlsplit(base_url)._replace(fragment="").geturl():
         return None
     return absolute
+
+
+def _is_link_only(line: str) -> bool:
+    start = 0 if line.startswith("(http") else line.rfind(" (http") + 1
+    if start == 0 and not line.startswith("(http"):
+        return False
+    return start <= 80 and line.endswith(")") and " " not in line[start:]
+
+
+def _without_link_menus(lines: Iterable[str], *, run: int = 10) -> list[str]:
+    # ponytail: menus (lista de idiomas, rodapé, barra lateral) viram longas
+    # sequências de linhas que são só rótulo + URL, e comem o orçamento de
+    # caracteres antes do texto da página. Heurística de densidade de links no
+    # lugar de um extrator readability completo; trocar se ficar imprecisa.
+    kept: list[str] = []
+    menu: list[str] = []
+    for line in lines:
+        if _is_link_only(line):
+            menu.append(line)
+            continue
+        if len(menu) < run:
+            kept.extend(menu)
+        menu = []
+        kept.append(line)
+    if len(menu) < run:
+        kept.extend(menu)
+    return kept
 
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:
@@ -1164,8 +1168,6 @@ def _search_result(
         "engine": engine,
         "cache_hit": False,
     }
-    if truncated:
-        meta["continuation"] = {"offset": len(results)}
     return ToolResult(
         tool_call_id=call.id,
         status=ToolResultStatus.SUCCESS if results else ToolResultStatus.EMPTY,
