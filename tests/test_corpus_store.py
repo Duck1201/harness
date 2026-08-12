@@ -177,6 +177,36 @@ def test_the_floor_answers_with_nothing_instead_of_the_least_bad_passage(tmp_pat
     assert found == ()
 
 
+def test_the_floor_measures_every_passage_and_not_just_the_search(tmp_path: Path) -> None:
+    """Medido contra um livro: três das seis vagas voltavam com bibliografia.
+
+    Bastava um Chunk denso passar do piso para a fusão inteira entrar, e o que a
+    perna lexical achou sozinha nunca era medido. A pergunta em português contra
+    um livro em português fazia o BM25 em inglês casar com a única coisa em
+    inglês que o livro tem: as referências.
+    """
+    store = _corpus(tmp_path)
+    _ingest(
+        store,
+        filename="manual.md",
+        data=b"# Manual\n\n## Proxy\n\nO proxy escuta na porta 8899 e recusa origem de fora.\n\n"
+        b"## Referencias\n\nFELDMEIER, D. Fast Software Implementation of Error Detection.\n",
+    )
+
+    found = asyncio.run(
+        store.search(
+            dense_query=HashingEmbedder().embed(["em que porta o proxy escuta"])[0],
+            # A perna lexical acha a referência pela palavra solta que sobrou.
+            lexical_queries=["Error Detection Implementation"],
+            limit=5,
+            similarity_floor=0.5,
+        )
+    )
+
+    assert all("FELDMEIER" not in chunk.text for chunk in found)
+    assert all(chunk.similarity is not None and chunk.similarity >= 0.5 for chunk in found)
+
+
 def test_a_page_collected_from_the_web_keeps_its_taint(tmp_path: Path) -> None:
     store = _corpus(tmp_path)
     _ingest(
@@ -342,16 +372,45 @@ def test_a_block_the_size_of_a_page_is_cut_at_the_end_of_a_sentence() -> None:
         source_digest="c" * 64,
         counter=WordCounter(),
         chunk_tokens=60,
+        overlap_tokens=8,
     )
 
     assert len(draft.chunks) > 1
-    assert all(chunk.token_count <= 60 for chunk in draft.chunks)
+    # O orçamento é do corte; o overlap entra por cima dele, por definição.
+    assert all(chunk.token_count <= 60 + 8 for chunk in draft.chunks)
     # Cada Chunk começa uma frase, não o meio de uma.
     for chunk in draft.chunks:
         assert draft.text[chunk.start_offset : chunk.end_offset].startswith("Frase numero ")
     # E a cobertura é contínua: nada do bloco se perde no corte.
     assert draft.chunks[0].start_offset == 0
     assert draft.chunks[-1].end_offset == len(draft.text)
+
+
+def test_every_chunk_carries_the_sentence_that_came_before_it() -> None:
+    """A frase que responde raramente é a primeira do trecho.
+
+    Cortada do parágrafo anterior, ela chega sem o sujeito de quem se fala.
+    Medido antes: só 30% dos Chunks de um livro tinham sobreposição, porque o
+    recuo era por bloco inteiro e um Chunk feito de um parágrafo só não tinha
+    por onde recuar. Frase é a unidade que sempre existe.
+    """
+    pagina = " ".join(f"Frase numero {number} da mesma pagina corrida." for number in range(40))
+    extracted = extract_markdown(f"# Livro\n\n{pagina}\n", title_fallback="livro")
+
+    draft = build_document(
+        extracted,
+        origin_kind="upload",
+        origin_ref="livro.md",
+        source_digest="d" * 64,
+        counter=WordCounter(),
+        chunk_tokens=60,
+        overlap_tokens=8,
+    )
+
+    pares = list(zip(draft.chunks, draft.chunks[1:], strict=False))
+    assert pares
+    # Todo Chunk seguinte começa antes de o anterior terminar.
+    assert all(seguinte.start_offset < anterior.end_offset for anterior, seguinte in pares)
 
 
 def test_a_running_header_is_recognised_without_its_page_number() -> None:

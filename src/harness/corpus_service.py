@@ -181,11 +181,18 @@ class CorpusLibrary:
 class CorpusRetriever:
     """One search, whoever asked for it.
 
-    ``lexical_query`` is the English rewrite of the question and it is the only
-    thing the BM25 leg ever sees. Feeding it the Operator's Portuguese against an
-    English Corpus measurably ranks worse than not searching lexically at all:
-    one shared word carries the whole match and outvotes a dense leg that had it
-    right. No rewrite, no lexical leg.
+    The BM25 leg sees both the Operator's own words and the English rewrite, and
+    reciprocal rank fusion merges the two rankings with the dense one.
+
+    Only the rewrite used to go in, because a Corpus was assumed to be in English
+    and a Portuguese query against it matched on one shared word — noise that
+    outvoted a dense leg that had it right. Measured against a Corpus in
+    Portuguese, that assumption inverted the result: the only English in the book
+    is the bibliography, so the rewrite retrieved exactly that, and half the
+    injected passages were references. What made the old fear real was the floor
+    being a gate on the search instead of a measure on each passage; now that it
+    filters one by one, a match on one shared word does not clear it, and asking
+    in both languages costs nothing when only one of them is the Corpus's.
     """
 
     def __init__(
@@ -214,7 +221,7 @@ class CorpusRetriever:
         vector = (await self._embedder.embed([question]))[0]
         chunks = await self._library.store(corpus_id).search(
             dense_query=vector,
-            lexical_queries=[lexical_query] if lexical_query else [],
+            lexical_queries=[query for query in (question, lexical_query) if query],
             limit=limit or settings.injected_passages,
             dense_candidates=settings.dense_candidates,
             lexical_candidates=settings.lexical_candidates,

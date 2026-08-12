@@ -230,7 +230,8 @@ def build_document(
     """
     blocks = _useful_blocks(extracted.blocks)
     text, spans = _joined(blocks)
-    chunks: list[ChunkDraft] = []
+    sections = _section_starts(blocks, spans)
+    cuts: list[tuple[int, int, int]] = []
     index = 0
     while index < len(blocks):
         # Um bloco sozinho maior que o orçamento é cortado em fim de frase.
@@ -239,20 +240,11 @@ def build_document(
         # saíam com o triplo do orçamento — passagem grossa, onde a frase que
         # responde chega diluída e ainda ocupa a vaga de outras duas.
         if counter.count_text(blocks[index].text) > chunk_tokens:
-            block = blocks[index]
             offset = spans[index][0]
-            for piece_start, piece_end, piece_tokens in _sentence_pieces(
-                block.text, counter, chunk_tokens
-            ):
-                chunks.append(
-                    ChunkDraft(
-                        start_offset=offset + piece_start,
-                        end_offset=offset + piece_end,
-                        context_prefix=_context_prefix(extracted.title, block),
-                        page=block.page,
-                        token_count=piece_tokens,
-                    )
-                )
+            cuts += [
+                (offset + start, offset + stop, index)
+                for start, stop, _ in _sentence_pieces(blocks[index].text, counter, chunk_tokens)
+            ]
             index += 1
             continue
         used = 0
@@ -267,25 +259,20 @@ def build_document(
                 break
             used += block_tokens
             end += 1
-        start_offset = spans[index][0]
-        end_offset = spans[end - 1][1]
-        chunks.append(
-            ChunkDraft(
-                start_offset=start_offset,
-                end_offset=end_offset,
-                context_prefix=_context_prefix(extracted.title, blocks[index]),
-                page=blocks[index].page,
-                token_count=used,
-            )
+        cuts.append((spans[index][0], spans[end - 1][1], index))
+        index = end
+    chunks = [
+        ChunkDraft(
+            start_offset=(
+                begin := _overlapped_start(text, sections[owner], start, counter, overlap_tokens)
+            ),
+            end_offset=stop,
+            context_prefix=_context_prefix(extracted.title, blocks[owner]),
+            page=blocks[owner].page,
+            token_count=counter.count_text(text[begin:stop]),
         )
-        # O overlap só existe para costurar o corte com o que vem depois dele.
-        # Se a seção terminou aqui, não há "depois": rebobinar emitiria um Chunk
-        # que é só o sufixo do anterior, e a seção inteira entraria no índice
-        # várias vezes, disputando as mesmas vagas na recuperação.
-        section_continues = end < len(blocks) and blocks[end].heading_path == section
-        index = (
-            _next_index(blocks, index, end, counter, overlap_tokens) if section_continues else end
-        )
+        for start, stop, owner in cuts
+    ]
     # Um Documento que é todo ele mais curto que o piso continua recuperável:
     # a página existe, e o piso está aqui para escolher entre passagens, não
     # para decidir que a página não conta.
@@ -455,30 +442,50 @@ def _sentence_spans(text: str) -> tuple[tuple[int, int], ...]:
     return tuple(spans)
 
 
-def _next_index(
+def _section_starts(
     blocks: Sequence[SourceBlock],
+    spans: Sequence[tuple[int, int]],
+) -> tuple[int, ...]:
+    """Onde começa a seção de cada bloco — o limite que o overlap não atravessa."""
+    starts: list[int] = []
+    current = 0
+    for position, block in enumerate(blocks):
+        if position == 0 or block.heading_path != blocks[position - 1].heading_path:
+            current = spans[position][0]
+        starts.append(current)
+    return tuple(starts)
+
+
+def _overlapped_start(
+    text: str,
+    section_start: int,
     start: int,
-    end: int,
     counter: TextTokenCounter,
     overlap_tokens: int,
 ) -> int:
-    """Where the next Chunk begins, once the overlap is paid.
+    """Recua o começo do Chunk por frases inteiras, sem sair da seção.
 
-    The overlap exists so the sentence that turns an argument is not cut in half
-    by an accident of paragraph length. It never rewinds past the Chunk's own
-    start, which would make the loop stand still.
+    O overlap existe porque a frase que responde raramente é a primeira: cortada
+    do parágrafo anterior, ela chega sem o sujeito de quem se fala. Medido antes,
+    só 30% dos Chunks de um livro tinham sobreposição — o recuo era por bloco
+    inteiro, e um Chunk feito de um parágrafo só não tinha por onde recuar.
+    Frase é a unidade que sempre existe.
+
+    O limite é a seção: atravessá-la faria a passagem começar sob um endereço
+    que não é o dela.
     """
-    if end >= len(blocks) or overlap_tokens <= 0:
-        return end
+    if overlap_tokens <= 0 or start <= section_start:
+        return start
+    before = text[section_start:start]
     budget = overlap_tokens
-    index = end
-    while index > start + 1:
-        tokens = counter.count_text(blocks[index - 1].text)
+    begin = start
+    for sentence_start, sentence_end in reversed(_sentence_spans(before)):
+        tokens = counter.count_text(before[sentence_start:sentence_end])
         if tokens > budget:
             break
         budget -= tokens
-        index -= 1
-    return index
+        begin = section_start + sentence_start
+    return begin
 
 
 def _useful_blocks(blocks: Sequence[SourceBlock]) -> tuple[SourceBlock, ...]:

@@ -243,12 +243,11 @@ def test_deleting_a_corpus_deletes_its_file(tmp_path: Path) -> None:
 
 
 def test_a_rewrite_that_came_back_in_portuguese_is_dropped(tmp_path: Path) -> None:
-    """Sem reescrita em inglês, sem perna lexical.
+    """Reescrita que voltou em português é a pergunta de novo, não uma segunda.
 
-    Um 4B pedido para traduzir às vezes devolve a pergunta como veio. Entregar
-    isso ao BM25 contra um acervo em inglês mede pior que não buscar lexicalmente
-    — medido: uma palavra em comum carrega o casamento e derruba a perna densa,
-    que já tinha acertado.
+    Um 4B pedido para traduzir às vezes devolve o que recebeu. O texto do
+    Operator já vai para a perna lexical por conta própria, então repetir a mesma
+    forma só gastaria uma consulta ao BM25 para somar rank a ela mesma.
     """
 
     async def scenario() -> None:

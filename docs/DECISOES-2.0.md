@@ -112,7 +112,11 @@ CanonicalHistory; `corpus_search` fica exposta para o modelo refinar a busca nos
 passos seguintes. A busca funde vizinhança densa e BM25 por rank recíproco, corta
 pelo piso de relevância e devolve cada Chunk com Document, endereço e escore —
 nada acima do piso é `empty`, e a instrução de responder que não sabe viaja no
-próprio bloco injetado, não no prompt base.
+próprio bloco injetado, não no prompt base. O piso vale para cada passagem
+citada, não para a busca como um todo: quem entrou só pela perna lexical também
+é medido, senão o BM25 injeta o que ninguém conferiu. A perna lexical recebe as
+duas formas da pergunta, a do Operator e a reescrita em inglês, porque o idioma
+do acervo é do acervo — e o que a forma errada trouxer não passa do piso.
 
 Nenhum fato ingerido passa por paráfrase: o Document é armazenado como foi
 extraído e limpo por regras determinísticas, e o que o Chunk acrescenta é um

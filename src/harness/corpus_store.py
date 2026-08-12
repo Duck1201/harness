@@ -315,10 +315,11 @@ class CorpusStore:
         at all about relevance — the first place always scores 1/(k+1), whether
         the passage answers the question or is the least bad thing in the store.
 
-        Cosine similarity *measures*, so the floor is read there. If no Chunk is
-        close enough to the question, the answer is nothing: a Corpus that always
-        returns its best guess is how a question the acervo cannot answer comes
-        back answered anyway.
+        Cosine similarity *measures*, so the floor is read there — e por passagem,
+        não pela busca inteira. Medido contra um livro: bastava um Chunk passar
+        do piso para toda a fusão entrar, e três das seis vagas voltavam com
+        referência bibliográfica que a perna lexical achou e ninguém mediu. O
+        piso vale para quem for citado, inclusive quem só o BM25 encontrou.
         """
         with self._connect() as connection:
             similarities: dict[str, float] = {}
@@ -327,8 +328,6 @@ class CorpusStore:
                 dense = self._dense_ranking(connection, dense_query, dense_candidates)
                 similarities = dict(dense)
                 rankings.append([chunk_id for chunk_id, _ in dense])
-                if not any(value >= similarity_floor for value in similarities.values()):
-                    return ()
             for query in lexical_queries:
                 ranking = self._lexical_ranking(connection, query, lexical_candidates)
                 if ranking:
@@ -339,6 +338,17 @@ class CorpusStore:
                     scores[chunk_id] = scores.get(chunk_id, 0.0) + 1.0 / (
                         rank_constant + position + 1
                     )
+            if dense_query is not None:
+                similarities |= self._similarities(
+                    connection,
+                    dense_query,
+                    [chunk_id for chunk_id in scores if chunk_id not in similarities],
+                )
+                scores = {
+                    chunk_id: score
+                    for chunk_id, score in scores.items()
+                    if similarities.get(chunk_id, 0.0) >= similarity_floor
+                }
             ordered = sorted(scores.items(), key=lambda item: (-item[1], item[0]))[:limit]
             return tuple(self._hydrate(connection, ordered, similarities))
 
@@ -367,6 +377,26 @@ class CorpusStore:
         # A coluna é declarada com distance_metric=cosine, então a distância é
         # 1 - similaridade e volta para a escala em que o piso foi medido.
         return [(str(row["chunk_id"]), 1.0 - float(row["distance"])) for row in rows]
+
+    def _similarities(
+        self,
+        connection: sqlite3.Connection,
+        query: Sequence[float],
+        chunk_ids: Sequence[str],
+    ) -> dict[str, float]:
+        """A similaridade de quem a perna lexical trouxe e a densa não mediu."""
+        if not chunk_ids:
+            return {}
+        # O único texto interpolado é a sequência de "?": os ids viajam ligados.
+        placeholders = ",".join("?" for _ in chunk_ids)
+        rows = connection.execute(
+            f"""
+            SELECT chunk_id, vec_distance_cosine(embedding, ?) AS distance
+            FROM chunks_vec WHERE chunk_id IN ({placeholders})
+            """,
+            (_packed(query), *chunk_ids),
+        ).fetchall()
+        return {str(row["chunk_id"]): 1.0 - float(row["distance"]) for row in rows}
 
     def _lexical_ranking(
         self,
