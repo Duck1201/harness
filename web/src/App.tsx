@@ -2,7 +2,6 @@ import {
   Activity,
   Archive,
   ArrowUp,
-  AtSign,
   Bot,
   Brain,
   Check,
@@ -1492,9 +1491,6 @@ function Composer({
         />
         <div className="composer-footer">
           <div className="composer-tools">
-            <button type="button" onClick={() => insert("@file:")}>
-              <AtSign size={15} /> arquivo
-            </button>
             <button type="button" onClick={() => insert("```diff\n\n```")}>
               <FileCode2 size={15} /> diff
             </button>
