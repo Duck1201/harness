@@ -37,6 +37,11 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
   o fato dentro de um responde a página de habilidade com o `See also` e mais
   nada. Custa uma requisição a mais nas páginas magras e chega mais sujo, mas o
   número que a pergunta procura mora justamente na tabela que o extrato descarta.
+- **PDF extraído com layout.** O modo padrão do pypdf devolve a página como um
+  bloco corrido, sem a linha em branco que separa parágrafos, e insere espaço no
+  meio de palavra. Medido num livro de 660 páginas: 655 blocos de 550 palavras
+  viram 3453 de 104. Hífen suave no fim da linha passa a juntar as metades — era
+  apagado antes da regra que trata quebra, e o Corpus indexava "pode mos".
 - **Piso de tamanho de Chunk.** Seção mais curta que `chunk_minimum_tokens` não
   é indexada como passagem; o texto continua no Document. Medido numa wiki de
   jogo: abaixo de oito tokens a faixa é lista de links e andaime de citação, que

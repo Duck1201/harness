@@ -167,7 +167,13 @@ def extract_pdf(filename: str, data: bytes) -> ExtractedDocument:
 
     try:
         reader = PdfReader(BytesIO(data))
-        pages = [page.extract_text() or "" for page in reader.pages]
+        # `layout` custa três vezes mais tempo e paga: o modo padrão devolve a
+        # página como um bloco corrido, sem a linha em branco que separa um
+        # parágrafo do outro, e ainda insere espaço no meio de palavra
+        # ("recupera ção"). Medido num livro de 660 páginas: 655 blocos de 550
+        # palavras viram 3453 de 104 — parágrafo de verdade, que é a fronteira
+        # que o Chunk procura.
+        pages = [page.extract_text(extraction_mode="layout") or "" for page in reader.pages]
     except (PdfReadError, ValueError, OSError) as error:
         raise UnsupportedSourceError(
             "pdf_unreadable",
@@ -184,13 +190,17 @@ def extract_pdf(filename: str, data: bytes) -> ExtractedDocument:
     title = _pdf_title(reader) or _stem(filename)
     blocks: list[SourceBlock] = []
     for number, page in enumerate(cleaned_pages, start=1):
-        kept = [
-            stripped
-            for line in page.split("\n")
-            if (stripped := line.strip())
-            and furniture_key(stripped) not in furniture
-            and not _PAGE_FURNITURE.match(stripped)
-        ]
+        # A linha vazia é a fronteira de parágrafo, e some se for filtrada junto
+        # com a mobília: o que sobrava era a página inteira num bloco só.
+        kept: list[str] = []
+        for line in page.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                kept.append("")
+                continue
+            if furniture_key(stripped) in furniture or _PAGE_FURNITURE.match(stripped):
+                continue
+            kept.append(stripped)
         for paragraph in _paragraphs(_reflowed("\n".join(kept))):
             blocks.append(SourceBlock(text=paragraph, heading_path=(), page=number))
     return ExtractedDocument(title=title, blocks=tuple(blocks))
@@ -561,8 +571,11 @@ def _decoded(data: bytes) -> str:
 def _normalized(text: str) -> str:
     normalized = unicodedata.normalize("NFC", text.replace("\r\n", "\n").replace("\r", "\n"))
     normalized = _CONTROL_CHARACTERS.sub("", normalized)
-    normalized = normalized.replace("­", "")
-    return "\n".join(_HORIZONTAL_SPACE.sub(" ", line).strip() for line in normalized.split("\n"))
+    lines = "\n".join(_HORIZONTAL_SPACE.sub(" ", line).strip() for line in normalized.split("\n"))
+    # Hífen suave no fim da linha é hifenização de quebra, igual ao hífen comum
+    # que `_reflowed` já junta. Apagá-lo antes deixava a quebra órfã: o livro em
+    # PDF entregava "pode\xad\nmos" e o Corpus indexava "pode mos".
+    return lines.replace("­\n", "").replace("­", "")
 
 
 def _reflowed(text: str) -> str:
