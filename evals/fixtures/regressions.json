@@ -2,7 +2,7 @@
   "schema_version": 2,
   "dataset_id": "harness_2_contract_regressions",
   "dataset_version": "3.0.0",
-  "dataset_digest_sha256": "44485bdb8072f0b43cf10f6a8a8cbb4889f0cf796f079c868f06472b29a66565",
+  "dataset_digest_sha256": "71cfa19d172d17b363a942265a56b0ca28a4831f39cd4de237aa0b87dc5fd6fd",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -557,6 +557,115 @@
           "the bench address is refused by the production egress guard even with a WebAccessGrant",
           "BenchEgressGuard lives in the evals package and no application module imports it",
           "config/harness.json#network.eval_bench declares the exception as tier-scoped only"
+        ]
+      }
+    },
+    {
+      "id": "calculate_answers_without_a_grant_and_evaluates_nothing_else",
+      "type": "executor_contract",
+      "tags": ["calculate", "pure_compute", "security", "arithmetic"],
+      "origin": "Release v1.1: pure_compute is the first effect that requires no grant",
+      "stimulus": {
+        "attempts": [
+          {"tool": "calculate", "arguments": {"expression": "2 + 3 * (10 - 4) / 2"}},
+          {"tool": "calculate", "arguments": {"expression": "__import__('os').sep"}},
+          {"tool": "calculate", "arguments": {"expression": "9 ** 9 ** 9"}}
+        ]
+      },
+      "oracle": {
+        "must_call": ["calculate"],
+        "must_not_call": ["run_shell_command", "code_interpreter"],
+        "max_tool_calls": 3,
+        "result_payload": {
+          "status": "success",
+          "retryable": false,
+          "data": {"result": 11},
+          "error": null,
+          "meta": {"producer": "local_compute", "truncated": false, "taints": []}
+        },
+        "typed_assertions": [
+          {"operator": "tool_called", "tool": "calculate"},
+          {"operator": "max_tool_calls", "maximum": 3},
+          {"operator": "max_tool_calls", "maximum": 0, "effect": "workspace_read"},
+          {"operator": "max_tool_calls", "maximum": 0, "effect": "data_egress"},
+          {
+            "operator": "result_status_is",
+            "status": "success",
+            "tool_call_id": "eval-0"
+          },
+          {
+            "operator": "result_producer_is",
+            "producer": "local_compute",
+            "tool_call_id": "eval-0"
+          },
+          {"operator": "result_data_contains", "content": "11", "tool_call_id": "eval-0"},
+          {
+            "operator": "result_status_is",
+            "status": "blocked",
+            "tool_call_id": "eval-1"
+          },
+          {
+            "operator": "result_error_code_is",
+            "code": "invalid_tool_arguments",
+            "tool_call_id": "eval-1"
+          },
+          {
+            "operator": "result_status_is",
+            "status": "blocked",
+            "tool_call_id": "eval-2"
+          },
+          {
+            "operator": "result_error_code_is",
+            "code": "expression_too_large",
+            "tool_call_id": "eval-2"
+          }
+        ],
+        "explanation": [
+          "the tool answers with no grant at all, because pure_compute demands none",
+          "the executor parses the expression instead of evaluating it, so a name, call or attribute is refused before anything runs",
+          "a huge exponent is refused rather than computed: it would hang the event loop long before the Turn budget noticed",
+          "no workspace_read and no data_egress are charged, which is what makes the effect honest"
+        ]
+      }
+    },
+    {
+      "id": "get_weather_requires_web_access_grant",
+      "type": "privacy_gate",
+      "tags": ["get_weather", "web_access_grant", "web_taint", "privacy"],
+      "origin": "Release v1.1: a second data_egress tool must be gated by the same effect, not by its name",
+      "stimulus": {
+        "tool_call": {
+          "name": "get_weather",
+          "arguments": {"location": "Recife, Brazil"}
+        },
+        "web_access_grant": false
+      },
+      "oracle": {
+        "must_call": [],
+        "must_not_call": [],
+        "terminal_outcome": "blocked",
+        "result_payload": {
+          "status": "blocked",
+          "retryable": false,
+          "data": null,
+          "error": {"class": "missing_web_access_grant"},
+          "meta": {"producer": "harness", "truncated": false, "taints": []}
+        },
+        "typed_assertions": [
+          {"operator": "tool_not_called", "tool": "get_weather"},
+          {"operator": "max_tool_calls", "maximum": 0},
+          {
+            "operator": "terminal_outcome_is",
+            "kind": "blocked",
+            "reason_code": "web_access_grant_required"
+          },
+          {"operator": "result_status_is", "status": "blocked"},
+          {"operator": "result_error_code_is", "code": "web_access_grant_required"}
+        ],
+        "explanation": [
+          "the gate reads the declared effect, so a tool added to the registry is refused without touching the gate",
+          "no geocoding and no forecast request leaves the host before the grant exists",
+          "with the grant, the returned forecast carries UntrustedWebTaint like any other web data"
         ]
       }
     }
