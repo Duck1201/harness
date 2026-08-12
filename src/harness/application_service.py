@@ -95,6 +95,7 @@ class ApplicationService:
         estimator: TokenEstimator,
         allowed_workspace_roots: Sequence[str | Path],
         search_endpoint: str | None = None,
+        browser_executable: str | Path | None = None,
         operator_notes: str = "",
         benchmark_lease: BenchmarkLease | None = None,
         eval_service: EvalService | None = None,
@@ -157,7 +158,7 @@ class ApplicationService:
             store, config.tool_registry.effects_by_tool
         )
         if browser_capability is None or browser_egress_guard is None:
-            brave_guard = BraveEgressGuard()
+            brave_guard = BraveEgressGuard(executable=browser_executable)
             browser_capability = browser_capability or BraveBrowserCapability(guard=brave_guard)
             browser_egress_guard = browser_egress_guard or brave_guard
         self._tool_executor_factory: ToolExecutorFactory = _ConversationToolExecutorFactory(

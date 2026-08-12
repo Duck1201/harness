@@ -325,6 +325,7 @@ export interface SetupSubmission {
   allowed_origins: string[];
   searxng_url?: string | null;
   ollama_url?: string;
+  browser_executable?: string | null;
 }
 
 export interface HostConfigSnapshot {
@@ -335,6 +336,7 @@ export interface HostConfigSnapshot {
   allowed_origins: string[];
   searxng_url: string | null;
   ollama_url: string;
+  browser_executable: string | null;
 }
 
 export interface RunAgentMessage {

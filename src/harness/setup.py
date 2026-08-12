@@ -22,6 +22,7 @@ class SetupSubmission(BaseModel):
     allowed_origins: tuple[str, ...]
     searxng_url: str | None = None
     ollama_url: str = "http://127.0.0.1:11434"
+    browser_executable: Path | None = None
 
 
 class SetupStatus(BaseModel):
@@ -181,6 +182,7 @@ def validated_host_config(submission: SetupSubmission) -> HostConfig:
             allowed_origins=origins,
             searxng_url=submission.searxng_url,
             ollama_url=submission.ollama_url,
+            browser_executable=submission.browser_executable,
         )
     except ValueError as error:
         raise SetupError(

@@ -798,6 +798,7 @@ def _default_service(
         estimator=estimator,
         allowed_workspace_roots=roots,
         search_endpoint=host_config.searxng_url if host_config is not None else None,
+        browser_executable=host_config.browser_executable if host_config is not None else None,
         operator_notes=load_operator_notes(),
     )
 

@@ -152,6 +152,7 @@ export class MockHarnessClient implements HarnessClient {
     allowed_origins: ["http://127.0.0.1:8765"],
     searxng_url: null,
     ollama_url: "http://127.0.0.1:11434",
+    browser_executable: null,
   };
   private yoloDisabled = new Set<string>();
   private password = "";
@@ -517,6 +518,7 @@ export class MockHarnessClient implements HarnessClient {
       allowed_origins: submission.allowed_origins,
       searxng_url: submission.searxng_url ?? null,
       ollama_url: submission.ollama_url ?? "http://127.0.0.1:11434",
+      browser_executable: submission.browser_executable ?? null,
     };
     return { restart_required: true };
   }

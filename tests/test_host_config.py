@@ -162,3 +162,29 @@ def test_host_config_rejects_nonexistent_roots_relative_paths_and_invalid_urls(
         build(searxng_url="not-a-url")
     with pytest.raises(ValidationError, match="ollama_url"):
         build(ollama_url="ftp://127.0.0.1:11434")
+
+
+def test_browser_executable_must_be_an_absolute_executable_path(tmp_path: Path) -> None:
+    """Declaring the binary is what stops web_fetch escalation from depending on PATH."""
+    tokenizer = tmp_path / "tokenizer.json"
+    tokenizer.write_text("{}", encoding="utf-8")
+    browser = tmp_path / "chromium"
+    browser.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    def build(browser_executable: Path | None) -> HostConfig:
+        return HostConfig(
+            allowed_workspace_roots=(tmp_path.resolve(),),
+            tokenizer_path=tokenizer.resolve(),
+            tokenizer_digest="2" * 64,
+            state_dir=(tmp_path / "state").resolve(),
+            allowed_origins=("http://operator.test",),
+            browser_executable=browser_executable,
+        )
+
+    with pytest.raises(ValidationError, match="executable"):
+        build(browser.resolve())
+    browser.chmod(0o700)
+    assert build(browser.resolve()).browser_executable == browser.resolve()
+    assert build(None).browser_executable is None
+    with pytest.raises(ValidationError, match="absolute"):
+        build(Path("chromium"))

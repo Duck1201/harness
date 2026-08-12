@@ -1824,6 +1824,7 @@ function SettingsArea({
     allowed_origins: withLoopbackPair(stored?.allowed_origins ?? []).join("\n"),
     searxng_url: stored?.searxng_url ?? "",
     ollama_url: stored?.ollama_url ?? "http://127.0.0.1:11434",
+    browser_executable: stored?.browser_executable ?? "",
   });
   const [yolo, setYolo] = useState(snapshot.yolo_enabled);
   const [busy, setBusy] = useState(false);
@@ -1845,6 +1846,7 @@ function SettingsArea({
     setBusy(true);
     setError(null);
     const searxng = form.searxng_url.trim();
+    const browser = form.browser_executable.trim();
     void client
       .updateHostConfig({
         allowed_workspace_roots: lines(form.allowed_workspace_roots),
@@ -1853,6 +1855,7 @@ function SettingsArea({
         allowed_origins: lines(form.allowed_origins),
         searxng_url: searxng === "" ? null : searxng,
         ollama_url: form.ollama_url.trim(),
+        browser_executable: browser === "" ? null : browser,
       })
       .then(() => setSaved(true))
       .catch((cause: unknown) => setError(errorMessage(cause)))
@@ -1978,6 +1981,20 @@ function SettingsArea({
                   disabled={!snapshot.mutable || busy}
                   onChange={field("ollama_url")}
                 />
+              </label>
+              <label className="setup-field">
+                <span>Executável do navegador (opcional)</span>
+                <input
+                  type="text"
+                  aria-label="Executável do navegador"
+                  value={form.browser_executable}
+                  disabled={!snapshot.mutable || busy}
+                  onChange={field("browser_executable")}
+                />
+                <small>
+                  Caminho absoluto de um Chromium usado só na escalação do web_fetch. Vazio deixa
+                  o harness procurar no PATH, e o comportamento passa a depender da máquina.
+                </small>
               </label>
               <label className="setup-field">
                 <span>Instância SearXNG (opcional)</span>

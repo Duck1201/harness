@@ -35,6 +35,7 @@ class HostConfig(BaseModel):
     allowed_origins: tuple[str, ...]
     searxng_url: str | None = None
     ollama_url: str = "http://127.0.0.1:11434"
+    browser_executable: Path | None = None
 
     @field_validator("allowed_workspace_roots")
     @classmethod
@@ -60,6 +61,18 @@ class HostConfig(BaseModel):
         if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
             raise ValueError("tokenizer digest must be a SHA-256 digest")
         return digest
+
+    @field_validator("browser_executable")
+    @classmethod
+    def validate_browser_executable(cls, path: Path | None) -> Path | None:
+        # Declarar o binário é o que tira a escalação do web_fetch do palpite: sem
+        # isso o harness varre o PATH e o comportamento muda com a máquina.
+        if path is None:
+            return None
+        canonical = _canonical_path(path, must_exist=True)
+        if not os.access(canonical, os.X_OK):
+            raise ValueError("browser_executable must be executable")
+        return canonical
 
     @field_validator("ollama_url")
     @classmethod

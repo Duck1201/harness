@@ -20,7 +20,8 @@ o que deliberadamente não entra na primeira release está em
 | Node.js | 22+ | Só para construir o frontend e validar contratos |
 | pnpm | 10.13.1 | Via `corepack enable` |
 | Ollama | 0.32.5 | Servindo em `http://127.0.0.1:11434` |
-| Chromium | qualquer | `brave-browser`, `chromium`, `chromium-browser` ou `google-chrome` no PATH, para escalação do `web_fetch` |
+| Chromium | qualquer | Opcional, só para a escalação do `web_fetch`. Declare o caminho em Configurações; sem isso o harness procura `brave-browser`, `chromium`, `chromium-browser` ou `google-chrome` no PATH |
+| Docker ou Podman | qualquer | Opcional, só se você quiser SearXNG self-hosted para o `web_search` |
 
 ## Instalação
 
@@ -138,7 +139,8 @@ Só o que precisa existir antes do app entram por flag da CLI:
 
 O que vive dentro do `host.json` e é editável no painel: raízes de Workspace,
 origins autorizadas, caminho do tokenizer (o digest é medido do arquivo),
-diretório de estado, URL do Ollama e a instância SearXNG opcional. Salvar grava o
+diretório de estado, URL do Ollama, a instância SearXNG opcional e o executável
+do navegador. Salvar grava o
 arquivo e devolve `restart_required`: nada é reconstruído a quente, então reinicie
 o servidor para aplicar. A senha de Operator continua na rota própria
 (`PUT /api/admin/operator-password`) e é o único segredo do host — as duas rotas
@@ -146,6 +148,79 @@ de administração exigem sessão, ou loopback direto enquanto não houver senha
 
 `config/harness.json` e os demais contratos não são ajustáveis pelo host: são
 selados por digest.
+
+### Busca: SearXNG opcional
+
+`web_search` funciona sem configuração nenhuma — o fallback é o DuckDuckGo, que
+não pede chave. Uma instância SearXNG entra no lugar dele quando você declara a
+URL em **Configurações**, e a resposta em JSON é melhor: menos scraping, mais
+metadados e ranking que você controla.
+
+Self-hosted, com Docker ou Podman:
+
+```bash
+mkdir -p ~/searxng
+docker run -d --name searxng --restart unless-stopped \
+  -p 127.0.0.1:8080:8080 -v ~/searxng:/etc/searxng \
+  docker.io/searxng/searxng:latest
+```
+
+O primeiro boot escreve `~/searxng/settings.yml`. **Duas edições são
+obrigatórias**, senão toda busca cai no fallback:
+
+```yaml
+server:
+  secret_key: "o que o primeiro boot gerou"
+  image_proxy: true
+  limiter: false     # o harness fala HTTP direto, não é navegador
+
+search:
+  formats:
+    - html
+    - json           # o padrão do SearXNG é só html
+```
+
+O arquivo pertence ao usuário do container, então edite por dentro dele:
+
+```bash
+docker exec -u 0 -it searxng vi /etc/searxng/settings.yml
+docker restart searxng
+curl -s "http://127.0.0.1:8080/search?q=harness&format=json" | head -c 200
+```
+
+Saiu JSON com `results`? Cole `http://127.0.0.1:8080/search` em **Configurações →
+Host → Instância SearXNG**, salve e reinicie o harness.
+
+Uma instância em loopback é o caso normal, e o `EgressGuard` nega faixas privadas
+por construção. O endereço que você declara vira uma allowlist de exatamente um
+`host:porta`, válida só no caminho do `web_search`: `web_fetch` e o navegador
+continuam com o guard estrito, e um destino privado que ninguém declarou continua
+recusado ([ADR-0009](docs/adr/0009-search-provider-searxng-with-fallback.md)).
+
+Instância pública também serve — `searx.space` lista várias —, mas a maioria
+desliga `format=json` justamente contra bots. Teste com o `curl` acima antes de
+configurar.
+
+### Navegador: por que ele mora na sua máquina
+
+O `web_fetch` tenta HTTP primeiro e só escala para um navegador quando a página
+não entrega conteúdo sem JavaScript. Esse navegador é um binário do host, e isso
+é deliberado, não um resto de configuração: cada operação sobe um processo novo
+com um `--user-data-dir` descartável e com o destino fixado em
+`--host-resolver-rules` a partir do endereço que o `EgressGuard` já validou — o
+navegador não resolve DNS por conta própria. Um browser remoto, em container ou
+não, quebraria as duas garantias de uma vez ([ADR-0003](docs/adr/0003-guarded-egress-browser-isolation.md)).
+
+O que era palpite e deixou de ser: qual binário. Declare o caminho em
+**Configurações → Host → Executável do navegador**; o valor é validado (absoluto,
+existente, executável) e gravado no `host.json`. Deixando vazio, o harness varre
+o PATH como antes, e aí o comportamento passa a depender da máquina — a
+escalação simplesmente não acontece onde nenhum Chromium estiver instalado, e o
+`web_fetch` devolve o que o HTTP conseguiu.
+
+```bash
+which chromium || which brave-browser || which google-chrome
+```
 
 ### Exposição de rede
 
