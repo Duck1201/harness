@@ -79,7 +79,7 @@ def _payload(tmp_path: Path) -> dict[str, object]:
         "tokenizer_path": str(tokenizer_path.resolve()),
         "state_dir": str((tmp_path / "state").resolve()),
         "allowed_origins": ["http://operator.test"],
-        "brave_api_key": "brave-secret",
+        "searxng_url": "https://searx.example/search",
     }
 
 
@@ -130,7 +130,7 @@ def test_loopback_setup_persists_host_and_secret_then_requires_restart(
     assert response.status_code == 200
     assert response.json() == {"restart_required": True}
     assert "setup-token-secret" not in response.text
-    assert "brave-secret" not in response.text
+    assert "searx.example" in host_store.path.read_text(encoding="utf-8")
     assert after.json() == {
         "configured": True,
         "required": False,
@@ -144,9 +144,7 @@ def test_loopback_setup_persists_host_and_secret_then_requires_restart(
         host.tokenizer_digest
         == hashlib.sha256(Path(str(payload["tokenizer_path"])).read_bytes()).hexdigest()
     )
-    assert host.brave_credential_ref == "brave_api_key"
-    assert credential_store.read("brave_api_key") == "brave-secret"
-    assert "brave-secret" not in host_store.path.read_text(encoding="utf-8")
+    assert host.searxng_url == "https://searx.example/search"
 
 
 def test_setup_token_is_rejected_when_wrong_and_consumed_only_after_success(
@@ -210,15 +208,14 @@ def test_setup_authorizes_before_parsing_and_redacts_invalid_payloads(
     assert unauthorized.json()["error"]["code"] == "invalid_setup_token"
     assert invalid.status_code == 422
     assert invalid.json()["error"]["code"] == "invalid_setup_configuration"
-    assert "brave-secret" not in invalid.text
     assert "validation-token" not in invalid.text
     assert host_store.exists() is False
     assert asyncio.run(service.observability_store.list_events()) == []
 
 
-def test_setup_rejects_blank_brave_key_without_exposing_it(tmp_path: Path) -> None:
+def test_setup_rejects_a_search_endpoint_that_is_not_a_url(tmp_path: Path) -> None:
     payload = _payload(tmp_path)
-    payload["brave_api_key"] = "  \n  "
+    payload["searxng_url"] = "not-a-url"
     host_store = HostConfigStore(tmp_path / "config" / "host.json")
     controller = SetupController(host_store, token="credential-token")
     app = create_app(
@@ -243,7 +240,7 @@ def test_setup_rejects_blank_brave_key_without_exposing_it(tmp_path: Path) -> No
         )
 
     assert response.status_code == 422
-    assert response.json()["error"]["code"] == "invalid_brave_credential"
+    assert response.json()["error"]["code"] == "invalid_setup_configuration"
     assert "credential-token" not in response.text
     assert host_store.exists() is False
 
@@ -358,7 +355,6 @@ def test_setup_rejects_lan_and_forwarded_requests_before_reading_secrets(
     assert lan.json()["error"]["code"] == "direct_loopback_required"
     assert forwarded.json()["error"]["code"] == "direct_loopback_required"
     assert forwarded_port.json()["error"]["code"] == "direct_loopback_required"
-    assert "brave-secret" not in lan.text
     assert "loopback-token" not in lan.text
     assert host_store.exists() is False
     assert asyncio.run(service.observability_store.list_events()) == []
@@ -368,16 +364,16 @@ def test_default_boot_without_host_config_is_degraded_and_does_not_create_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     host_path = tmp_path / "config" / "host.json"
-    state_dir = tmp_path / "degraded-state"
-    monkeypatch.setenv("HARNESS_HOST_CONFIG", str(host_path))
-    monkeypatch.setenv("HARNESS_STATE_DIR", str(state_dir))
-    monkeypatch.setenv("HARNESS_ALLOWED_ORIGINS", "http://operator.test")
-    monkeypatch.delenv("HARNESS_WORKSPACE_ROOTS", raising=False)
-    monkeypatch.delenv("HARNESS_TOKENIZER_PATH", raising=False)
-    monkeypatch.delenv("HARNESS_TOKENIZER_SHA256", raising=False)
+    # Sem host.json o state dir cai no padrão XDG; apontá-lo para o tmp mantém o
+    # teste longe do estado real da máquina.
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setattr(api_module, "OllamaRuntime", FakeRuntime)
 
-    app = create_app(static_dir=tmp_path / "missing-dist", setup_token="boot-token")
+    app = create_app(
+        host_config_path=host_path,
+        static_dir=tmp_path / "missing-dist",
+        setup_token="boot-token",
+    )
 
     with TestClient(app, client=("127.0.0.1", 50000)) as client:
         status = client.get("/api/setup/status").json()
@@ -402,15 +398,9 @@ def test_default_boot_reads_host_config_and_host_origins(
     host_store = HostConfigStore(tmp_path / "config" / "host.json")
     controller = SetupController(host_store, token="initial-setup")
     controller.complete("initial-setup", SetupSubmission.model_validate(payload))
-    monkeypatch.setenv("HARNESS_HOST_CONFIG", str(host_store.path))
-    monkeypatch.delenv("HARNESS_STATE_DIR", raising=False)
-    monkeypatch.delenv("HARNESS_ALLOWED_ORIGINS", raising=False)
-    monkeypatch.delenv("HARNESS_WORKSPACE_ROOTS", raising=False)
-    monkeypatch.delenv("HARNESS_TOKENIZER_PATH", raising=False)
-    monkeypatch.delenv("HARNESS_TOKENIZER_SHA256", raising=False)
     monkeypatch.setattr(api_module, "OllamaRuntime", FakeRuntime)
 
-    app = create_app(static_dir=tmp_path / "missing-dist")
+    app = create_app(host_config_path=host_store.path, static_dir=tmp_path / "missing-dist")
 
     with TestClient(app, client=("127.0.0.1", 50000)) as client:
         status = client.get("/api/setup/status", headers={"Origin": "http://operator.test"})
@@ -429,51 +419,51 @@ def test_default_boot_reads_host_config_and_host_origins(
     assert settings["restart_required"] is False
 
 
-def test_environment_overrides_host_runtime_values(
+def test_settings_tab_rewrites_host_config_and_asks_for_a_restart(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     payload = _payload(tmp_path)
     host_store = HostConfigStore(tmp_path / "config" / "host.json")
-    controller = SetupController(host_store, token="initial-setup")
-    controller.complete("initial-setup", SetupSubmission.model_validate(payload))
-    override_workspace = tmp_path / "override-workspace"
-    override_workspace.mkdir()
-    override_tokenizer = tmp_path / "override-tokenizer.json"
-    override_digest = _tokenizer(override_tokenizer)
-    override_state = tmp_path / "override-state"
-    monkeypatch.setenv("HARNESS_HOST_CONFIG", str(host_store.path))
-    monkeypatch.setenv("HARNESS_STATE_DIR", str(override_state))
-    monkeypatch.setenv("HARNESS_WORKSPACE_ROOTS", str(override_workspace))
-    monkeypatch.setenv("HARNESS_TOKENIZER_PATH", str(override_tokenizer))
-    monkeypatch.setenv("HARNESS_TOKENIZER_SHA256", override_digest)
-    monkeypatch.setenv("HARNESS_ALLOWED_ORIGINS", "http://override.test")
-    monkeypatch.setenv("HARNESS_BRAVE_API_KEY", "environment-brave-key")
+    SetupController(host_store, token="initial-setup").complete(
+        "initial-setup", SetupSubmission.model_validate(payload)
+    )
+    other_workspace = tmp_path / "other-workspace"
+    other_workspace.mkdir()
     monkeypatch.setattr(api_module, "OllamaRuntime", FakeRuntime)
 
-    app = create_app(static_dir=tmp_path / "missing-dist")
+    app = create_app(host_config_path=host_store.path, static_dir=tmp_path / "missing-dist")
 
     with TestClient(app, client=("127.0.0.1", 50000)) as client:
-        denied_host_origin = client.get(
-            "/api/setup/status", headers={"Origin": "http://operator.test"}
+        before = client.get("/api/ui/settings").json()
+        saved = client.put(
+            "/api/admin/host-config",
+            json={
+                **payload,
+                "allowed_workspace_roots": [str(other_workspace.resolve())],
+                "searxng_url": "http://127.0.0.1:8080/search",
+                "ollama_url": "http://127.0.0.1:11500",
+            },
         )
-        accepted_override = client.get(
-            "/api/setup/status", headers={"Origin": "http://override.test"}
+        invalid = client.put(
+            "/api/admin/host-config",
+            json={**payload, "tokenizer_path": str(tmp_path / "missing-tokenizer.json")},
         )
-        health = client.get("/api/health").json()
-        workspaces = client.get("/api/workspaces").json()["workspaces"]
+        after = client.get("/api/ui/settings").json()
 
-    assert denied_host_origin.status_code == 403
-    assert accepted_override.status_code == 200
-    assert health["ready"] is True
-    assert workspaces == [{"id": workspaces[0]["id"], "root": str(override_workspace.resolve())}]
-    assert (override_state / "conversations.sqlite3").is_file()
-    assert (
-        api_module.load_brave_api_key(
-            credential_store=CredentialStore(host_store.credentials_path),
-            credential_reference="brave_api_key",
-        )
-        == "environment-brave-key"
-    )
+    assert before["mutable"] is True
+    assert before["host_config"]["allowed_workspace_roots"] == [
+        str((tmp_path / "workspace").resolve())
+    ]
+    assert saved.status_code == 200
+    assert saved.json() == {"restart_required": True}
+    assert invalid.status_code == 422
+    assert invalid.json()["error"]["code"] == "invalid_tokenizer"
+    # O arquivo já mudou; o processo em pé continua com o que leu no boot.
+    stored = host_store.load()
+    assert stored.allowed_workspace_roots == (other_workspace.resolve(),)
+    assert stored.searxng_url == "http://127.0.0.1:8080/search"
+    assert stored.ollama_url == "http://127.0.0.1:11500"
+    assert after["host_config"]["ollama_url"] == "http://127.0.0.1:11500"
 
 
 def test_setup_can_be_explicitly_reopened_and_randomizes_each_boot(
@@ -483,11 +473,14 @@ def test_setup_can_be_explicitly_reopened_and_randomizes_each_boot(
     host_store = HostConfigStore(tmp_path / "config" / "host.json")
     initial = SetupController(host_store, token="initial-setup")
     initial.complete("initial-setup", SetupSubmission.model_validate(payload))
-    monkeypatch.setenv("HARNESS_HOST_CONFIG", str(host_store.path))
-    monkeypatch.setenv("HARNESS_SETUP_REOPEN", "1")
     monkeypatch.setattr(api_module, "OllamaRuntime", FakeRuntime)
 
-    app = create_app(static_dir=tmp_path / "missing-dist", setup_token="reopened-token")
+    app = create_app(
+        host_config_path=host_store.path,
+        reopen_setup=True,
+        static_dir=tmp_path / "missing-dist",
+        setup_token="reopened-token",
+    )
     with TestClient(app, client=("127.0.0.1", 50000)) as client:
         status = client.get("/api/setup/status").json()
 

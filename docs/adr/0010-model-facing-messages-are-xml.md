@@ -1,0 +1,5 @@
+# O que vira mensagem para o modelo é XML, não JSON
+
+ToolResult, automação interna e tentativa rejeitada chegavam ao modelo como JSON minificado numa única linha — chaves, aspas e vírgulas que um modelo pequeno lê pior do que texto marcado, ainda mais quando o `data` carrega conteúdo de arquivo com aspas dentro. O conteúdo dessas mensagens passa a ser XML determinístico: chaves em ordem, sem indentação nem quebra de linha, escapando `&`, `<` e `>`, com `<entry key="...">` para chave que não é nome XML válido. Determinismo não é estética: o hash que deduplica `data` repetido no contexto é calculado sobre esse render.
+
+O limite fica nos schemas de tool, que continuam em JSON Schema no array `tools` nativo do Ollama. Convertê-los significaria descrever as tools em texto no system prompt e voltar a extrair chamadas de texto livre — exatamente o que o engine rejeita hoje como resposta malformada. XML aqui melhora a leitura do resultado; trocar tool-calling nativo por parsing trocaria confiabilidade por simetria.

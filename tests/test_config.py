@@ -26,6 +26,8 @@ def test_config_loader_reads_harness_profiles_and_tool_registry() -> None:
         "grep_search",
         "web_search",
         "web_fetch",
+        "calculate",
+        "get_weather",
     ]
     assert config.tool_schemas[0].parameters["type"] == "object"
     assert (

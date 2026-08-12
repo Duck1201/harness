@@ -48,6 +48,27 @@ describe("ConfirmationDialog", () => {
     expect(onResolve).toHaveBeenCalledWith(true, false);
   });
 
+  it("pede o grant de web sem prometer dispensa que a policy não guarda", async () => {
+    const user = userEvent.setup();
+    const onResolve = vi.fn();
+    render(
+      <ConfirmationDialog
+        confirmation={confirmation("web_access_grant_required")}
+        busy={false}
+        onResolve={onResolve}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Permitir acesso à web nesta conversa" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/sem reenviar o prompt/)).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Permitir acesso" }));
+    expect(onResolve).toHaveBeenCalledWith(true, false);
+  });
+
   it("nega sem dispensar e mantém o foco inicial no botão seguro", async () => {
     const user = userEvent.setup();
     const onResolve = vi.fn();

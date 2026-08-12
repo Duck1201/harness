@@ -46,5 +46,5 @@ suportada, o custo do PBKDF2 é a defesa contra tentativa repetida.
 ## Exposição em rede
 
 Publicar o harness numa LAN exige senha configurada. Publicá-lo na internet exige
-TLS terminado por um reverse proxy à frente, com o `Origin` da URL pública em
-`HARNESS_ALLOWED_ORIGINS`. O guia operacional está no [`README`](../README.md).
+TLS terminado por um reverse proxy à frente, com o `Origin` da URL pública na
+lista de origins autorizadas do `host.json`, editável na aba Configurações. O guia operacional está no [`README`](../README.md).

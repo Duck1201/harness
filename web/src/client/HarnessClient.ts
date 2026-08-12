@@ -97,6 +97,10 @@ export interface HarnessClient {
   login(password: string): Promise<SessionStatus>;
   logout(): Promise<void>;
 
+  setYoloEnabled(enabled: boolean): Promise<void>;
+  updateHostConfig(submission: SetupSubmission): Promise<{ restart_required: boolean }>;
+  setConversationYolo(conversationId: string, disabled: boolean): Promise<void>;
+
   getSetupStatus(): Promise<SetupStatus>;
   completeSetup(token: string, submission: SetupSubmission): Promise<void>;
 }

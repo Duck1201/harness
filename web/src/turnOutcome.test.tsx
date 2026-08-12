@@ -21,7 +21,7 @@ describe("TurnOutcome", () => {
       <TurnOutcome kind="blocked" reasonCode="write_grant_required" grants={[]} onGrant={onGrant} />,
     );
 
-    expect(screen.getByText(/Ative o grant Write/)).toBeInTheDocument();
+    expect(screen.getByText(/não foi respondido nesta sessão/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Ativar grant Write" }));
     expect(onGrant).toHaveBeenCalledWith("WriteGrant");
   });

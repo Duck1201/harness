@@ -25,6 +25,10 @@ export function ConfirmationDialog({
   const deny = useRef<HTMLButtonElement>(null);
   const tainted = confirmation.reason_code.startsWith("web_taint");
   const grants = confirmation.reason_code === "write_grant_required";
+  const webGrant = confirmation.reason_code === "web_access_grant_required";
+  // Só o waiver de escrita existe no servidor: oferecê-lo aqui para o grant de
+  // web prometeria algo que a política não guarda.
+  const waivable = !tainted && !webGrant;
 
   useEffect(() => {
     deny.current?.focus();
@@ -66,17 +70,21 @@ export function ConfirmationDialog({
           <h2 id="confirmation-title">
             {tainted
               ? "Escrita com dado da web"
-              : grants
-                ? "Permitir escrita nesta conversa"
-                : "Confirmar escrita"}
+              : webGrant
+                ? "Permitir acesso à web nesta conversa"
+                : grants
+                  ? "Permitir escrita nesta conversa"
+                  : "Confirmar escrita"}
           </h2>
         </header>
         <p>
           {tainted
             ? "O Turn leu conteúdo da web e agora quer escrever no Workspace. Aprovar vale só para esta chamada: não cria grant nem amplia acesso."
-            : grants
-              ? "A conversa ainda não pode escrever. Aprovar concede o WriteGrant e executa esta escrita; o grant fica visível no cabeçalho e pode ser revogado a qualquer momento."
-              : "O modelo quer escrever no Workspace. Aprovar vale só para esta chamada: não cria grant nem amplia acesso."}
+            : webGrant
+              ? "A conversa ainda não pode acessar a web. Aprovar concede o WebAccessGrant e segue com esta chamada sem reenviar o prompt; o grant fica visível no cabeçalho e pode ser revogado a qualquer momento."
+              : grants
+                ? "A conversa ainda não pode escrever. Aprovar concede o WriteGrant e executa esta escrita; o grant fica visível no cabeçalho e pode ser revogado a qualquer momento."
+                : "O modelo quer escrever no Workspace. Aprovar vale só para esta chamada: não cria grant nem amplia acesso."}
         </p>
 
         <div className="confirmation-body">
@@ -114,7 +122,7 @@ export function ConfirmationDialog({
         </div>
 
         <div className="confirmation-footer">
-          {!tainted && (
+          {waivable && (
             <label className="confirmation-waiver">
               <input
                 type="checkbox"
@@ -141,7 +149,11 @@ export function ConfirmationDialog({
               onClick={() => onResolve(true, waive)}
               disabled={busy}
             >
-              {grants ? "Permitir escrita" : "Aprovar escrita"}
+              {webGrant
+                ? "Permitir acesso"
+                : grants
+                  ? "Permitir escrita"
+                  : "Aprovar escrita"}
             </button>
           </div>
         </div>

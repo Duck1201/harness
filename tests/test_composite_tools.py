@@ -115,7 +115,6 @@ def test_mixed_batch_preflights_all_children_and_has_no_effect_when_web_is_denie
                 registry=config.tool_registry,
                 session_policy=policy(),
                 http_transport=web_transport,
-                brave_api_key="not-used",
             )
         )
         composite = CompositeToolExecutor(

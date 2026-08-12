@@ -75,14 +75,14 @@ async def _wait_until_idle(service: ApplicationService, conversation_id: str) ->
     raise AssertionError("conversation worker did not become idle")
 
 
-def test_service_exposes_effective_tool_schemas_without_disclosing_brave_key(
+def test_service_exposes_effective_tool_schemas_without_disclosing_the_search_endpoint(
     tmp_path: Path,
 ) -> None:
     async def scenario() -> None:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         runtime = CapturingRuntime()
-        secret = "brave-secret-that-must-not-leak"
+        secret = "https://searx.internal.example/search-that-must-not-leak"
         service = ApplicationService(
             store=ConversationStore(tmp_path / "conversations.sqlite3"),
             observability_store=ObservabilityStore(tmp_path / "observability.sqlite3"),
@@ -90,7 +90,7 @@ def test_service_exposes_effective_tool_schemas_without_disclosing_brave_key(
             runtime=runtime,
             estimator=FakeEstimator(),
             allowed_workspace_roots=(workspace,),
-            brave_api_key=secret,
+            search_endpoint=secret,
         )
         await service.initialize()
         try:
@@ -125,6 +125,8 @@ def test_service_exposes_effective_tool_schemas_without_disclosing_brave_key(
                 "grep_search",
                 "web_fetch",
                 "web_search",
+                "calculate",
+                "get_weather",
             }
             offered = [{schema.name for schema in request.tools} for request in runtime.requests]
             assert offered == [catalogue, catalogue, catalogue]
@@ -155,7 +157,9 @@ def test_service_exposes_effective_tool_schemas_without_disclosing_brave_key(
     asyncio.run(scenario())
 
 
-def test_web_search_schema_requires_brave_capability(tmp_path: Path) -> None:
+def test_web_search_is_always_offered_because_its_fallback_needs_no_credential(
+    tmp_path: Path,
+) -> None:
     async def scenario() -> None:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
@@ -177,7 +181,7 @@ def test_web_search_schema_requires_brave_capability(tmp_path: Path) -> None:
 
             offered = {schema.name for schema in runtime.requests[0].tools}
             assert "web_fetch" in offered
-            assert "web_search" not in offered
+            assert "web_search" in offered
         finally:
             await service.shutdown()
 
@@ -401,6 +405,78 @@ def test_a_waived_write_is_approved_without_asking_but_a_tainted_one_still_asks(
 
         await store.revoke_confirmation_waiver(conversation_id, "workspace_write")
         assert await store.waived_confirmations(conversation_id) == frozenset()
+
+    asyncio.run(scenario())
+
+
+def test_approving_a_grant_dialog_records_the_grant_the_reason_code_names(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        sink = RecordingEventSink()
+        gate, store, conversation_id = await _gate_conversation(tmp_path, sink)
+
+        for reason_code, permission in (
+            ("write_grant_required", "WriteGrant"),
+            ("web_access_grant_required", "WebAccessGrant"),
+        ):
+            request = _confirmation_request(conversation_id, reason_code=reason_code)
+            asking = asyncio.create_task(gate.confirm(request))
+            await _until_pending(gate, conversation_id)
+            await gate.resolve(conversation_id, request.id, approved=True)
+            decision = await asyncio.wait_for(asking, timeout=1)
+            assert decision.approved is True
+            policy = await store.get_session_policy(conversation_id)
+            assert permission in policy.effective_grants
+
+        # Approving under taint still grants nothing — that decision is per call.
+        tainted = _confirmation_request(conversation_id)
+        waiting = asyncio.create_task(gate.confirm(tainted))
+        await _until_pending(gate, conversation_id)
+        await gate.resolve(conversation_id, tainted.id, approved=True)
+        await asyncio.wait_for(waiting, timeout=1)
+        policy = await store.get_session_policy(conversation_id)
+        assert sorted(policy.effective_grants) == ["WebAccessGrant", "WriteGrant"]
+
+    asyncio.run(scenario())
+
+
+def test_yolo_answers_every_confirmation_including_the_tainted_write(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        sink = RecordingEventSink()
+        gate, store, conversation_id = await _gate_conversation(tmp_path, sink)
+        tainted = _confirmation_request(conversation_id)
+
+        # Default off: the tainted write is still announced and still asked.
+        asking = asyncio.create_task(gate.confirm(tainted))
+        await _until_pending(gate, conversation_id)
+        await gate.resolve(conversation_id, tainted.id, approved=False)
+        assert (await asyncio.wait_for(asking, timeout=1)).approved is False
+
+        await store.set_yolo_enabled(True)
+        silent = await gate.confirm(tainted)
+        assert silent.approved is True
+        assert silent.reason_code == "web_taint_confirmation_waived"
+        assert await gate.will_announce(tainted) is False
+        assert len(sink.events) == 1  # the second decision announced nothing
+
+        # Missing grants are answered too, so a Turn never stops to ask for one.
+        for reason_code, permission in (
+            ("write_grant_required", "WriteGrant"),
+            ("web_access_grant_required", "WebAccessGrant"),
+        ):
+            decision = await gate.confirm(
+                _confirmation_request(conversation_id, reason_code=reason_code)
+            )
+            assert decision.approved is True
+            policy = await store.get_session_policy(conversation_id)
+            assert permission in policy.effective_grants
+
+        # Opting one Conversation out leaves the host-wide answer alone.
+        await store.set_conversation_yolo_disabled(conversation_id, True)
+        assert await store.yolo_enabled() is True
+        assert await store.yolo_active(conversation_id) is False
+        assert await gate.will_announce(tainted) is True
 
     asyncio.run(scenario())
 

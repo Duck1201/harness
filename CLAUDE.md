@@ -16,6 +16,7 @@ node scripts/validate-contracts.mjs --write    # resela digests derivados
 uv run python scripts/seal-system-prompt.py    # resela o espelho de SYSTEM-PROMPT.md
 cd web && pnpm test && pnpm exec tsc -b && pnpm build
 harness                                        # sobe o servidor (uvicorn)
+harness --setup --port 8899                    # reabre o setup em outra porta
 ```
 
 CI (`.github/workflows/ci.yml`) roda três jobs: backend (ruff + pyright +
@@ -51,21 +52,31 @@ exige alterar o documento, os contratos e as fixtures no mesmo commit.
 
 - **Autorização é por efeito, nunca por nome de tool**: `workspace_read` exige
   WorkspaceRootGrant; `workspace_write` exige também WriteGrant; `data_egress`
-  exige WebAccessGrant. Adicionar um `if tool_name == ...` em caminho de policy
-  está errado por construção. O gate vive em dois executores independentes
-  (`local_tools.py` e `web_tools.py`): grant novo exige tocar os dois.
+  exige WebAccessGrant; `pure_compute` não exige nada. Adicionar um
+  `if tool_name == ...` em caminho de policy está errado por construção — o mesmo
+  vale para o roteamento tool -> executor, que também lê o efeito. O gate vive em
+  dois executores independentes (`local_tools.py` e `web_tools.py`): grant novo
+  exige tocar os dois.
 - **O modelo é não confiável**: seleção, argumentos e resultados passam por
   validação, autorização, confirmação e sandbox do harness. `blocked` só pode ser
   emitido pelo harness; recusa de provedor é `failed`; sucesso sem itens é `empty`.
 - **CanonicalHistory é a fonte autoritativa**; ModelView e AG-UI são projeções
   reconstruídas. Reasoning transita ao vivo para a UI mas **nunca** é persistido
   em estado canônico, telemetria ou replay.
+- **O conteúdo das mensagens do modelo é XML**, montado só em
+  `context_builder._xml_text`; schemas de tool seguem em JSON Schema no
+  tool-calling nativo do Ollama (ADR 0010).
+- **`host.json` é a única fonte de configuração do host**: não há variável de
+  ambiente equivalente, e a aba Configurações grava o mesmo arquivo do setup.
 - **Dois stores separados**: estado conversacional e telemetria. A telemetria
   recebe só IDs, digests, classes, tamanhos, contagens e tempos — nunca conteúdo.
   Falha de telemetria é não fatal.
 - **Todo ToolResult** tem `status`, `retryable`, `data`, `error`, `meta`.
 - **Sem senha de Operator, só loopback direto é atendido**; com senha, toda rota
   exige sessão. Não há terceira opção nem flag que abra a porta sem autenticação.
+- **Modo yolo é decisão do Operator, não default**: global, desligado de fábrica,
+  com opt-out por Conversation; ligado, aprova toda confirmação (inclusive sob
+  taint) e registra cada chamada como `waived` (ADR 0008).
 - **Medição inventada é proibida**: experimento sem execução fica com
   `result: null`.
 

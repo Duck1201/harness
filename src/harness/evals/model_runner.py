@@ -70,10 +70,6 @@ _STUB_PAGES = {
 }
 _URL_PATTERN = re.compile(r"https?://\S+")
 
-# Not a credential: the bench never checks it, it only has to be non-empty so the
-# executor takes the configured provider path instead of reporting no credentials.
-_BENCH_SEARCH_KEY = "bench-search-key"
-
 
 def _eval_policy(permissions: Sequence[str] = _ALL_GRANTS) -> SessionPolicy:
     now = datetime.now(UTC)
@@ -402,9 +398,8 @@ class ModelCaseRunner:
             registry=registry,
             session_policy=policy,
             egress_guard=guard,
-            # The bench answers the provider endpoint, so web_search is offered and
-            # exercised without the corpus depending on a real Brave key.
-            brave_api_key=_BENCH_SEARCH_KEY,
+            # The bench answers the provider endpoint, so web_search is exercised
+            # without the corpus reaching a real search engine.
             search_endpoint=bench.url(SEARCH_PATH),
             browser_capability=BraveBrowserCapability(
                 egress_guard=guard,
@@ -414,7 +409,7 @@ class ModelCaseRunner:
         )
         return CompositeToolExecutor(
             routes={
-                definition.name: (web if definition.name.startswith("web_") else local)
+                definition.name: (web if "data_egress" in definition.effects else local)
                 for definition in registry.model_tools
             }
         )

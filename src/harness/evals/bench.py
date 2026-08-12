@@ -42,26 +42,24 @@ BROWSER_REQUIRED_PAGE = (
     b"</body></html>"
 )
 
-SEARCH_PATH = "/res/v1/web/search"
+SEARCH_PATH = "/search"
 
-# Brave-shaped, so web_search exercises the real parser without a real key.
+# SearXNG-shaped, so web_search exercises the real parser without leaving the bench.
 SEARCH_RESPONSE = json.dumps(
     {
-        "query": {"more_results_available": False},
-        "web": {
-            "results": [
-                {
-                    "title": "Documentacao oficial do modelo",
-                    "url": "https://bench.harness.test/readable",
-                    "description": "Pagina de referencia servida pela bancada.",
-                },
-                {
-                    "title": "Guia de uso",
-                    "url": "https://bench.harness.test/js-only",
-                    "description": "Segundo resultado da bancada.",
-                },
-            ]
-        },
+        "query": "bench",
+        "results": [
+            {
+                "title": "Documentacao oficial do modelo",
+                "url": "https://bench.harness.test/readable",
+                "content": "Pagina de referencia servida pela bancada.",
+            },
+            {
+                "title": "Guia de uso",
+                "url": "https://bench.harness.test/js-only",
+                "content": "Segundo resultado da bancada.",
+            },
+        ],
     }
 ).encode()
 

@@ -1,7 +1,5 @@
 # pyright: reportUnusedFunction=false
 
-import os
-import stat
 import sys
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
@@ -46,16 +44,18 @@ from .host_config import (
     HostConfig,
     HostConfigStore,
     default_state_dir,
-    load_env_file,
 )
 from .observability_store import ObservabilityStore
 from .ollama_runtime import OllamaRuntime
 from .ports import ConfirmationRequest
-from .setup import SetupController, SetupError, SetupSubmission
+from .setup import SetupController, SetupError, SetupSubmission, validated_host_config
 from .system_prompt import load_operator_notes
 from .token_estimator import HuggingFaceTokenEstimator
 
 DEFAULT_PORT = 8765
+DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
+# O contrato não é ajustável pelo host: o caminho é fixo por construção.
+HARNESS_CONFIG_PATH = Path("config/harness.json")
 
 
 class ApiModel(BaseModel):
@@ -70,6 +70,11 @@ class CreateConversationRequest(ApiModel):
 class UpdateConversationRequest(ApiModel):
     name: str | None = None
     archived: bool | None = None
+    yolo_disabled: bool | None = None
+
+
+class YoloRequest(ApiModel):
+    enabled: bool
 
 
 class RequestContent(ApiModel):
@@ -172,16 +177,13 @@ def create_app(
     host_config_path: str | Path | None = None,
     setup_token: str | None = None,
     setup_ttl_seconds: float = 600,
-    reopen_setup: bool | None = None,
+    reopen_setup: bool = False,
+    port: int = DEFAULT_PORT,
     static_dir: str | Path = Path("web/dist"),
     max_body_bytes: int = 1024 * 1024,
     session_controller: SessionController | None = None,
     credential_store: CredentialStore | None = None,
 ) -> FastAPI:
-    # `uv run uvicorn harness.api:create_app --factory` é um caminho documentado e
-    # não passa por __main__, então o .env também é carregado aqui. A segunda
-    # chamada é no-op: load_env_file nunca sobrescreve o que já está no ambiente.
-    load_env_file()
     if max_body_bytes < 1:
         raise ValueError("max_body_bytes must be positive")
     effective_origins = tuple(allowed_origins or ())
@@ -191,7 +193,7 @@ def create_app(
         host_store = _host_config_store(host_config_path)
         host_config = host_store.load_optional()
         if allowed_origins is None:
-            effective_origins = configured_origins(host_config)
+            effective_origins = configured_origins(host_config, port)
         host_credentials = credential_store or CredentialStore(host_store.credentials_path)
         credentials = host_credentials
         operator_password_hash = host_credentials.read_operator_password_hash()
@@ -203,7 +205,7 @@ def create_app(
             setup_controller = SetupController(
                 host_store,
                 credential_store=host_credentials,
-                reopen=(_setup_reopen_requested() if reopen_setup is None else reopen_setup),
+                reopen=reopen_setup,
                 token=setup_token,
                 ttl_seconds=setup_ttl_seconds,
             )
@@ -212,6 +214,7 @@ def create_app(
                 print(message, file=sys.stderr)
     origins = frozenset(effective_origins)
     application_service = service
+    host_store = _host_config_store(host_config_path) if credentials is not None else None
     sessions = session_controller or SessionController(password_hash=operator_password_hash)
 
     @asynccontextmanager
@@ -385,6 +388,28 @@ def create_app(
         sessions.set_password_hash(digest)
         return Response(status_code=204)
 
+    @app.put("/api/admin/host-config")
+    async def update_host_config(payload: SetupSubmission) -> dict[str, Any]:
+        # Mesma validação do setup, mesma escrita atômica: o painel não é um
+        # caminho alternativo, é o mesmo caminho com outra porta de entrada.
+        if host_store is None:
+            raise SetupError(
+                "host_config_unavailable",
+                "This app was built without a host configuration store.",
+                status_code=409,
+            )
+        host_store.write(validated_host_config(payload))
+        # Nada é reconstruído a quente: trocar roots, tokenizer ou origin no meio
+        # de um Turn mexeria em policy e executor já construídos.
+        return {"restart_required": True}
+
+    @app.put("/api/admin/yolo", status_code=204)
+    async def set_yolo(payload: YoloRequest) -> Response:
+        # Standing Operator decision, host-wide: while it is on, the gate answers
+        # yes to every confirmation, including a write derived from web content.
+        await application_service.set_yolo_enabled(payload.enabled)
+        return Response(status_code=204)
+
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
         readiness = application_service.readiness
@@ -392,7 +417,7 @@ def create_app(
             "ready": readiness.ready,
             "reason_code": readiness.reason_code,
             "capabilities": {
-                "settings_mutation": False,
+                "settings_mutation": host_store is not None,
                 "admin": credentials is not None,
                 "authentication_required": sessions.authentication_required,
                 "ag_ui_sse": True,
@@ -437,6 +462,7 @@ def create_app(
             conversation_id,
             name=payload.name,
             archived=payload.archived,
+            yolo_disabled=payload.yolo_disabled,
         )
         return {"conversation": _conversation_json(conversation)}
 
@@ -607,6 +633,7 @@ def create_app(
             "feedback": [_feedback_json(item) for item in feedback_items],
             "pending_confirmation": _confirmation_json(confirmation),
             "confirmation_waivers": cast(list[str], snapshot["confirmation_waivers"]),
+            "yolo": cast(bool, snapshot["yolo"]),
         }
 
     @app.get("/api/ui/evals")
@@ -629,12 +656,15 @@ def create_app(
     @app.get("/api/ui/settings")
     async def settings_snapshot() -> dict[str, Any]:
         status = setup_controller.status if setup_controller is not None else None
+        stored = host_store.load_optional() if host_store is not None else None
         return {
-            "mutable": False,
+            "mutable": host_store is not None,
+            "host_config": stored.model_dump(mode="json") if stored is not None else None,
             "setup_required": status.required if status is not None else False,
             "restart_required": (status.restart_required if status is not None else False),
             "default_execution_route": application_service.config.default_execution_route,
             "runtime_profile": application_service.config.runtime_profile.id,
+            "yolo_enabled": await application_service.yolo_enabled(),
             "loop": application_service.config.loop.model_dump(mode="json"),
         }
 
@@ -734,45 +764,25 @@ def _default_service(
     host_store: HostConfigStore | None = None,
     credential_store: CredentialStore | None = None,
 ) -> ApplicationService:
+    """Builds the service from host.json alone.
+
+    There is no environment override: the file is the single source, so what the
+    Settings tab writes is what the next boot reads. Only what has to exist before
+    the app does — bind host, port, which file to read — comes from CLI flags.
+    """
     selected_host_store = host_store or _host_config_store()
     host_config = selected_host_store.load_optional()
-    selected_credential_store = credential_store or CredentialStore(
-        selected_host_store.credentials_path
-    )
-    config_path = Path(os.environ.get("HARNESS_CONFIG", "config/harness.json"))
-    config = load_config(config_path)
-    state_override = os.environ.get("HARNESS_STATE_DIR")
-    state_dir = (
-        Path(state_override).expanduser().resolve(strict=False)
-        if state_override is not None
-        else (host_config.state_dir if host_config is not None else default_state_dir())
-    )
+    del credential_store  # a senha do Operator é o único segredo, e ela tem rota própria
+    config = load_config(HARNESS_CONFIG_PATH)
+    state_dir = host_config.state_dir if host_config is not None else default_state_dir()
     state_dir.mkdir(parents=True, exist_ok=True)
-    roots_override = os.environ.get("HARNESS_WORKSPACE_ROOTS")
-    if roots_override is not None:
-        roots = tuple(
-            Path(value).expanduser().resolve(strict=False)
-            for value in roots_override.split(os.pathsep)
-            if value
-        )
-    else:
-        roots = host_config.allowed_workspace_roots if host_config is not None else ()
-    tokenizer_override = os.environ.get("HARNESS_TOKENIZER_PATH")
+    roots = host_config.allowed_workspace_roots if host_config is not None else ()
     tokenizer_path = (
-        Path(tokenizer_override).expanduser().resolve(strict=False)
-        if tokenizer_override is not None
-        else (
-            host_config.tokenizer_path if host_config is not None else state_dir / "tokenizer.json"
-        )
+        host_config.tokenizer_path if host_config is not None else state_dir / "tokenizer.json"
     )
-    digest_override = os.environ.get("HARNESS_TOKENIZER_SHA256")
-    tokenizer_digest = (
-        digest_override
-        if digest_override is not None
-        else (host_config.tokenizer_digest if host_config is not None else "")
-    )
+    tokenizer_digest = host_config.tokenizer_digest if host_config is not None else ""
     runtime = OllamaRuntime(
-        base_url=os.environ.get("HARNESS_OLLAMA_URL", "http://127.0.0.1:11434"),
+        base_url=(host_config.ollama_url if host_config is not None else DEFAULT_OLLAMA_URL),
         model=config.runtime_profile.model.id,
         expected_digest=config.runtime_profile.profile_digest_sha256,
     )
@@ -787,12 +797,7 @@ def _default_service(
         runtime=runtime,
         estimator=estimator,
         allowed_workspace_roots=roots,
-        brave_api_key=load_brave_api_key(
-            credential_store=selected_credential_store,
-            credential_reference=(
-                host_config.brave_credential_ref if host_config is not None else None
-            ),
-        ),
+        search_endpoint=host_config.searxng_url if host_config is not None else None,
         operator_notes=load_operator_notes(),
     )
 
@@ -812,84 +817,17 @@ def _is_direct_loopback(request: Request) -> bool:
     )
 
 
-def load_brave_api_key(
-    *,
-    credential_store: CredentialStore | None = None,
-    credential_reference: str | None = None,
-) -> str | None:
-    direct = os.environ.get("HARNESS_BRAVE_API_KEY")
-    file_value = os.environ.get("HARNESS_BRAVE_API_KEY_FILE")
-    if direct is not None and file_value is not None:
-        raise ValueError(
-            "Configure only one of HARNESS_BRAVE_API_KEY and HARNESS_BRAVE_API_KEY_FILE."
-        )
-    if direct is not None:
-        return _normalize_secret(direct)
-    if file_value is None:
-        if credential_reference is None:
-            return None
-        if credential_store is None:
-            raise ValueError("A credential store is required for the configured reference.")
-        return credential_store.read(credential_reference)
-
-    path = Path(file_value)
-    if not path.is_absolute():
-        raise ValueError("HARNESS_BRAVE_API_KEY_FILE must be an absolute path.")
-    descriptor: int | None = None
-    try:
-        descriptor = os.open(
-            path,
-            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW,
-        )
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o077:
-            raise OSError("secret file must be private and regular")
-        raw = os.read(descriptor, 4097)
-        if len(raw) > 4096:
-            raise OSError("secret file exceeds size limit")
-        return _normalize_secret(raw.decode("utf-8"))
-    except (OSError, UnicodeError, ValueError) as error:
-        raise ValueError("Brave API key file could not be read securely.") from error
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
-
-
-def _normalize_secret(value: str) -> str:
-    normalized = value.strip()
-    if not normalized or "\n" in normalized or "\r" in normalized:
-        raise ValueError("Brave API key must be a non-empty single line.")
-    return normalized
-
-
 def _host_config_store(path: str | Path | None = None) -> HostConfigStore:
-    selected = path or os.environ.get("HARNESS_HOST_CONFIG")
-    return HostConfigStore(selected)
+    return HostConfigStore(path)
 
 
-def configured_origins(host_config: HostConfig | None) -> tuple[str, ...]:
-    override = os.environ.get("HARNESS_ALLOWED_ORIGINS")
-    if override is not None:
-        return tuple(value.strip() for value in override.split(",") if value.strip())
+def configured_origins(host_config: HostConfig | None, port: int = DEFAULT_PORT) -> tuple[str, ...]:
     if host_config is not None:
         return host_config.allowed_origins
     # Before setup writes a HostConfig, the only origin that can reach the API is
     # the one the SPA is served from — this server's own port. Hardcoding a port
     # here leaves a fresh install unable to complete its own setup form.
-    return tuple(f"http://{host}:{_configured_port()}" for host in ("127.0.0.1", "localhost"))
-
-
-def _configured_port() -> int:
-    try:
-        port = int(os.environ.get("HARNESS_PORT", str(DEFAULT_PORT)))
-    except ValueError:
-        return DEFAULT_PORT
-    return port if 0 < port < 65536 else DEFAULT_PORT
-
-
-def _setup_reopen_requested() -> bool:
-    value = os.environ.get("HARNESS_SETUP_REOPEN", os.environ.get("HARNESS_SETUP", ""))
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+    return tuple(f"http://{host}:{port}" for host in ("127.0.0.1", "localhost"))
 
 
 def _conversation_json(conversation: Conversation) -> dict[str, Any]:

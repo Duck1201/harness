@@ -385,18 +385,20 @@ class AgentEngine:
             if _deadline_reached(deadline):
                 return await self._finish_time_limit(turn)
 
-            # A missing WriteGrant used to end the Turn, so the Operator answered the
+            # A missing grant used to end the Turn, so the Operator answered the
             # same question twice: once by hunting for a chip before anything had
-            # happened, and again in the dialog. Asking here folds them into one
-            # decision, taken with the diff in view. The grant is still the thing
-            # policy requires — approving is how the Operator gives it.
+            # happened, and again in the dialog — and for WebAccessGrant they also
+            # had to re-send the prompt. Asking here folds them into one decision,
+            # taken with the call in view. The grant is still the thing policy
+            # requires — approving is how the Operator gives it. WorkspaceRootGrant
+            # stays out: it comes from the server's root allowlist, not from a click.
             granted_by_dialog = False
-            if not preflight.allowed and preflight.reason_code == "write_grant_required":
+            if not preflight.allowed and preflight.reason_code in _GRANTABLE_PREFLIGHT_REASONS:
                 decision = await self._await_confirmation(
                     turn,
                     step_sequence,
                     calls,
-                    reason_code="write_grant_required",
+                    reason_code=preflight.reason_code,
                     previews=await _previews(tool_executor, calls),
                 )
                 if self._stop_signal.stop_requested:
@@ -862,6 +864,10 @@ _CONFIRMATION_AUTOMATION_ID = "operator_confirmation"
 # it what was wrong, so the Turn gives it the same second attempt an oversized
 # batch gets instead of ending. Every other refusal — grant, policy, path, taint —
 # stays terminal: no argument the model emits next can lift one.
+# Preflight refusals the Operator can lift on the spot, by granting in the dialog.
+# workspace_root_grant_required is absent by design: that root comes from the
+# server's allowlist, so the answer is in the Settings tab, not in a dialog.
+_GRANTABLE_PREFLIGHT_REASONS = frozenset({"write_grant_required", "web_access_grant_required"})
 _MODEL_FIXABLE_PREFLIGHT_REASONS = frozenset(
     {
         "invalid_tool_arguments",

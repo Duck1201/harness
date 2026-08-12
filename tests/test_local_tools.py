@@ -942,3 +942,49 @@ def test_not_found_and_invalid_utf8_are_failed_without_host_paths(tmp_path: Path
         assert str(tmp_path) not in str(invalid.error)
 
     asyncio.run(scenario())
+
+
+def test_calculate_needs_no_grant_and_evaluates_arithmetic_only(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        # No grant at all: pure_compute demands none, and the gate reads the effect.
+        executor = executor_for(tmp_path)
+
+        answer = await executor.execute(
+            ToolCall(id="c1", name="calculate", arguments={"expression": "2 + 3 * (10 - 4) / 2"})
+        )
+        divide = await executor.execute(
+            ToolCall(id="c2", name="calculate", arguments={"expression": "1/0"})
+        )
+        smuggled = await executor.execute(
+            ToolCall(id="c3", name="calculate", arguments={"expression": "__import__('os').sep"})
+        )
+        conditional = await executor.execute(
+            ToolCall(id="c4", name="calculate", arguments={"expression": "1 if 2 else 3"})
+        )
+
+        assert answer.status.value == "success"
+        assert isinstance(answer.data, Mapping)
+        assert answer.data["result"] == 11
+        assert answer.meta["producer"] == "local_compute"
+        assert divide.status.value == "failed"
+        assert divide.error is not None and divide.error["code"] == "division_by_zero"
+        assert smuggled.status.value == "blocked"
+        assert smuggled.error is not None
+        assert smuggled.error["code"] == "invalid_tool_arguments"
+        assert conditional.status.value == "blocked"
+
+    asyncio.run(scenario())
+
+
+def test_calculate_refuses_an_exponent_that_would_hang_the_loop(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        executor = executor_for(tmp_path)
+
+        huge = await executor.execute(
+            ToolCall(id="c1", name="calculate", arguments={"expression": "9 ** 9 ** 9"})
+        )
+
+        assert huge.status.value == "blocked"
+        assert huge.error is not None and huge.error["code"] == "expression_too_large"
+
+    asyncio.run(scenario())

@@ -1,4 +1,3 @@
-import json
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 
@@ -90,16 +89,18 @@ def test_context_deduplicates_only_result_data_and_preserves_provenance() -> Non
     )
 
     tool_messages = [message for message in context.messages if message.role is ModelRole.TOOL]
-    first_payload = json.loads(tool_messages[0].content)
-    duplicate_payload = json.loads(tool_messages[1].content)
-    assert first_payload["data"] == duplicate_data
-    assert duplicate_payload["data"]["$ref"]["entry_id"] == "entry-2"
-    assert duplicate_payload["tool_call_id"] == "call-2"
-    assert duplicate_payload["retryable"] is True
-    assert duplicate_payload["meta"] == {
-        "producer": "second",
-        "taints": ["UntrustedWebTaint"],
-    }
+    first = tool_messages[0].content
+    duplicate = tool_messages[1].content
+    assert first.startswith("<tool_result>") and first.endswith("</tool_result>")
+    assert "<data><content>same payload</content></data>" in first
+    assert '<data><entry key="$ref">' in duplicate
+    assert "<entry_id>entry-2</entry_id>" in duplicate
+    assert "<tool_call_id>call-2</tool_call_id>" in duplicate
+    assert "<retryable>true</retryable>" in duplicate
+    assert (
+        "<meta><producer>second</producer><taints><item>UntrustedWebTaint</item></taints></meta>"
+        in duplicate
+    )
     assert context.output_budget == 8192
     assert context.tool_schemas[0].name == "read_file"
     assert context.taints == frozenset({"UntrustedWebTaint"})
@@ -133,6 +134,44 @@ def test_context_cuts_oldest_complete_turn_and_keeps_current_turn() -> None:
         (ModelRole.USER, "current"),
     ]
     assert context.taints == frozenset()
+
+
+def test_tool_result_xml_escapes_markup_and_stays_compact() -> None:
+    body = "<script>alert('x' & 'y')</script>" + ("a" * 12000)
+    current = ContextTurn(
+        turn_id="turn-1",
+        entries=(
+            entry(1, "turn-1", CanonicalHistoryEntryKind.USER_MESSAGE, {"content": "fetch"}),
+            entry(
+                2,
+                "turn-1",
+                CanonicalHistoryEntryKind.TOOL_RESULT,
+                {
+                    "tool_call_id": "call-1",
+                    "tool_name": "web_fetch",
+                    "status": "success",
+                    "retryable": False,
+                    "data": {"content": body},
+                    "error": None,
+                    "meta": {"producer": "web_fetch", "taints": ["UntrustedWebTaint"]},
+                },
+            ),
+        ),
+    )
+
+    context = ContextBuilder(FakeEstimator(), context_window=32768).build(
+        system="system",
+        tool_schemas=(),
+        completed_turns=(),
+        current_turn=current,
+    )
+
+    rendered = context.messages[-1].content
+    assert "<script>" not in rendered
+    assert "&lt;script&gt;alert('x' &amp; 'y')&lt;/script&gt;" in rendered
+    # A framing that indented or repeated the payload would blow the input budget on one fetch.
+    assert context.dropped_turn_ids == ()
+    assert len(rendered) < len(body) + 400
 
 
 def test_context_raises_when_current_turn_cannot_fit() -> None:

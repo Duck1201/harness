@@ -27,6 +27,8 @@ import {
   Trash2,
   WifiOff,
   X,
+  Zap,
+  ZapOff,
 } from "lucide-react";
 import {
   useEffect,
@@ -181,14 +183,6 @@ export function App({ client = harnessClient }: AppProps) {
   return (
     <div className="app-shell">
       <aside className="primary-nav" aria-label="Áreas principais">
-        <button
-          className="brand-mark"
-          type="button"
-          onClick={() => setArea("chat")}
-          aria-label="Harness 2.0"
-        >
-          H<span>2</span>
-        </button>
         <nav>
           {areaItems.map((item) => {
             const Icon = item.icon;
@@ -207,11 +201,6 @@ export function App({ client = harnessClient }: AppProps) {
             );
           })}
         </nav>
-        <div className="primary-nav-footer">
-          <span className="avatar" aria-label="Operator local">
-            OP
-          </span>
-        </div>
       </aside>
 
       <main className="area-stage">
@@ -237,7 +226,9 @@ export function App({ client = harnessClient }: AppProps) {
                 }
               />
             )}
-            {area === "settings" && <SettingsArea snapshot={data.settings} />}
+            {area === "settings" && (
+              <SettingsArea snapshot={data.settings} client={client} />
+            )}
           </>
         )}
       </main>
@@ -338,9 +329,9 @@ const setupFields = [
     required: true,
   },
   {
-    name: "brave_api_key",
-    label: "Chave da Brave Search (opcional)",
-    hint: "Sem ela, web_search não é oferecida ao modelo.",
+    name: "searxng_url",
+    label: "Instância SearXNG (opcional)",
+    hint: "URL de uma instância SearXNG com format=json, ex.: http://127.0.0.1:8080/search. Sem ela, web_search usa o DuckDuckGo, que não pede chave.",
     multiline: false,
     required: false,
   },
@@ -374,14 +365,14 @@ function SetupArea({
     event.preventDefault();
     setBusy(true);
     setError(null);
-    const brave = (values.brave_api_key ?? "").trim();
+    const searxng = (values.searxng_url ?? "").trim();
     void client
       .completeSetup(token.trim(), {
         allowed_workspace_roots: lines("allowed_workspace_roots"),
         state_dir: (values.state_dir ?? "").trim(),
         tokenizer_path: (values.tokenizer_path ?? "").trim(),
         allowed_origins: lines("allowed_origins"),
-        brave_api_key: brave === "" ? null : brave,
+        searxng_url: searxng === "" ? null : searxng,
       })
       .then(() => onDone({ ...status, configured: true, required: false, restart_required: true }))
       .catch((cause: unknown) => setError(errorMessage(cause)))
@@ -428,7 +419,7 @@ function SetupArea({
               />
             ) : (
               <input
-                type={field.name === "brave_api_key" ? "password" : "text"}
+                type="text"
                 required={field.required}
                 aria-label={field.label}
                 autoComplete="off"
@@ -683,6 +674,21 @@ function ChatArea({
     });
   };
 
+  const toggleConversationYolo = () => {
+    if (!snapshot.conversationId) return;
+    void runAction("yolo-conversation", async () => {
+      if (snapshot.yolo) {
+        // Desligar é decisão local: as outras conversas continuam como estavam.
+        await client.setConversationYolo(snapshot.conversationId!, true);
+      } else {
+        // Ligar em um clique é o ponto do modo: liga no host e tira a exceção daqui.
+        await client.setYoloEnabled(true);
+        await client.setConversationYolo(snapshot.conversationId!, false);
+      }
+      await refresh();
+    });
+  };
+
   const revokeConfirmationWaiver = () => {
     if (!snapshot.conversationId) return;
     void runAction("waiver-revoke", async () => {
@@ -749,6 +755,21 @@ function ChatArea({
                 busyAction={busyAction}
                 onToggle={toggleGrant}
               />
+              <button
+                className={snapshot.yolo ? "yolo-chip yolo-chip--on" : "yolo-chip"}
+                type="button"
+                onClick={toggleConversationYolo}
+                disabled={busyAction === "yolo-conversation"}
+                aria-pressed={snapshot.yolo}
+                title={
+                  snapshot.yolo
+                    ? "Yolo ligado: nada é confirmado nesta conversa, nem escrita vinda da web. Clique para voltar a confirmar aqui."
+                    : "Clique para o modelo agir sem confirmação — inclusive escrita derivada de conteúdo da web."
+                }
+              >
+                {snapshot.yolo ? <Zap size={12} /> : <ZapOff size={12} />}
+                Yolo {snapshot.yolo ? "ligado" : "desligado"}
+              </button>
               {snapshot.confirmationWaivers.includes("workspace_write") && (
                 <button
                   className="waiver-chip"
@@ -1015,8 +1036,12 @@ function ConversationSidebar({
 }
 
 const OUTCOME_HINTS: Record<string, string> = {
-  write_grant_required: "Ative o grant Write nesta conversa e reenvie o pedido.",
-  web_access_grant_required: "Ative o grant Web nesta conversa e reenvie o pedido.",
+  // O pedido de grant vira diálogo no meio do Turn: estes dois códigos só sobram
+  // quando ninguém respondeu por ele (execução sem Operator).
+  write_grant_required: "O pedido de grant Write não foi respondido nesta sessão.",
+  web_access_grant_required: "O pedido de grant Web não foi respondido nesta sessão.",
+  write_grant_denied: "O grant Write foi negado, então a escrita não rodou.",
+  web_access_grant_denied: "O grant Web foi negado, então a chamada não rodou.",
   workspace_root_grant_required: "A conversa não tem workspace root. Selecione uma raiz permitida.",
   sensitive_path_denied: "O caminho pedido é sensível e a policy nega o acesso.",
   host_path_denied: "A policy do host nega este caminho.",
@@ -1144,7 +1169,7 @@ function TimelineMessage({
     return (
       <article className="message message--user">
         <div className="message-meta">
-          <span>Operator</span>
+          <span>Você</span>
           <time>{formatTimestamp(message.createdAt)}</time>
         </div>
         <p>{message.content}</p>
@@ -1159,7 +1184,7 @@ function TimelineMessage({
       </div>
       <div className="assistant-content">
         <div className="message-meta">
-          <span>Harness</span>
+          <span>Modelo</span>
           <time>{formatTimestamp(message.createdAt)}</time>
           {message.live && <em className="live-label">ao vivo</em>}
         </div>
@@ -1757,26 +1782,88 @@ function EvalRunView({
   );
 }
 
-function SettingsArea({ snapshot }: { snapshot: SettingsSnapshot }) {
+function SettingsArea({
+  snapshot,
+  client,
+}: {
+  snapshot: SettingsSnapshot;
+  client: HarnessClient;
+}) {
+  const stored = snapshot.host_config;
+  const [form, setForm] = useState({
+    allowed_workspace_roots: (stored?.allowed_workspace_roots ?? []).join("\n"),
+    tokenizer_path: stored?.tokenizer_path ?? "",
+    state_dir: stored?.state_dir ?? "",
+    allowed_origins: (stored?.allowed_origins ?? []).join("\n"),
+    searxng_url: stored?.searxng_url ?? "",
+    ollama_url: stored?.ollama_url ?? "http://127.0.0.1:11434",
+  });
+  const [yolo, setYolo] = useState(snapshot.yolo_enabled);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const field = (name: keyof typeof form) => (event: {
+    target: { value: string };
+  }) => setForm((current) => ({ ...current, [name]: event.target.value }));
+
+  const lines = (value: string) =>
+    value
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+  const save = (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    const searxng = form.searxng_url.trim();
+    void client
+      .updateHostConfig({
+        allowed_workspace_roots: lines(form.allowed_workspace_roots),
+        tokenizer_path: form.tokenizer_path.trim(),
+        state_dir: form.state_dir.trim(),
+        allowed_origins: lines(form.allowed_origins),
+        searxng_url: searxng === "" ? null : searxng,
+        ollama_url: form.ollama_url.trim(),
+      })
+      .then(() => setSaved(true))
+      .catch((cause: unknown) => setError(errorMessage(cause)))
+      .finally(() => setBusy(false));
+  };
+
+  const toggleYolo = (next: boolean) => {
+    setYolo(next);
+    setBusy(true);
+    setError(null);
+    void client
+      .setYoloEnabled(next)
+      .catch((cause: unknown) => {
+        setYolo(!next);
+        setError(errorMessage(cause));
+      })
+      .finally(() => setBusy(false));
+  };
+
   return (
     <div className="settings-page">
       <header className="area-header">
         <div>
           <span className="eyebrow">Painel de controle</span>
           <h1>Configurações</h1>
-          <p>Snapshot somente leitura retornado pelo servidor.</p>
-        </div>
-        <div className="area-header-actions">
-          <button className="primary-button" type="button" disabled>
-            <CircleStop size={15} /> Mutações indisponíveis
-          </button>
+          <p>
+            {snapshot.mutable
+              ? "O que está aqui é o host.json deste servidor. Salvar grava o arquivo; reiniciar aplica."
+              : "Snapshot somente leitura: este servidor foi construído sem armazenamento de configuração."}
+          </p>
         </div>
       </header>
 
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="Seções de configuração">
           <a href="#health"><Activity size={15} /> Saúde</a>
-          <a href="#workspaces"><HardDrive size={15} /> Workspaces</a>
+          <a href="#host"><HardDrive size={15} /> Host</a>
+          <a href="#autonomy"><Zap size={15} /> Autonomia</a>
           <a href="#runtime"><Bot size={15} /> Runtime</a>
           <a href="#loop"><SettingsIcon size={15} /> Loop</a>
         </nav>
@@ -1805,29 +1892,119 @@ function SettingsArea({ snapshot }: { snapshot: SettingsSnapshot }) {
             </div>
           </section>
 
-          <section className="settings-card" id="workspaces">
+          <section className="settings-card" id="host">
             <SettingsHeading
               icon={HardDrive}
-              title="Workspaces"
-              description="Raízes presentes no WorkspaceRootGrant do servidor."
-              action={<button className="small-button" type="button" disabled>Adicionar indisponível</button>}
+              title="Host"
+              description="Raízes, tokenizer, origins e provedores. Fonte única: host.json."
             />
-            <div className="workspace-settings-list">
-              {snapshot.workspaces.length ? (
-                snapshot.workspaces.map((workspace) => (
-                  <div key={workspace.id}>
-                    <span className="workspace-icon"><HardDrive size={16} /></span>
-                    <div>
-                      <strong>{workspace.id}</strong>
-                      <code>{workspace.root}</code>
-                    </div>
-                    <span className="access-pill">raiz autorizada</span>
-                  </div>
-                ))
-              ) : (
-                <div className="settings-empty">Nenhuma raiz autorizada.</div>
+            <form className="settings-form" onSubmit={save}>
+              <label className="setup-field">
+                <span>Raízes de Workspace autorizadas</span>
+                <textarea
+                  rows={3}
+                  aria-label="Raízes de Workspace autorizadas"
+                  value={form.allowed_workspace_roots}
+                  disabled={!snapshot.mutable || busy}
+                  onChange={field("allowed_workspace_roots")}
+                />
+                <small>Um caminho absoluto por linha.</small>
+              </label>
+              <label className="setup-field">
+                <span>Origins autorizadas</span>
+                <textarea
+                  rows={3}
+                  aria-label="Origins autorizadas"
+                  value={form.allowed_origins}
+                  disabled={!snapshot.mutable || busy}
+                  onChange={field("allowed_origins")}
+                />
+                <small>Uma origin por linha, com protocolo, host e porta.</small>
+              </label>
+              <label className="setup-field">
+                <span>Caminho do tokenizer.json</span>
+                <input
+                  type="text"
+                  aria-label="Caminho do tokenizer.json"
+                  value={form.tokenizer_path}
+                  disabled={!snapshot.mutable || busy}
+                  onChange={field("tokenizer_path")}
+                />
+                <small>O digest é medido do arquivo, não informado.</small>
+              </label>
+              <label className="setup-field">
+                <span>Diretório de estado</span>
+                <input
+                  type="text"
+                  aria-label="Diretório de estado"
+                  value={form.state_dir}
+                  disabled={!snapshot.mutable || busy}
+                  onChange={field("state_dir")}
+                />
+              </label>
+              <label className="setup-field">
+                <span>URL do Ollama</span>
+                <input
+                  type="text"
+                  aria-label="URL do Ollama"
+                  value={form.ollama_url}
+                  disabled={!snapshot.mutable || busy}
+                  onChange={field("ollama_url")}
+                />
+              </label>
+              <label className="setup-field">
+                <span>Instância SearXNG (opcional)</span>
+                <input
+                  type="text"
+                  aria-label="Instância SearXNG"
+                  value={form.searxng_url}
+                  disabled={!snapshot.mutable || busy}
+                  onChange={field("searxng_url")}
+                />
+                <small>
+                  Sem ela, web_search cai no DuckDuckGo, que não pede chave. Uma instância em
+                  loopback é permitida só para a busca.
+                </small>
+              </label>
+              {error && <p className="setup-error" role="alert">{error}</p>}
+              {saved && (
+                <p className="settings-notice" role="status">
+                  host.json gravado. Reinicie o servidor para aplicar.
+                </p>
               )}
-            </div>
+              <div className="area-header-actions">
+                <button
+                  className="primary-button"
+                  type="submit"
+                  disabled={!snapshot.mutable || busy}
+                >
+                  Salvar configuração
+                </button>
+              </div>
+            </form>
+          </section>
+
+          <section className="settings-card" id="autonomy">
+            <SettingsHeading
+              icon={Zap}
+              title="Autonomia"
+              description="Quanto o modelo pode fazer sem parar para perguntar."
+            />
+            <label className="settings-switch">
+              <input
+                type="checkbox"
+                checked={yolo}
+                disabled={busy}
+                onChange={(event) => toggleYolo(event.target.checked)}
+              />
+              <span>
+                <strong>Modo yolo</strong>
+                Nenhuma confirmação é pedida: escrita, acesso à web e até escrita derivada de
+                conteúdo da web são aprovadas na hora, e os grants necessários são concedidos.
+                Cada chamada continua registrada no histórico como <code>waived</code>. Vale para
+                conversas novas; cada conversa pode desligar no cabeçalho do chat.
+              </span>
+            </label>
           </section>
 
           <section className="settings-card" id="runtime">
@@ -1850,7 +2027,7 @@ function SettingsArea({ snapshot }: { snapshot: SettingsSnapshot }) {
             <SettingsHeading
               icon={SettingsIcon}
               title="Loop"
-              description="Limites ativos, sem controles de mutação expostos."
+              description="Limites vindos do contrato, não editáveis pelo painel."
             />
             <div className="field-grid">
               {Object.entries(snapshot.loop).map(([key, value]) => (

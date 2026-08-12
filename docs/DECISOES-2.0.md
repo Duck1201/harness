@@ -42,11 +42,11 @@ O vocabulário canônico está em [`CONTEXT.md`](../CONTEXT.md). Em particular:
 | Loop | 15 AgentSteps, até 4 calls por AgentStep, 20 calls por Turn, 15 minutos e 8.192 tokens de saída |
 | Execução de calls | Tool loop sem streaming; calls de um mesmo AgentStep são executadas em ordem, sem paralelismo |
 | Último passo | Nenhuma tool é oferecida e o TerminalOutcome é persistido uma única vez |
-| Tools | Somente `model_tools` são model-selectable; automações internas e capacidades proibidas são coleções separadas |
+| Tools | Somente `model_tools` são model-selectable; automações internas e capacidades proibidas são coleções separadas. Qual executor recebe a call vem do efeito declarado, nunca do nome |
 | Resultados | Todo ToolResult contém `status`, `retryable`, `data`, `error` e `meta`; `blocked` só pode ser emitido pelo harness |
 | Grants | Workspace requer WorkspaceRootGrant; escrita também exige WriteGrant; rede também exige WebAccessGrant |
 | Rede | Toda operação web é efeito `data_egress`, negado por padrão e autorizado mecanicamente |
-| Web | Brave Search e navegador Brave; HTTP pode anteceder browser dentro do executor, nunca por escolha do modelo |
+| Web | Busca por SearXNG declarado pelo Operator, com DuckDuckGo sem chave como fallback; navegador Chromium local; HTTP pode anteceder browser dentro do executor, nunca por escolha do modelo |
 | Isolamento | Cada operação usa contexto de navegador efêmero; web e verificação de página não compartilham estado |
 | Contexto | Deduplicação, extração única de HTML e corte por orçamento; compressão de código desligada e experimental |
 | Estado | CanonicalHistory completo em store conversacional; reasoning é transitório e nunca persistido |
@@ -55,8 +55,9 @@ O vocabulário canônico está em [`CONTEXT.md`](../CONTEXT.md). Em particular:
 | UI | AG-UI é projeção do estado, não fonte canônica; UX e evals são web-first |
 | Acesso | Sem senha de Operator, só loopback direto é atendido; com senha, toda rota exige sessão. Não há terceira opção |
 | Confirmação | Todo efeito `workspace_write` exige decisão do Operator para aquela chamada, e sob UntrustedWebTaint `data_egress` também; o gate lê o efeito no registry, nunca o nome da tool; sob taint, aprovar não cria grant nem amplia acesso |
-| Concessão | Falta de WriteGrant é perguntada, não fatal: o Operator concede aprovando o diálogo, e o grant continua exigido pela policy e revogável |
+| Concessão | Falta de WriteGrant ou de WebAccessGrant é perguntada, não fatal: o Operator concede aprovando o diálogo, sem reenviar o prompt, e o grant continua exigido pela policy e revogável. WorkspaceRootGrant não: ele vem do allowlist do servidor e se resolve nas Configurações |
 | Dispensa | O Operator pode dispensar a confirmação de `workspace_write` numa Conversation; é ato próprio e revogável, nunca efeito colateral de aprovar, e não cobre chamada sob taint |
+| Modo yolo | Decisão permanente do Operator, global, desligada por padrão, com opt-out por Conversation: enquanto ligada o gate aprova toda confirmação — inclusive sob UntrustedWebTaint — e concede os grants que faltarem. Cada chamada é registrada como `waived`, nunca como `approved` ([ADR-0008](adr/0008-operator-yolo-mode.md)) |
 | Roadmap | Qwen2.5 está fora do roadmap e não é challenger de nenhum experimento |
 
 ## Estado, projeções e persistência
@@ -71,7 +72,8 @@ Nomes de tools não autorizam nada. A policy resolve os efeitos declarados no re
 
 - `workspace_read` exige WorkspaceRootGrant;
 - `workspace_write` exige WorkspaceRootGrant e WriteGrant;
-- `data_egress` exige WebAccessGrant e controles de destino, DNS e redirect.
+- `data_egress` exige WebAccessGrant e controles de destino, DNS e redirect;
+- `pure_compute` não exige grant algum, porque não lê, não escreve e não sai do host.
 
 WebAccessGrant não é consentimento para backend remoto. Conteúdo obtido da web recebe UntrustedWebTaint, que acompanha derivações e nunca cria grant, confirmação ou permissão. Uma página hostil pode instruir o modelo tanto a alterar arquivos quanto a levá-los embora numa consulta ou URL, então as duas pernas passam pela mesma confirmação enquanto o taint estiver no contexto, e um efeito desconhecido é tratado como se precisasse dela. Paths continuam relativos, canonicalizados, com symlinks resolvidos e confinados ao Workspace.
 
@@ -79,7 +81,7 @@ Toda `workspace_write` para no Operator, que decide vendo o diff que o executor 
 
 Grant e confirmação já foram duas perguntas: ligar WriteGrant antes de qualquer coisa acontecer e depois aprovar a escrita. É uma decisão cobrada duas vezes, e a primeira é feita às cegas. Então a falta de WriteGrant não encerra mais o Turn: ela é perguntada, com o diff à vista, e aprovar concede o grant. A policy não mudou — `workspace_write` continua exigindo WorkspaceRootGrant e WriteGrant, o grant continua visível e revogável, e revogar durante o Turn continua sendo revalidado antes do efeito. Mudou onde o Operator concede. Aprovar sob UntrustedWebTaint segue sem criar grant algum: ali a pergunta é outra e a resposta vale para uma chamada só.
 
-Quem não quer ser perguntado a cada escrita registra uma dispensa para a Conversation, que é revogável, aparece no estado como qualquer autorização e vale só para a escrita sem taint. Nenhum caminho de decisão lê nome de tool: quem decide é o efeito declarado em [`config/tool-registry.json`](../config/tool-registry.json), configurado em [`config/harness.json#policy`](../config/harness.json).
+Quem não quer ser perguntado a cada escrita registra uma dispensa para a Conversation, que é revogável, aparece no estado como qualquer autorização e vale só para a escrita sem taint. Quem quer um agente que não pare nunca liga o modo yolo, que é a decisão oposta e igualmente explícita: enquanto estiver ligada, toda confirmação é respondida com sim e os grants que faltarem são concedidos, inclusive quando a escrita vem de conteúdo da web. O risco aceito ao ligar está em [ADR-0008](adr/0008-operator-yolo-mode.md), o padrão é desligado, e o histórico continua distinguindo `waived` de `approved`. Nenhum caminho de decisão lê nome de tool: quem decide é o efeito declarado em [`config/tool-registry.json`](../config/tool-registry.json), configurado em [`config/harness.json#policy`](../config/harness.json).
 
 ## Tools, automações e resultados
 
@@ -95,7 +97,7 @@ A mesma separação vale no TerminalOutcome do Turn: provedor indisponível e pr
 
 ## Web e browser
 
-`web_search` usa Brave Search. `web_fetch` tenta HTTP guardado e pode escalar internamente para Brave por sintoma. Ambos são `data_egress`, revalidam SSRF em redirects e produzem dados com UntrustedWebTaint.
+`web_search` consulta a instância SearXNG que o Operator declarar e cai para o DuckDuckGo quando ela não responde ou não foi configurada — nenhum dos dois exige credencial ([ADR-0009](adr/0009-search-provider-searxng-with-fallback.md)). `web_fetch` tenta HTTP guardado e pode escalar internamente para um Chromium local por sintoma. Ambos são `data_egress`, revalidam SSRF em redirects e produzem dados com UntrustedWebTaint.
 
 Cada execução de browser recebe contexto efêmero. A automação de PageRevision e o acesso web usam contextos distintos, sem cookies, cache, storage ou service workers compartilhados. O risco residual de DNS rebinding está documentado em [`RELEASE-PENDING.md`](RELEASE-PENDING.md).
 

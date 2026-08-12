@@ -12,6 +12,19 @@ type JsonValue = JsonScalar | Sequence[JsonValue] | Mapping[str, JsonValue]
 # the waiver the Operator can grant.
 MUTATION_EFFECT = "workspace_write"
 
+# The refusal each grant produces when it is missing. Shared data, not a shared
+# gate: both executors still check their own calls, they just name the refusal the
+# same way, so the Operator dialog can answer either one.
+_GRANT_REASON_CODES = {
+    "WorkspaceRootGrant": "workspace_root_grant_required",
+    "WriteGrant": "write_grant_required",
+    "WebAccessGrant": "web_access_grant_required",
+}
+
+
+def grant_reason_code(grant: str) -> str:
+    return _GRANT_REASON_CODES.get(grant, "grant_required")
+
 
 class RequestStatus(StrEnum):
     QUEUED = "queued"

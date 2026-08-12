@@ -375,6 +375,30 @@ class ConversationStore:
                     (_serialize_datetime(datetime.now(UTC)),),
                 )
 
+            applied = connection.execute(
+                "SELECT 1 FROM schema_migrations WHERE version = 8"
+            ).fetchone()
+            if applied is None:
+                # Yolo is a standing Operator decision, not a grant and not a
+                # waiver: it is global, so it lives in its own key-value table, and
+                # each Conversation can opt out without touching the global answer.
+                connection.execute(
+                    """
+                    CREATE TABLE harness_settings (
+                        key TEXT PRIMARY KEY,
+                        value TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                connection.execute(
+                    "ALTER TABLE conversations ADD COLUMN yolo_disabled INTEGER NOT NULL DEFAULT 0"
+                )
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at) VALUES (8, ?)",
+                    (_serialize_datetime(datetime.now(UTC)),),
+                )
+
     @_offload
     def create_workspace(self, reference: str) -> WorkspaceRevision:
         if not reference:
@@ -869,6 +893,60 @@ class ConversationStore:
                 (conversation_id,),
             ).fetchall()
         return frozenset(str(row["effect"]) for row in rows)
+
+    @_offload
+    def set_yolo_enabled(self, enabled: bool) -> None:
+        """The Operator's standing answer to every confirmation, host-wide."""
+        now = datetime.now(UTC)
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO harness_settings(key, value, updated_at) VALUES ('yolo', ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                    updated_at = excluded.updated_at
+                """,
+                ("1" if enabled else "0", _serialize_datetime(now)),
+            )
+
+    @_offload
+    def yolo_enabled(self) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT value FROM harness_settings WHERE key = 'yolo'"
+            ).fetchone()
+        return row is not None and str(row["value"]) == "1"
+
+    @_offload
+    def set_conversation_yolo_disabled(self, conversation_id: str, disabled: bool) -> None:
+        now = datetime.now(UTC)
+        with self._connect() as connection:
+            _require_conversation(connection, conversation_id)
+            connection.execute(
+                "UPDATE conversations SET yolo_disabled = ? WHERE id = ?",
+                (1 if disabled else 0, conversation_id),
+            )
+            _touch_conversation(connection, conversation_id, now)
+
+    @_offload
+    def yolo_active(self, conversation_id: str) -> bool:
+        """Global answer minus this Conversation's opt-out, resolved on every read.
+
+        Resolving instead of copying is what makes a new Conversation inherit the
+        current answer without a backfill, and what makes turning yolo off take
+        effect everywhere at once.
+        """
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT value FROM harness_settings WHERE key = 'yolo'"
+            ).fetchone()
+            if row is None or str(row["value"]) != "1":
+                return False
+            _require_conversation(connection, conversation_id)
+            conversation = connection.execute(
+                "SELECT yolo_disabled FROM conversations WHERE id = ?",
+                (conversation_id,),
+            ).fetchone()
+            return not bool(conversation["yolo_disabled"])
 
     @_offload
     def get_session_policy(self, conversation_id: str) -> SessionPolicy:

@@ -181,6 +181,45 @@ describe("App", () => {
     );
   });
 
+  it("liga o yolo em um clique e desliga só na conversa aberta", async () => {
+    const user = userEvent.setup();
+    const client = new MockHarnessClient();
+    const enable = vi.spyOn(client, "setYoloEnabled");
+    const perConversation = vi.spyOn(client, "setConversationYolo");
+    render(<App client={client} />);
+
+    await user.click(await screen.findByRole("button", { name: /Yolo desligado/ }));
+    await waitFor(() => expect(enable).toHaveBeenCalledWith(true));
+    expect(perConversation).toHaveBeenCalledWith("chat-128", false);
+
+    await user.click(await screen.findByRole("button", { name: /Yolo ligado/ }));
+    await waitFor(() => expect(perConversation).toHaveBeenCalledWith("chat-128", true));
+    expect(enable).toHaveBeenCalledTimes(1);
+  });
+
+  it("grava a configuração do host pelo painel e avisa que exige reinício", async () => {
+    const user = userEvent.setup();
+    const client = new MockHarnessClient();
+    const update = vi.spyOn(client, "updateHostConfig");
+    render(<App client={client} />);
+
+    await user.click(await screen.findByRole("button", { name: "Configurações" }));
+    const searxng = await screen.findByLabelText("Instância SearXNG");
+    await user.type(searxng, "http://127.0.0.1:8080/search");
+    await user.click(screen.getByRole("button", { name: "Salvar configuração" }));
+
+    await waitFor(() =>
+      expect(update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          allowed_workspace_roots: ["/workspaces/harness-2"],
+          searxng_url: "http://127.0.0.1:8080/search",
+          ollama_url: "http://127.0.0.1:11434",
+        }),
+      ),
+    );
+    expect(await screen.findByText(/Reinicie o servidor para aplicar/)).toBeInTheDocument();
+  });
+
   it("exige o setup antes de qualquer outra área e pede reinício ao concluir", async () => {
     const user = userEvent.setup();
     const client = new MockHarnessClient();
@@ -216,7 +255,7 @@ describe("App", () => {
         state_dir: "/var/lib/harness-2",
         tokenizer_path: "/var/lib/harness-2/tokenizer.json",
         allowed_origins: ["http://127.0.0.1:8765"],
-        brave_api_key: null,
+        searxng_url: null,
       }),
     );
     expect(

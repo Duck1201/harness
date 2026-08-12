@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import difflib
 import json
 import os
@@ -16,12 +17,10 @@ from typing import Any, cast
 from jsonschema import Draft202012Validator
 
 from .config import ReplayPolicy, ToolDefinitionConfig, ToolRegistryConfig
-from .domain import SessionPolicy, ToolCall, ToolResult, ToolResultStatus
+from .domain import SessionPolicy, ToolCall, ToolResult, ToolResultStatus, grant_reason_code
 from .ports import ConfirmationPreview, ToolBatchPreflight
 
-_LOCAL_TOOL_NAMES = frozenset(
-    {"read_file", "write_file", "edit", "list_directory", "glob", "grep_search"}
-)
+_WORKSPACE_EFFECTS = frozenset({"workspace_read", "workspace_write"})
 _CREDENTIAL_DIRECTORIES = frozenset(
     {".aws", ".azure", ".credentials", ".gnupg", ".kube", ".ssh", "credentials"}
 )
@@ -62,6 +61,11 @@ class RegistryToolExecutor:
         if not root.is_dir():
             raise ValueError("workspace_root must be a directory")
         self._registry = {tool.name: tool for tool in registry.model_tools}
+        # Which executor owns a tool follows from its declared effect, never from its
+        # name: anything that leaves the host is the web executor's, the rest is ours.
+        self._local_tool_names = frozenset(
+            tool.name for tool in registry.model_tools if "data_egress" not in tool.effects
+        )
         self._workspace_root = root
         self._effective_grants = session_policy.effective_grants
         if max_read_bytes < 1 or max_search_bytes < 1:
@@ -139,6 +143,8 @@ class RegistryToolExecutor:
             return self._glob(call)
         if call.name == "grep_search":
             return self._grep_search(call)
+        if call.name == "calculate":
+            return self._calculate(call)
         return _error_result(
             call,
             ToolResultStatus.FAILED,
@@ -464,6 +470,43 @@ class RegistryToolExecutor:
             data=data,
             error=None,
             meta=_meta(truncated=truncated),
+        )
+
+    def _calculate(self, call: ToolCall) -> ToolResult:
+        expression = _string_argument(call, "expression")
+        try:
+            value = _evaluate_expression(expression)
+        except _ExpressionError as issue:
+            return _error_result(
+                call,
+                ToolResultStatus.BLOCKED,
+                issue.code,
+                issue.detail,
+                retryable=False,
+            )
+        except ZeroDivisionError:
+            return _error_result(
+                call,
+                ToolResultStatus.FAILED,
+                "division_by_zero",
+                "The expression divides by zero.",
+                retryable=False,
+            )
+        except (OverflowError, ValueError):
+            return _error_result(
+                call,
+                ToolResultStatus.FAILED,
+                "expression_not_computable",
+                "The expression could not be computed.",
+                retryable=False,
+            )
+        return ToolResult(
+            tool_call_id=call.id,
+            status=ToolResultStatus.SUCCESS,
+            retryable=False,
+            data={"expression": expression, "result": value},
+            error=None,
+            meta=_meta(truncated=False, producer="local_compute"),
         )
 
     def _grep_search(self, call: ToolCall) -> ToolResult:
@@ -927,7 +970,7 @@ class RegistryToolExecutor:
             )
         if definition.status != "enabled":
             raise _PreflightIssue("tool_not_enabled", "The requested tool is not enabled.")
-        if call.name not in _LOCAL_TOOL_NAMES:
+        if call.name not in self._local_tool_names:
             raise _PreflightIssue(
                 "tool_not_available", "The requested tool is not available in this executor."
             )
@@ -943,8 +986,8 @@ class RegistryToolExecutor:
         ]
         if missing_grants:
             raise _PreflightIssue(
-                _grant_reason_code(missing_grants[0]),
-                f"The {missing_grants[0]} is required for this effect.",
+                grant_reason_code(missing_grants[0]),
+                _grant_detail(missing_grants[0]),
             )
         self._validate_call_paths(call)
         if (
@@ -981,10 +1024,14 @@ class RegistryToolExecutor:
         return tuple(
             name
             for name, definition in self._registry.items()
-            if name in _LOCAL_TOOL_NAMES and definition.status == "enabled"
+            if name in self._local_tool_names and definition.status == "enabled"
         )
 
     def _validate_call_paths(self, call: ToolCall) -> None:
+        definition = self._registry.get(call.name)
+        if definition is not None and not _WORKSPACE_EFFECTS.intersection(definition.effects):
+            # A tool that touches no Workspace has no path to validate.
+            return
         if call.name in {"read_file", "write_file", "edit"}:
             parts = _relative_parts(_string_argument(call, "file_path"), allow_dot=False)
             self._validate_policy_path(parts)
@@ -1120,12 +1167,15 @@ def _truncate_utf8(value: str, byte_limit: int) -> tuple[str, bool]:
     return "", True
 
 
-def _grant_reason_code(grant: str) -> str:
-    return {
-        "WorkspaceRootGrant": "workspace_root_grant_required",
-        "WriteGrant": "write_grant_required",
-        "WebAccessGrant": "web_access_grant_required",
-    }.get(grant, "grant_required")
+def _grant_detail(grant: str) -> str:
+    if grant == "WorkspaceRootGrant":
+        # The only missing grant no dialog can give: it is derived from the
+        # server's root allowlist, so the fix lives in the Settings tab.
+        return (
+            "The WorkspaceRootGrant is required for this effect. "
+            "Add the root in the Settings tab and open a new Conversation."
+        )
+    return f"The {grant} is required for this effect."
 
 
 def _ledger_key(call: ToolCall) -> tuple[str, str]:
@@ -1180,9 +1230,77 @@ def _drops_trailing_newline(removed: bytes, replacement: bytes, following: bytes
     return not replacement.endswith((b"\n", b"\r"))
 
 
-def _meta(*, truncated: bool, mutation: bool = False) -> Mapping[str, Any]:
+class _ExpressionError(Exception):
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code = code
+        self.detail = detail
+
+
+# 9**9**9 finishes no faster than the heat death of the host, and it would hang
+# the event loop long before any Turn limit could notice.
+_MAX_EXPONENT = 1000
+
+
+def _evaluate_expression(expression: str) -> float | int:
+    try:
+        tree = ast.parse(expression, mode="eval")
+    except (SyntaxError, ValueError, MemoryError) as error:
+        raise _ExpressionError(
+            "invalid_tool_arguments", "The expression could not be parsed."
+        ) from error
+    return _evaluate_node(tree.body)
+
+
+def _evaluate_node(node: ast.expr) -> float | int:
+    """Arithmetic only: no name, call, attribute or subscript is ever resolved."""
+    if isinstance(node, ast.Constant):
+        value = node.value
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise _ExpressionError(
+                "invalid_tool_arguments", "Only numbers are allowed in an expression."
+            )
+        return value
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.UAdd | ast.USub):
+        operand = _evaluate_node(node.operand)
+        return operand if isinstance(node.op, ast.UAdd) else -operand
+    if isinstance(node, ast.BinOp):
+        left = _evaluate_node(node.left)
+        right = _evaluate_node(node.right)
+        match node.op:
+            case ast.Add():
+                return left + right
+            case ast.Sub():
+                return left - right
+            case ast.Mult():
+                return left * right
+            case ast.Div():
+                return left / right
+            case ast.FloorDiv():
+                return left // right
+            case ast.Mod():
+                return left % right
+            case ast.Pow():
+                if abs(right) > _MAX_EXPONENT:
+                    raise _ExpressionError(
+                        "expression_too_large", "The exponent exceeds what this tool computes."
+                    )
+                return left**right
+            case _:
+                raise _ExpressionError(
+                    "invalid_tool_arguments", "The expression uses an unsupported operator."
+                )
+    raise _ExpressionError("invalid_tool_arguments", "The expression is not plain arithmetic.")
+
+
+def _meta(
+    *,
+    truncated: bool,
+    mutation: bool = False,
+    producer: str = "local_filesystem",
+) -> Mapping[str, Any]:
     meta: dict[str, Any] = {
-        "producer": "local_filesystem",
+        "producer": producer,
         "truncated": truncated,
         "taints": [],
     }

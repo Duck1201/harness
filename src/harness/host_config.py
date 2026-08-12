@@ -4,11 +4,24 @@ import stat
 from collections.abc import Mapping
 from contextlib import suppress
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
+
+# Campos que já existiram em disco e hoje não existem mais. Os modelos são
+# extra="forbid", então um arquivo antigo deixaria o servidor sem subir; descartar
+# a chave é mais honesto que fingir que ela ainda significa algo.
+_LEGACY_KEYS = frozenset({"brave_credential_ref", "brave_api_key"})
+
+
+def _without_legacy_keys(payload: bytes) -> Mapping[str, object]:
+    parsed: object = json.loads(payload)
+    if not isinstance(parsed, dict):
+        raise ValueError("host configuration must be a JSON object")
+    fields = cast(dict[str, object], parsed)
+    return {key: value for key, value in fields.items() if key not in _LEGACY_KEYS}
 
 
 class HostConfig(BaseModel):
@@ -20,7 +33,8 @@ class HostConfig(BaseModel):
     tokenizer_digest: str
     state_dir: Path
     allowed_origins: tuple[str, ...]
-    brave_credential_ref: Literal["brave_api_key"] | None = None
+    searxng_url: str | None = None
+    ollama_url: str = "http://127.0.0.1:11434"
 
     @field_validator("allowed_workspace_roots")
     @classmethod
@@ -46,6 +60,27 @@ class HostConfig(BaseModel):
         if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
             raise ValueError("tokenizer digest must be a SHA-256 digest")
         return digest
+
+    @field_validator("ollama_url")
+    @classmethod
+    def validate_ollama_url(cls, value: str) -> str:
+        parsed = urlsplit(value.strip())
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("ollama_url must be an HTTP or HTTPS URL")
+        return value.strip()
+
+    @field_validator("searxng_url")
+    @classmethod
+    def validate_searxng_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        url = value.strip()
+        if not url:
+            return None
+        parsed = urlsplit(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("searxng_url must be an HTTP or HTTPS URL")
+        return url
 
     @field_validator("allowed_origins")
     @classmethod
@@ -74,7 +109,7 @@ class HostConfigStore:
         return self.path.is_file()
 
     def load(self) -> HostConfig:
-        return HostConfig.model_validate_json(_read_private_file(self.path))
+        return HostConfig.model_validate(_without_legacy_keys(_read_private_file(self.path)))
 
     def load_optional(self) -> HostConfig | None:
         try:
@@ -91,7 +126,6 @@ class _CredentialFile(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal[1] = 1
-    brave_api_key: SecretStr | None = None
     operator_password_hash: str | None = None
 
 
@@ -99,19 +133,8 @@ class CredentialStore:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path).expanduser().resolve(strict=False)
 
-    def write_brave_api_key(self, value: str) -> None:
-        self._write(brave_api_key=_normalize_secret(value))
-
     def write_operator_password_hash(self, value: str) -> None:
         self._write(operator_password_hash=_normalize_secret(value))
-
-    def read(self, reference: str) -> str:
-        if reference != "brave_api_key":
-            raise ValueError("unknown credential reference")
-        key = self._load().brave_api_key
-        if key is None:
-            raise ValueError("credential is not configured")
-        return key.get_secret_value()
 
     def read_operator_password_hash(self) -> str | None:
         try:
@@ -120,72 +143,14 @@ class CredentialStore:
             return None
 
     def _load(self) -> _CredentialFile:
-        return _CredentialFile.model_validate_json(_read_private_file(self.path))
+        return _CredentialFile.model_validate(_without_legacy_keys(_read_private_file(self.path)))
 
     def _write(self, **fields: str) -> None:
-        # Read, modify, write: each credential is set on its own, and writing one
-        # must not silently drop the other.
-        payload: dict[str, object] = {
-            "schema_version": 1,
-            "brave_api_key": None,
-            "operator_password_hash": None,
-        }
-        try:
-            stored = self._load()
-            payload["brave_api_key"] = self._existing_brave_key()
-            payload["operator_password_hash"] = stored.operator_password_hash
-        except (OSError, ValueError):
-            pass
+        payload: dict[str, object] = {"schema_version": 1, "operator_password_hash": None}
+        with suppress(OSError, ValueError):
+            payload["operator_password_hash"] = self._load().operator_password_hash
         payload.update(fields)
         _atomic_write_json(self.path, payload)
-
-    def _existing_brave_key(self) -> str | None:
-        try:
-            return self.read("brave_api_key")
-        except (OSError, ValueError):
-            return None
-
-
-# Nomes cuja presença num arquivo em texto puro é uma regressão contra o
-# CredentialStore, que grava 0600 e recusa qualquer outro modo na leitura.
-_ENV_SECRET_NAMES = frozenset({"HARNESS_BRAVE_API_KEY"})
-
-
-def load_env_file(path: Path = Path(".env")) -> None:
-    """Preenche o ambiente com um arquivo ``NOME=valor`` da raiz do projeto.
-
-    Variável já exportada vence o arquivo: exportar é decisão explícita do
-    Operator, e o arquivo só preenche o que ninguém disse. Nada de
-    ``config/*.json`` entra por aqui — contrato não é ajustável por ambiente.
-    """
-    try:
-        text = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return
-    pending: dict[str, str] = {}
-    for number, raw in enumerate(text.splitlines(), start=1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        name, separator, value = line.partition("=")
-        name = name.removeprefix("export ").strip()
-        if not separator or not name.isidentifier():
-            raise ValueError(f"{path} linha {number}: esperado NOME=valor")
-        pending[name] = _unquote(value.strip())
-    if pending.keys() & _ENV_SECRET_NAMES and path.stat().st_mode & 0o077:
-        raise ValueError(
-            f"{path} define uma chave de API e está legível por outros. "
-            "Rode `chmod 600 .env` ou entregue a chave pelo setup, que grava no "
-            "CredentialStore com permissão privada."
-        )
-    for name, value in pending.items():
-        os.environ.setdefault(name, value)
-
-
-def _unquote(value: str) -> str:
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-        return value[1:-1]
-    return value
 
 
 def default_host_config_path(environ: Mapping[str, str] | None = None) -> Path:

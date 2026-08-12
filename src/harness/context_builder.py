@@ -1,8 +1,10 @@
 import hashlib
 import json
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import cast
+from xml.sax.saxutils import escape, quoteattr
 
 from .domain import (
     CanonicalHistoryEntry,
@@ -11,6 +13,8 @@ from .domain import (
     ToolCall,
 )
 from .ports import EngineReadiness, ModelMessage, ModelRole, TokenEstimator, ToolSchema
+
+_XML_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
 
 
 class ContextBuilderError(Exception):
@@ -115,10 +119,13 @@ def _entry_message(
     if entry.kind is CanonicalHistoryEntryKind.USER_MESSAGE:
         return ModelMessage(role=ModelRole.USER, content=_required_string(payload, "content"))
     if entry.kind is CanonicalHistoryEntryKind.REJECTED_MODEL_ATTEMPT:
-        return ModelMessage(role=ModelRole.ASSISTANT, content=_json_text(payload))
+        return ModelMessage(
+            role=ModelRole.ASSISTANT,
+            content=_xml_document("rejected_model_attempt", payload),
+        )
     if entry.kind is CanonicalHistoryEntryKind.MODEL_ATTEMPT:
         content = payload.get("content")
-        text = content if isinstance(content, str) else _json_text(payload)
+        text = content if isinstance(content, str) else _xml_document("model_attempt", payload)
         return ModelMessage(
             role=ModelRole.ASSISTANT,
             content=text,
@@ -128,7 +135,7 @@ def _entry_message(
         rendered = dict(payload)
         data = payload.get("data")
         if data is not None:
-            digest = hashlib.sha256(_json_text(data).encode()).hexdigest()
+            digest = hashlib.sha256(_xml_text(data).encode()).hexdigest()
             original = seen_payloads.get(digest)
             if original is None:
                 seen_payloads[digest] = entry
@@ -136,7 +143,7 @@ def _entry_message(
                 rendered["data"] = {"$ref": {"entry_id": original.id, "sha256": digest}}
         return ModelMessage(
             role=ModelRole.TOOL,
-            content=_json_text(rendered),
+            content=_xml_document("tool_result", rendered),
             tool_call_id=_optional_string(payload, "tool_call_id"),
             name=_optional_string(payload, "tool_name"),
         )
@@ -145,7 +152,7 @@ def _entry_message(
     if entry.kind is CanonicalHistoryEntryKind.INTERNAL_AUTOMATION:
         return ModelMessage(
             role=ModelRole.TOOL,
-            content=_json_text(payload),
+            content=_xml_document("internal_automation", payload),
             name=_optional_string(payload, "automation_id"),
         )
     raise ContextBuilderError(f"unsupported canonical history entry: {entry.kind}")
@@ -205,12 +212,43 @@ def _optional_string(payload: Mapping[str, JsonValue], key: str) -> str | None:
     return value
 
 
-def _json_text(value: JsonValue) -> str:
-    serialized = json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    )
-    return serialized.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+def _xml_document(root: str, value: JsonValue) -> str:
+    return f"<{root}>{_xml_text(value)}</{root}>"
+
+
+def _xml_text(value: JsonValue) -> str:
+    parts: list[str] = []
+    _write_xml(value, parts)
+    return "".join(parts)
+
+
+def _write_xml(value: JsonValue, parts: list[str]) -> None:
+    if value is None:
+        parts.append("<null/>")
+        return
+    if isinstance(value, str):
+        parts.append(escape(value))
+        return
+    if isinstance(value, bool | int | float):
+        # json.dumps keeps the canonical number/bool spelling and still rejects NaN and Infinity.
+        parts.append(json.dumps(value, allow_nan=False))
+        return
+    if isinstance(value, Mapping):
+        mapping = cast(Mapping[str, JsonValue], value)
+        for key in sorted(mapping):
+            _write_element(key, mapping[key], parts)
+        return
+    for item in value:
+        _write_element("item", item, parts)
+
+
+def _write_element(name: str, value: JsonValue, parts: list[str]) -> None:
+    if _XML_NAME.fullmatch(name):
+        parts.append(f"<{name}>")
+        _write_xml(value, parts)
+        parts.append(f"</{name}>")
+        return
+    # Keys the model may produce — "$ref", "1", "a b" — are not valid XML names.
+    parts.append(f"<entry key={quoteattr(name)}>")
+    _write_xml(value, parts)
+    parts.append("</entry>")

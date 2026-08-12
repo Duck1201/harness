@@ -126,6 +126,7 @@ export interface ApiChatSnapshot {
   feedback: FeedbackRecord[];
   pending_confirmation: PendingConfirmation | null;
   confirmation_waivers: string[];
+  yolo: boolean;
 }
 
 export interface WorkspaceGroup {
@@ -214,6 +215,7 @@ export interface ChatSnapshot {
   feedback: FeedbackRecord[];
   pendingConfirmation: PendingConfirmation | null;
   confirmationWaivers: string[];
+  yolo: boolean;
   execution?: ExecutionSnapshot;
 }
 
@@ -294,8 +296,10 @@ export interface SettingsSnapshot {
   health: HealthSnapshot;
   workspaces: Workspace[];
   mutable: boolean;
+  host_config: HostConfigSnapshot | null;
   default_execution_route: string;
   runtime_profile: string;
+  yolo_enabled: boolean;
   loop: LoopSettings;
 }
 
@@ -319,7 +323,18 @@ export interface SetupSubmission {
   tokenizer_path: string;
   state_dir: string;
   allowed_origins: string[];
-  brave_api_key?: string | null;
+  searxng_url?: string | null;
+  ollama_url?: string;
+}
+
+export interface HostConfigSnapshot {
+  allowed_workspace_roots: string[];
+  tokenizer_path: string;
+  tokenizer_digest: string;
+  state_dir: string;
+  allowed_origins: string[];
+  searxng_url: string | null;
+  ollama_url: string;
 }
 
 export interface RunAgentMessage {

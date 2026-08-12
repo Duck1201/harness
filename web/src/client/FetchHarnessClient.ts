@@ -38,8 +38,10 @@ interface ApiErrorBody {
 
 interface SettingsApiSnapshot {
   mutable: boolean;
+  host_config: SettingsSnapshot["host_config"];
   default_execution_route: string;
   runtime_profile: string;
+  yolo_enabled: boolean;
   loop: SettingsSnapshot["loop"];
 }
 
@@ -146,6 +148,7 @@ export class FetchHarnessClient implements HarnessClient {
         feedback: [],
         pendingConfirmation: null,
         confirmationWaivers: [],
+        yolo: settings.yolo_enabled ?? false,
         execution: toExecutionSnapshot(settings),
       };
     }
@@ -183,6 +186,7 @@ export class FetchHarnessClient implements HarnessClient {
       feedback: snapshot.feedback,
       pendingConfirmation: snapshot.pending_confirmation,
       confirmationWaivers: snapshot.confirmation_waivers ?? [],
+      yolo: snapshot.yolo ?? false,
       execution: toExecutionSnapshot(settings),
     };
   }
@@ -336,6 +340,24 @@ export class FetchHarnessClient implements HarnessClient {
         effect,
       )}`,
       { method: "DELETE" },
+    );
+  }
+
+  async updateHostConfig(submission: SetupSubmission) {
+    return this.request<{ restart_required: boolean }>(
+      "/admin/host-config",
+      this.jsonRequest("PUT", submission),
+    );
+  }
+
+  async setYoloEnabled(enabled: boolean) {
+    await this.request("/admin/yolo", this.jsonRequest("PUT", { enabled }));
+  }
+
+  async setConversationYolo(conversationId: string, disabled: boolean) {
+    await this.request(
+      `/conversations/${encodeURIComponent(conversationId)}`,
+      this.jsonRequest("PATCH", { yolo_disabled: disabled }),
     );
   }
 

@@ -20,7 +20,7 @@ o que deliberadamente não entra na primeira release está em
 | Node.js | 22+ | Só para construir o frontend e validar contratos |
 | pnpm | 10.13.1 | Via `corepack enable` |
 | Ollama | 0.32.5 | Servindo em `http://127.0.0.1:11434` |
-| Brave | qualquer | `brave-browser`, `brave-browser-stable` ou `brave` no PATH, para escalação do `web_fetch` |
+| Chromium | qualquer | `brave-browser`, `chromium`, `chromium-browser` ou `google-chrome` no PATH, para escalação do `web_fetch` |
 
 ## Instalação
 
@@ -101,7 +101,7 @@ em todo boot para detectar o arquivo trocado.
 ## Primeira execução
 
 ```bash
-uv run harness       # ou: uv run uvicorn harness.api:create_app --factory --host 127.0.0.1 --port 8765
+uv run harness                    # ou: uv run harness --port 8765 --host 127.0.0.1
 ```
 
 Na primeira execução o servidor imprime um **token de setup efêmero** no stderr
@@ -111,45 +111,41 @@ mesmo que o `bootstrap.sh` usa) e com a origin atual — falta só colar o token
 apontar as raízes de workspace e confirmar. Sem interface, o mesmo é feito por
 `POST /api/setup` com o header `X-Harness-Setup-Token`, informando
 `allowed_workspace_roots`, `tokenizer_path`, `state_dir`, `allowed_origins` e,
-opcionalmente, a chave da Brave Search. `GET /api/setup/status` diz se ainda é
+opcionalmente, `searxng_url` e `ollama_url`. `GET /api/setup/status` diz se ainda é
 necessário e devolve os valores sugeridos em `suggested_state_dir` e
 `suggested_tokenizer_path`.
 
 - `allowed_workspace_roots` — diretórios que as tools de arquivo do agente (`workspace_read`/`workspace_write`) podem tocar, um caminho absoluto por linha. É o sandbox: caminho fora dessas raízes é recusado mesmo que o modelo peça. Tipicamente o(s) diretório(s) de projeto que você vai trabalhar com o agente.
 - `allowed_origins` — de onde o navegador pode chamar esta API: protocolo, host e porta (ex. `http://127.0.0.1:8765`), um por linha. Requisição HTTP com header `Origin` fora dessa lista é recusada. Normalmente é só a própria origin em que você está acessando o painel — a UI já pré-preenche com ela.
 
-Depois de configurado, o setup só reabre com `HARNESS_SETUP_REOPEN=1`.
+Depois de configurado, o setup só reabre com `harness --setup`. Para mudar qualquer
+desses valores sem reabrir o setup, use a aba **Configurações** do painel.
 
-## Configuração por ambiente
+## Configuração
 
-Todas as variáveis são opcionais; os valores efetivos vêm do HostConfig gravado no
-setup, e a variável de ambiente tem precedência sobre ele.
+`host.json` é a fonte única: o setup grava, a aba **Configurações** do painel
+reescreve, e o servidor lê no boot. Não há variável de ambiente equivalente —
+editar no painel sempre tem efeito, e o que está no arquivo é o que vale.
 
-| Variável | Default | Efeito |
+Só o que precisa existir antes do app entram por flag da CLI:
+
+| Flag | Default | Efeito |
 |---|---|---|
-| `HARNESS_HOST` | `127.0.0.1` | Interface do servidor. Ver "Exposição de rede" |
-| `HARNESS_PORT` | `8765` | Porta do servidor |
-| `HARNESS_CONFIG` | `config/harness.json` | Contrato normativo carregado |
-| `HARNESS_STATE_DIR` | `$XDG_STATE_HOME/harness-2` | SQLite canônico, telemetria e tokenizer |
-| `HARNESS_WORKSPACE_ROOTS` | do HostConfig | Raízes permitidas, separadas por `:` |
-| `HARNESS_TOKENIZER_PATH` | `<state_dir>/tokenizer.json` | Caminho do tokenizer |
-| `HARNESS_TOKENIZER_SHA256` | do HostConfig | Digest exigido do tokenizer |
-| `HARNESS_OLLAMA_URL` | `http://127.0.0.1:11434` | Endpoint do runtime |
-| `HARNESS_BRAVE_API_KEY` | — | Chave da Brave Search. Mutuamente exclusiva com a de arquivo |
-| `HARNESS_BRAVE_API_KEY_FILE` | — | Caminho absoluto de arquivo privado (modo `0600`, sem symlink) com a chave |
-| `HARNESS_HOST_CONFIG` | padrão do XDG | Caminho do HostConfig |
-| `HARNESS_ALLOWED_ORIGINS` | `127.0.0.1` e `localhost` na porta do servidor | Allowlist de Origin, separada por vírgula |
-| `HARNESS_SETUP_REOPEN` | `0` | Reabre o setup numa instalação já configurada. `HARNESS_SETUP` é aceito como alias |
+| `--host` | `127.0.0.1` | Interface do servidor. Ver "Exposição de rede" |
+| `--port` | `8765` | Porta do servidor |
+| `--host-config` | padrão do XDG | Caminho do `host.json` |
+| `--setup` | desligado | Reabre o setup numa instalação já configurada |
 
-Um arquivo `.env` na raiz preenche essas variáveis — copie de `.env.example`. Ele
-é lido do diretório de trabalho, como `config/harness.json`, e vale para os dois
-jeitos de subir o servidor. Variável já exportada no ambiente vence o arquivo, e
-nada de `config/*.json` entra por ali: contrato é selado por digest e não é
-ajustável por ambiente.
+O que vive dentro do `host.json` e é editável no painel: raízes de Workspace,
+origins autorizadas, caminho do tokenizer (o digest é medido do arquivo),
+diretório de estado, URL do Ollama e a instância SearXNG opcional. Salvar grava o
+arquivo e devolve `restart_required`: nada é reconstruído a quente, então reinicie
+o servidor para aplicar. A senha de Operator continua na rota própria
+(`PUT /api/admin/operator-password`) e é o único segredo do host — as duas rotas
+de administração exigem sessão, ou loopback direto enquanto não houver senha.
 
-Segredo continua sendo assunto do setup, que grava no CredentialStore com escrita
-atômica e permissão privada. Se ainda assim a chave da Brave estiver no `.env`,
-ele precisa ser `0600` — com bit de grupo ou de outros o harness recusa a partida.
+`config/harness.json` e os demais contratos não são ajustáveis pelo host: são
+selados por digest.
 
 ### Exposição de rede
 
@@ -194,8 +190,8 @@ O modelo de ameaça está em [`docs/THREAT-MODEL-AUTH.md`](docs/THREAT-MODEL-AUT
 Para publicar além do loopback, configure a senha e coloque um proxy com TLS à
 frente. O harness recusa qualquer requisição que traga `Forwarded`, `Via`,
 `X-Real-IP` ou `X-Forwarded-*` como se fosse local, então o proxy nunca consegue
-se passar por conexão direta — mas você precisa incluir a origem pública em
-`HARNESS_ALLOWED_ORIGINS`:
+se passar por conexão direta — mas você precisa incluir a origem pública nas
+origins autorizadas, pela aba **Configurações** do painel:
 
 ```nginx
 server {
@@ -213,8 +209,10 @@ server {
 }
 ```
 
+Depois de salvar `https://harness.example` na lista de origins, reinicie:
+
 ```bash
-HARNESS_ALLOWED_ORIGINS=https://harness.example uv run harness
+uv run harness
 ```
 
 ## System prompt

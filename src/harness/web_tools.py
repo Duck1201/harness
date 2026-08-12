@@ -17,7 +17,14 @@ from aiohttp.abc import AbstractResolver, ResolveResult
 from jsonschema import Draft202012Validator, FormatChecker
 
 from .config import ToolDefinitionConfig, ToolRegistryConfig
-from .domain import SessionPolicy, ToolCall, ToolResult, ToolResultStatus
+from .domain import (
+    JsonValue,
+    SessionPolicy,
+    ToolCall,
+    ToolResult,
+    ToolResultStatus,
+    grant_reason_code,
+)
 from .ports import ConfirmationPreview, EngineReadiness, ToolBatchPreflight
 
 type SocketAddress = tuple[str, int] | tuple[str, int, int, int]
@@ -58,9 +65,14 @@ _BOUNDARY_HTML_TAGS = frozenset(
 )
 
 
-# The provider endpoint is a constructor default so a bench can serve a
-# Brave-shaped response instead of the corpus depending on a real key.
-BRAVE_SEARCH_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
+# The keyless fallback: no credential, no signup, so a search never fails just
+# because nobody configured a provider. It is a constructor default so a bench can
+# serve its own response instead of the corpus reaching the real internet.
+DUCKDUCKGO_SEARCH_ENDPOINT = "https://lite.duckduckgo.com/lite/"
+
+# Open-Meteo: no key, no signup, so the weather tool carries no credential path.
+GEOCODING_ENDPOINT = "https://geocoding-api.open-meteo.com/v1/search"
+FORECAST_ENDPOINT = "https://api.open-meteo.com/v1/forecast"
 
 
 class EgressPolicyError(Exception):
@@ -220,8 +232,14 @@ class _PreflightIssue(Exception):
 
 
 class GuardedResolver:
-    def __init__(self, *, lookup: AddressLookup | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        lookup: AddressLookup | None = None,
+        private_origins: frozenset[str] = frozenset(),
+    ) -> None:
         self._lookup = lookup or _system_lookup
+        self._private_origins = private_origins
         self._cache: dict[tuple[str, int], tuple[ResolvedAddress, ...]] = {}
 
     async def resolve(
@@ -251,7 +269,7 @@ class GuardedResolver:
                 raise EgressResolutionError(
                     "Host resolution returned an invalid address."
                 ) from error
-            if _is_non_public(parsed):
+            if _is_non_public(parsed) and _origin_key(host, port) not in self._private_origins:
                 raise EgressPolicyError(
                     "non_public_address",
                     "The destination resolved to a non-public address.",
@@ -272,8 +290,14 @@ class GuardedResolver:
 
 
 class EgressGuard:
-    def __init__(self, resolver: GuardedResolver | None = None) -> None:
-        self._resolver = resolver or GuardedResolver()
+    def __init__(
+        self,
+        resolver: GuardedResolver | None = None,
+        *,
+        private_origins: frozenset[str] = frozenset(),
+    ) -> None:
+        self._private_origins = private_origins
+        self._resolver = resolver or GuardedResolver(private_origins=private_origins)
 
     async def resolve(self, url: str) -> ResolvedTarget:
         parsed = self.validate_url(url)
@@ -318,13 +342,17 @@ class EgressGuard:
         if port == 0:
             raise EgressPolicyError("invalid_url_port", "The URL port is invalid.")
         canonical_hostname = hostname.casefold().rstrip(".")
-        if canonical_hostname == "localhost" or canonical_hostname.endswith(".localhost"):
+        effective_port = port or (443 if parsed.scheme.casefold() == "https" else 80)
+        declared = _origin_key(canonical_hostname, effective_port) in self._private_origins
+        if not declared and (
+            canonical_hostname == "localhost" or canonical_hostname.endswith(".localhost")
+        ):
             raise EgressPolicyError("localhost_not_allowed", "Localhost is not allowed.")
         try:
             literal = ipaddress.ip_address(canonical_hostname)
         except ValueError:
             literal = None
-        if literal is not None and _is_non_public(literal):
+        if literal is not None and _is_non_public(literal) and not declared:
             raise EgressPolicyError(
                 "non_public_address",
                 "The destination uses a non-public address.",
@@ -340,8 +368,8 @@ class WebToolExecutor:
         session_policy: SessionPolicy,
         egress_guard: EgressGuard | None = None,
         http_transport: HttpTransport | None = None,
-        brave_api_key: str | None = None,
-        search_endpoint: str = BRAVE_SEARCH_ENDPOINT,
+        search_endpoint: str | None = None,
+        fallback_search_endpoint: str = DUCKDUCKGO_SEARCH_ENDPOINT,
         browser_capability: BrowserCapability | None = None,
         browser_egress_guard: BrowserEgressGuard | None = None,
         max_response_bytes: int = 2 * 1024 * 1024,
@@ -353,13 +381,21 @@ class WebToolExecutor:
         self._registry = {
             definition.name: definition
             for definition in registry.model_tools
-            if definition.name in {"web_fetch", "web_search"}
+            if "data_egress" in definition.effects
         }
         self._effective_grants = session_policy.effective_grants
         self._egress_guard = egress_guard or EgressGuard()
         self._http_transport = http_transport or AiohttpHttpTransport()
-        self._brave_api_key = brave_api_key
         self._search_endpoint = search_endpoint
+        self._fallback_search_endpoint = fallback_search_endpoint
+        # A self-hosted SearXNG lives on loopback, which the egress guard denies by
+        # design. The Operator declaring that one endpoint is what lifts the denial,
+        # and only for it: web_fetch and the browser keep the strict guard.
+        self._search_egress_guard = (
+            egress_guard
+            if egress_guard is not None
+            else EgressGuard(private_origins=_url_origins(search_endpoint))
+        )
         self._browser_capability = browser_capability
         self._browser_egress_guard = browser_egress_guard
         self._max_response_bytes = max_response_bytes
@@ -402,7 +438,17 @@ class WebToolExecutor:
             )
         if call.name == "web_fetch":
             return await self._web_fetch(call)
-        return await self._web_search(call)
+        if call.name == "web_search":
+            return await self._web_search(call)
+        if call.name == "get_weather":
+            return await self._get_weather(call)
+        return _web_error(
+            call,
+            ToolResultStatus.FAILED,
+            "tool_not_implemented",
+            "Web tool is not implemented.",
+            retryable=False,
+        )
 
     async def _web_fetch(self, call: ToolCall) -> ToolResult:
         url = cast(str, call.arguments["url"])
@@ -667,147 +713,184 @@ class WebToolExecutor:
                 tool_call_id=call.id,
                 meta={**cached.meta, "cache_hit": True},
             )
-        if not self._brave_api_key:
-            return _provider_error(
-                call,
-                "provider_auth_unavailable",
-                "Brave Search credentials are not available.",
-                retryable=False,
-            )
+        result = None
+        if self._search_endpoint is not None:
+            result = await self._search_via_searxng(call, query, limit)
+        if result is None:
+            # SearXNG is optional and public instances go down; DuckDuckGo needs no
+            # credential, so a search never fails only for lack of configuration.
+            result = await self._search_via_duckduckgo(call, query, limit)
+        if result.status in {ToolResultStatus.SUCCESS, ToolResultStatus.EMPTY}:
+            self._search_cache[cache_key] = result
+        return result
 
-        request_url = self._search_endpoint + "?" + urlencode({"q": query, "count": limit})
+    async def _search_via_searxng(
+        self, call: ToolCall, query: str, limit: int
+    ) -> ToolResult | None:
+        """Returns None when the instance is unusable, so the fallback can answer."""
+        endpoint = cast(str, self._search_endpoint)
+        request_url = (
+            endpoint + ("&" if "?" in endpoint else "?") + urlencode({"q": query, "format": "json"})
+        )
+        response = await self._search_request(
+            request_url,
+            accept="application/json",
+            guard=self._search_egress_guard,
+        )
+        if response is None:
+            return None
+        content_type = _header(response.headers, "content-type")
+        if (
+            response.status < 200
+            or response.status >= 300
+            or content_type is None
+            or content_type.partition(";")[0].strip().casefold() != "application/json"
+        ):
+            return None
         try:
-            async with asyncio.timeout(self._timeout_seconds):
-                target = await self._egress_guard.resolve(request_url)
-        except EgressPolicyError as error:
-            return _web_error(
-                call,
-                ToolResultStatus.BLOCKED,
-                error.code,
-                str(error),
-                retryable=False,
-                producer="brave_search",
-            )
-        except EgressResolutionError:
+            payload: object = json.loads(response.body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
+        parsed = _parse_searxng_results(payload, limit=limit)
+        if parsed is None:
+            return None
+        results, truncated = parsed
+        return _search_result(call, query, results, truncated=truncated, engine="searxng")
+
+    async def _search_via_duckduckgo(self, call: ToolCall, query: str, limit: int) -> ToolResult:
+        request_url = (
+            self._fallback_search_endpoint
+            + ("&" if "?" in self._fallback_search_endpoint else "?")
+            + urlencode({"q": query})
+        )
+        response = await self._search_request(
+            request_url,
+            accept="text/html",
+            guard=self._egress_guard,
+        )
+        if response is None:
             return _provider_error(
                 call,
                 "provider_unavailable",
-                "Brave Search could not be reached.",
+                "No search provider could be reached.",
                 retryable=True,
-            )
-        except TimeoutError:
-            return _provider_error(
-                call,
-                "provider_unavailable",
-                "Brave Search hostname resolution timed out.",
-                retryable=True,
-            )
-        try:
-            async with asyncio.timeout(self._timeout_seconds):
-                response = await self._http_transport.request(
-                    target,
-                    headers={
-                        "Accept": "application/json",
-                        "User-Agent": _USER_AGENT,
-                        "X-Subscription-Token": self._brave_api_key,
-                    },
-                    max_bytes=self._max_response_bytes,
-                    timeout_seconds=self._timeout_seconds,
-                )
-        except ResponseByteLimitError:
-            return _web_error(
-                call,
-                ToolResultStatus.BLOCKED,
-                "response_byte_limit_exceeded",
-                "The provider response exceeded the byte limit.",
-                retryable=False,
-                producer="brave_search",
-            )
-        except (OSError, TimeoutError, aiohttp.ClientError):
-            return _provider_error(
-                call,
-                "provider_unavailable",
-                "Brave Search could not be reached.",
-                retryable=True,
-            )
-        if len(response.body) > self._max_response_bytes:
-            return _web_error(
-                call,
-                ToolResultStatus.BLOCKED,
-                "response_byte_limit_exceeded",
-                "The provider response exceeded the byte limit.",
-                retryable=False,
-                producer="brave_search",
-            )
-        if response.status in {401, 403}:
-            return _provider_error(
-                call,
-                "provider_auth_failed",
-                "Brave Search rejected its credentials.",
-                retryable=False,
             )
         if response.status == 429:
             return _provider_error(
                 call,
                 "provider_rate_limited",
-                "Brave Search rate limited the request.",
+                "The search provider rate limited the request.",
                 retryable=True,
             )
         if response.status < 200 or response.status >= 300:
             return _provider_error(
                 call,
                 "provider_unavailable" if response.status >= 500 else "provider_error",
-                f"Brave Search returned HTTP {response.status}.",
+                f"The search provider returned HTTP {response.status}.",
                 retryable=response.status >= 500 or response.status == 408,
             )
-        content_type = _header(response.headers, "content-type")
-        if (
-            content_type is None
-            or content_type.partition(";")[0].strip().casefold() != "application/json"
-        ):
-            return _provider_error(
-                call,
-                "provider_invalid_response",
-                "Brave Search returned an unsupported Content-Type.",
-                retryable=True,
-            )
+        results, truncated = _parse_duckduckgo_results(response.body, limit=limit)
+        return _search_result(call, query, results, truncated=truncated, engine="duckduckgo")
+
+    async def _search_request(
+        self,
+        request_url: str,
+        *,
+        accept: str,
+        guard: EgressGuard,
+    ) -> HttpResponse | None:
+        """One guarded GET. None means "this provider did not answer usefully"."""
         try:
-            payload: object = json.loads(response.body)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            return _provider_error(
-                call,
-                "provider_invalid_response",
-                "Brave Search returned invalid JSON.",
-                retryable=True,
-            )
-        parsed = _parse_brave_results(payload, limit=limit)
-        if parsed is None:
-            return _provider_error(
-                call,
-                "provider_invalid_response",
-                "Brave Search returned an invalid result structure.",
-                retryable=True,
-            )
-        results, truncated = parsed
-        meta: dict[str, Any] = {
-            "producer": "brave_search",
-            "truncated": truncated,
-            "taints": ["UntrustedWebTaint"],
-            "engine": "brave",
-            "cache_hit": False,
-        }
-        if truncated:
-            meta["continuation"] = {"offset": limit}
-        result = ToolResult(
-            tool_call_id=call.id,
-            status=ToolResultStatus.SUCCESS if results else ToolResultStatus.EMPTY,
-            retryable=False,
-            data={"query": query, "results": results},
-            error=None,
-            meta=meta,
+            async with asyncio.timeout(self._timeout_seconds):
+                target = await guard.resolve(request_url)
+                return await self._http_transport.request(
+                    target,
+                    headers={"Accept": accept, "User-Agent": _USER_AGENT},
+                    max_bytes=self._max_response_bytes,
+                    timeout_seconds=self._timeout_seconds,
+                )
+        except (
+            EgressPolicyError,
+            EgressResolutionError,
+            ResponseByteLimitError,
+            OSError,
+            TimeoutError,
+            aiohttp.ClientError,
+        ):
+            return None
+
+    async def _get_weather(self, call: ToolCall) -> ToolResult:
+        location = cast(str, call.arguments["location"])
+        days = cast(int, call.arguments.get("days", 3))
+        geocoding = await self._json_request(
+            GEOCODING_ENDPOINT + "?" + urlencode({"name": location, "count": 1, "format": "json"})
         )
-        self._search_cache[cache_key] = result
-        return result
+        if geocoding is None:
+            return _provider_error(
+                call,
+                "provider_unavailable",
+                "The weather provider could not be reached.",
+                retryable=True,
+            )
+        place = _first_geocoding_match(geocoding)
+        if place is None:
+            return ToolResult(
+                tool_call_id=call.id,
+                status=ToolResultStatus.EMPTY,
+                retryable=False,
+                data={"location": location, "matches": []},
+                error=None,
+                meta=_weather_meta(),
+            )
+        forecast = await self._json_request(
+            FORECAST_ENDPOINT
+            + "?"
+            + urlencode(
+                {
+                    "latitude": place["latitude"],
+                    "longitude": place["longitude"],
+                    "current": "temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code",
+                    "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code",
+                    "forecast_days": days,
+                    "timezone": "auto",
+                }
+            )
+        )
+        if forecast is None or not isinstance(forecast, Mapping):
+            return _provider_error(
+                call,
+                "provider_invalid_response",
+                "The weather provider returned an unusable response.",
+                retryable=True,
+            )
+        payload = cast(Mapping[str, JsonValue], forecast)
+        return ToolResult(
+            tool_call_id=call.id,
+            status=ToolResultStatus.SUCCESS,
+            retryable=False,
+            data={
+                "place": place,
+                "current": payload.get("current"),
+                "current_units": payload.get("current_units"),
+                "daily": payload.get("daily"),
+                "daily_units": payload.get("daily_units"),
+            },
+            error=None,
+            meta=_weather_meta(),
+        )
+
+    async def _json_request(self, request_url: str) -> object | None:
+        response = await self._search_request(
+            request_url,
+            accept="application/json",
+            guard=self._egress_guard,
+        )
+        if response is None or response.status < 200 or response.status >= 300:
+            return None
+        try:
+            return json.loads(response.body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
 
     async def preview(self, call: ToolCall) -> ConfirmationPreview | None:
         # Nothing here mutates the Workspace, so there is no diff to show.
@@ -844,10 +927,15 @@ class WebToolExecutor:
                 self._egress_guard.validate_url(cast(str, call.arguments["url"]))
             except EgressPolicyError as error:
                 raise _PreflightIssue(error.code, str(error)) from error
-        if "WebAccessGrant" not in self._effective_grants:
+        # By effect, never by name: the registry says which grants the declared
+        # effects demand, and a tool added there is gated without touching this.
+        missing = [
+            grant for grant in definition.required_grants if grant not in self._effective_grants
+        ]
+        if missing:
             raise _PreflightIssue(
-                "web_access_grant_required",
-                "The WebAccessGrant is required for this effect.",
+                grant_reason_code(missing[0]),
+                f"The {missing[0]} is required for this effect.",
             )
         return definition
 
@@ -1043,21 +1131,89 @@ def _normalized_query(query: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", query).split())
 
 
-def _parse_brave_results(
+def _origin_key(host: str, port: int) -> str:
+    return f"{host.casefold().rstrip('.')}:{port}"
+
+
+def _url_origins(url: str | None) -> frozenset[str]:
+    if url is None:
+        return frozenset()
+    parsed = urlsplit(url)
+    hostname = parsed.hostname
+    if hostname is None:
+        return frozenset()
+    try:
+        port = parsed.port
+    except ValueError:
+        return frozenset()
+    return frozenset({_origin_key(hostname, port or (443 if parsed.scheme == "https" else 80))})
+
+
+def _search_result(
+    call: ToolCall,
+    query: str,
+    results: list[dict[str, str]],
+    *,
+    truncated: bool,
+    engine: str,
+) -> ToolResult:
+    meta: dict[str, Any] = {
+        "producer": "web_search",
+        "truncated": truncated,
+        "taints": ["UntrustedWebTaint"],
+        "engine": engine,
+        "cache_hit": False,
+    }
+    if truncated:
+        meta["continuation"] = {"offset": len(results)}
+    return ToolResult(
+        tool_call_id=call.id,
+        status=ToolResultStatus.SUCCESS if results else ToolResultStatus.EMPTY,
+        retryable=False,
+        data={"query": query, "results": results},
+        error=None,
+        meta=meta,
+    )
+
+
+def _weather_meta() -> dict[str, Any]:
+    return {
+        "producer": "open_meteo",
+        "truncated": False,
+        "taints": ["UntrustedWebTaint"],
+    }
+
+
+def _first_geocoding_match(payload: object) -> dict[str, JsonValue] | None:
+    if not isinstance(payload, Mapping):
+        return None
+    results = cast(Mapping[str, object], payload).get("results")
+    if not isinstance(results, list) or not results:
+        return None
+    first = cast(list[object], results)[0]
+    if not isinstance(first, Mapping):
+        return None
+    entry = cast(Mapping[str, object], first)
+    latitude = entry.get("latitude")
+    longitude = entry.get("longitude")
+    if not isinstance(latitude, int | float) or not isinstance(longitude, int | float):
+        return None
+    place: dict[str, JsonValue] = {"latitude": latitude, "longitude": longitude}
+    for key in ("name", "admin1", "country", "timezone"):
+        value = entry.get(key)
+        if isinstance(value, str):
+            place[key] = value
+    return place
+
+
+def _parse_searxng_results(
     payload: object,
     *,
     limit: int,
 ) -> tuple[list[dict[str, str]], bool] | None:
     if not isinstance(payload, Mapping):
         return None
-    payload_mapping = cast(Mapping[str, object], payload)
-    web = payload_mapping.get("web")
-    if web is None:
-        raw_results: object = []
-    elif isinstance(web, Mapping):
-        raw_results = cast(Mapping[str, object], web).get("results", [])
-    else:
-        return None
+    raw_results = cast(Mapping[str, object], payload).get("results", [])
     if not isinstance(raw_results, list):
         return None
     raw_result_items = cast(list[object], raw_results)
@@ -1068,20 +1224,68 @@ def _parse_brave_results(
         item_mapping = cast(Mapping[str, object], item)
         title = item_mapping.get("title")
         url = item_mapping.get("url")
-        description = item_mapping.get("description", "")
-        if (
-            not isinstance(title, str)
-            or not isinstance(url, str)
-            or not isinstance(description, str)
-        ):
+        description = item_mapping.get("content", "")
+        if not isinstance(title, str) or not isinstance(url, str):
             return None
-        results.append({"title": title, "url": url, "description": description})
-    query_info = payload_mapping.get("query")
-    more_available = (
-        isinstance(query_info, Mapping)
-        and cast(Mapping[str, object], query_info).get("more_results_available") is True
-    )
-    return results, len(raw_result_items) > limit or more_available
+        results.append(
+            {
+                "title": title,
+                "url": url,
+                "description": description if isinstance(description, str) else "",
+            }
+        )
+    return results, len(raw_result_items) > limit
+
+
+def _parse_duckduckgo_results(body: bytes, *, limit: int) -> tuple[list[dict[str, str]], bool]:
+    parser = _DuckDuckGoResultParser()
+    parser.feed(body.decode("utf-8", errors="replace"))
+    parser.close()
+    found = parser.results
+    return found[:limit], len(found) > limit
+
+
+class _DuckDuckGoResultParser(HTMLParser):
+    """Reads the lite/ result table: one anchor per hit, snippet in its own cell."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.results: list[dict[str, str]] = []
+        self._in_link = False
+        self._in_snippet = False
+        self._title: list[str] = []
+        self._snippet: list[str] = []
+        self._url = ""
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = {name.casefold(): value or "" for name, value in attrs}
+        classes = values.get("class", "").split()
+        if tag.casefold() == "a" and "result-link" in classes:
+            self._in_link = True
+            self._title = []
+            self._url = values.get("href", "")
+        elif tag.casefold() == "td" and "result-snippet" in classes:
+            self._in_snippet = True
+            self._snippet = []
+
+    def handle_endtag(self, tag: str) -> None:
+        lowered = tag.casefold()
+        if lowered == "a" and self._in_link:
+            self._in_link = False
+            title = "".join(self._title).strip()
+            if title and self._url:
+                self.results.append({"title": title, "url": self._url, "description": ""})
+        elif lowered == "td" and self._in_snippet:
+            self._in_snippet = False
+            snippet = " ".join("".join(self._snippet).split())
+            if snippet and self.results:
+                self.results[-1]["description"] = snippet
+
+    def handle_data(self, data: str) -> None:
+        if self._in_link:
+            self._title.append(data)
+        elif self._in_snippet:
+            self._snippet.append(data)
 
 
 def _provider_error(
@@ -1091,15 +1295,14 @@ def _provider_error(
     *,
     retryable: bool,
 ) -> ToolResult:
-    result = _web_error(
+    return _web_error(
         call,
         ToolResultStatus.FAILED,
         code,
         message,
         retryable=retryable,
-        producer="brave_search",
+        producer="web_search",
     )
-    return replace(result, meta={**result.meta, "engine": "brave"})
 
 
 def _web_error(

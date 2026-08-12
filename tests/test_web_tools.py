@@ -4,6 +4,8 @@ import socket
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 
+import pytest
+
 from harness import (
     AiohttpHttpTransport,
     BrowserPage,
@@ -193,14 +195,12 @@ def test_web_preflight_requires_grant_and_validates_registry_schema() -> None:
             session_policy=web_policy(),
             egress_guard=public_guard(),
             http_transport=transport,
-            brave_api_key="not-used",
         )
         granted = WebToolExecutor(
             registry=load_config().tool_registry,
             session_policy=web_policy("WebAccessGrant"),
             egress_guard=public_guard(),
             http_transport=transport,
-            brave_api_key="not-used",
         )
 
         grant_result = await missing_grant.preflight(
@@ -235,7 +235,6 @@ def test_web_fetch_revalidates_redirect_before_following_it() -> None:
             session_policy=web_policy("WebAccessGrant"),
             egress_guard=public_guard(),
             http_transport=transport,
-            brave_api_key=None,
         )
 
         result = await executor.execute(
@@ -276,7 +275,6 @@ def test_web_fetch_extracts_html_once_and_discards_raw_markup() -> None:
             session_policy=web_policy("WebAccessGrant"),
             egress_guard=public_guard(),
             http_transport=transport,
-            brave_api_key=None,
         )
         call = ToolCall(
             id="fetch",
@@ -324,7 +322,6 @@ def test_web_fetch_enforces_body_cap_and_reuses_exact_url_cache() -> None:
             session_policy=web_policy("WebAccessGrant"),
             egress_guard=public_guard(),
             http_transport=oversized_transport,
-            brave_api_key=None,
             max_response_bytes=64,
         )
         oversized = await oversized_executor.execute(
@@ -346,7 +343,6 @@ def test_web_fetch_enforces_body_cap_and_reuses_exact_url_cache() -> None:
             session_policy=web_policy("WebAccessGrant"),
             egress_guard=public_guard(),
             http_transport=cached_transport,
-            brave_api_key=None,
         )
         first = await cached_executor.execute(
             ToolCall(id="first", name="web_fetch", arguments={"url": "https://example.com/cache"})
@@ -379,7 +375,6 @@ def test_short_extraction_escalates_and_says_so_when_no_browser_is_configured() 
                     ),
                 )
             ),
-            brave_api_key=None,
         )
         short = await short_executor.execute(
             ToolCall(id="short", name="web_fetch", arguments={"url": "https://example.com/short"})
@@ -403,7 +398,6 @@ def test_short_extraction_escalates_and_says_so_when_no_browser_is_configured() 
                     ),
                 )
             ),
-            brave_api_key=None,
         )
         unavailable = await unavailable_executor.execute(
             ToolCall(
@@ -503,18 +497,16 @@ def test_web_fetch_enforces_redirect_content_type_and_character_limits() -> None
     asyncio.run(scenario())
 
 
-def test_web_search_uses_brave_api_limits_results_and_normalizes_cache_key() -> None:
+def test_web_search_reads_searxng_limits_results_and_normalizes_cache_key() -> None:
     async def scenario() -> None:
         provider_body = json.dumps(
             {
-                "web": {
-                    "results": [
-                        {"title": "One", "url": "https://one.example", "description": "First"},
-                        {"title": "Two", "url": "https://two.example", "description": "Second"},
-                        {"title": "Three", "url": "https://three.example", "description": "Third"},
-                    ]
-                },
-                "query": {"more_results_available": True},
+                "query": "harness security",
+                "results": [
+                    {"title": "One", "url": "https://one.example", "content": "First"},
+                    {"title": "Two", "url": "https://two.example", "content": "Second"},
+                    {"title": "Three", "url": "https://three.example", "content": "Third"},
+                ],
             }
         ).encode()
         transport = FakeHttpTransport(
@@ -531,7 +523,7 @@ def test_web_search_uses_brave_api_limits_results_and_normalizes_cache_key() -> 
             session_policy=web_policy("WebAccessGrant"),
             egress_guard=public_guard(),
             http_transport=transport,
-            brave_api_key="brave-secret",
+            search_endpoint="https://searx.example/search",
         )
 
         first = await executor.execute(
@@ -555,10 +547,10 @@ def test_web_search_uses_brave_api_limits_results_and_normalizes_cache_key() -> 
         assert isinstance(results, Sequence)
         assert len(results) == 2
         assert first.meta == {
-            "producer": "brave_search",
+            "producer": "web_search",
             "truncated": True,
             "taints": ["UntrustedWebTaint"],
-            "engine": "brave",
+            "engine": "searxng",
             "cache_hit": False,
             "continuation": {"offset": 2},
         }
@@ -566,82 +558,102 @@ def test_web_search_uses_brave_api_limits_results_and_normalizes_cache_key() -> 
         assert second.meta["cache_hit"] is True
         assert len(transport.requests) == 1
         target, headers = transport.requests[0]
-        assert target.url.startswith("https://api.search.brave.com/res/v1/web/search?")
+        assert target.url.startswith("https://searx.example/search?")
         assert "q=Harness+Security" in target.url
-        assert "count=2" in target.url
-        assert headers["X-Subscription-Token"] == "brave-secret"
+        assert "format=json" in target.url
+        assert "X-Subscription-Token" not in headers
         assert headers["User-Agent"].startswith("Harness/2.0")
 
     asyncio.run(scenario())
 
 
-def test_brave_auth_and_rate_limit_are_failed_without_secret_disclosure() -> None:
+def test_web_search_falls_back_to_duckduckgo_when_searxng_does_not_answer() -> None:
     async def scenario() -> None:
-        secret = "must-never-appear-in-result"
-        auth_executor = WebToolExecutor(
+        lite_html = (
+            b"<html><body><table>"
+            b'<tr><td><a class="result-link" href="https://one.example">One</a></td></tr>'
+            b'<tr><td class="result-snippet">Primeiro resultado.</td></tr>'
+            b'<tr><td><a class="result-link" href="https://two.example">Two</a></td></tr>'
+            b'<tr><td class="result-snippet">Segundo resultado.</td></tr>'
+            b"</table></body></html>"
+        )
+        transport = FakeHttpTransport(
+            (
+                HttpResponse(status=502, headers={"Content-Type": "text/html"}, body=b"nope"),
+                HttpResponse(status=200, headers={"Content-Type": "text/html"}, body=lite_html),
+            )
+        )
+        executor = WebToolExecutor(
             registry=load_config().tool_registry,
             session_policy=web_policy("WebAccessGrant"),
             egress_guard=public_guard(),
-            http_transport=FakeHttpTransport(
-                (
-                    HttpResponse(
-                        status=401,
-                        headers={"Content-Type": "application/json"},
-                        body=b"{}",
-                    ),
-                )
+            http_transport=transport,
+            search_endpoint="https://searx.example/search",
+        )
+
+        result = await executor.execute(
+            ToolCall(id="search-1", name="web_search", arguments={"query": "harness", "limit": 1})
+        )
+
+        assert result.status.value == "success"
+        assert result.meta["engine"] == "duckduckgo"
+        assert result.meta["truncated"] is True
+        assert isinstance(result.data, Mapping)
+        assert result.data["results"] == [
+            {
+                "title": "One",
+                "url": "https://one.example",
+                "description": "Primeiro resultado.",
+            }
+        ]
+        assert len(transport.requests) == 2
+        assert transport.requests[1][0].url.startswith("https://lite.duckduckgo.com/lite/?")
+
+    asyncio.run(scenario())
+
+
+def test_web_search_without_any_provider_reachable_is_failed_not_blocked() -> None:
+    async def scenario() -> None:
+        transport = FakeHttpTransport(
+            (HttpResponse(status=503, headers={"Content-Type": "text/html"}, body=b""),)
+        )
+        executor = WebToolExecutor(
+            registry=load_config().tool_registry,
+            session_policy=web_policy("WebAccessGrant"),
+            egress_guard=public_guard(),
+            http_transport=transport,
+        )
+
+        result = await executor.execute(
+            ToolCall(id="search-1", name="web_search", arguments={"query": "harness"})
+        )
+
+        # Nobody answered, which is a provider failure — never a harness decision.
+        assert result.status.value == "failed"
+        assert result.retryable is True
+        assert result.error is not None
+        assert result.error["code"] == "provider_unavailable"
+
+    asyncio.run(scenario())
+
+
+def test_declared_searxng_origin_is_the_only_private_address_search_may_reach() -> None:
+    async def scenario() -> None:
+        loopback = EgressGuard(
+            GuardedResolver(
+                lookup=FakeLookup(((socket.AF_INET, "127.0.0.1"),)),
+                private_origins=frozenset({"127.0.0.1:8080"}),
             ),
-            brave_api_key=secret,
-        )
-        auth = await auth_executor.execute(
-            ToolCall(id="auth", name="web_search", arguments={"query": "security"})
+            private_origins=frozenset({"127.0.0.1:8080"}),
         )
 
-        assert auth.status.value == "failed"
-        assert auth.retryable is False
-        assert auth.error is not None
-        assert auth.error["code"] == "provider_auth_failed"
-        assert secret not in repr(auth)
-
-        rate_executor = WebToolExecutor(
-            registry=load_config().tool_registry,
-            session_policy=web_policy("WebAccessGrant"),
-            egress_guard=public_guard(),
-            http_transport=FakeHttpTransport(
-                (
-                    HttpResponse(
-                        status=429,
-                        headers={"Content-Type": "application/json"},
-                        body=b"{}",
-                    ),
-                )
-            ),
-            brave_api_key="another-secret",
-        )
-        rate = await rate_executor.execute(
-            ToolCall(id="rate", name="web_search", arguments={"query": "security"})
-        )
-        assert rate.status.value == "failed"
-        assert rate.retryable is True
-        assert rate.error is not None
-        assert rate.error["code"] == "provider_rate_limited"
-
-        missing_transport = FakeHttpTransport(())
-        missing_executor = WebToolExecutor(
-            registry=load_config().tool_registry,
-            session_policy=web_policy("WebAccessGrant"),
-            egress_guard=public_guard(),
-            http_transport=missing_transport,
-            brave_api_key=None,
-        )
-        missing = await missing_executor.execute(
-            ToolCall(id="missing", name="web_search", arguments={"query": "security"})
-        )
-        assert missing.status.value == "failed"
-        assert missing.retryable is False
-        assert missing.error is not None
-        assert missing.error["code"] == "provider_auth_unavailable"
-        assert missing_transport.requests == []
+        assert loopback.validate_url("http://127.0.0.1:8080/search") is not None
+        with pytest.raises(EgressPolicyError) as other_port:
+            loopback.validate_url("http://127.0.0.1:9999/search")
+        assert other_port.value.code == "non_public_address"
+        with pytest.raises(EgressPolicyError) as strict:
+            EgressGuard().validate_url("http://127.0.0.1:8080/search")
+        assert strict.value.code == "non_public_address"
 
     asyncio.run(scenario())
 
@@ -777,5 +789,107 @@ def test_browser_capability_opens_only_after_browser_egress_guard_is_ready() -> 
         assert rendered.meta["producer"] == "browser"
         assert browser.urls == ["https://example.com"]
         assert "<main" not in repr(rendered)
+
+    asyncio.run(scenario())
+
+
+def test_get_weather_resolves_the_place_then_reads_the_forecast() -> None:
+    async def scenario() -> None:
+        geocoding = json.dumps(
+            {
+                "results": [
+                    {
+                        "name": "Recife",
+                        "latitude": -8.05,
+                        "longitude": -34.9,
+                        "country": "Brazil",
+                        "timezone": "America/Recife",
+                    }
+                ]
+            }
+        ).encode()
+        forecast = json.dumps(
+            {
+                "current": {"temperature_2m": 29.4, "weather_code": 2},
+                "current_units": {"temperature_2m": "°C"},
+                "daily": {"time": ["2026-08-12"], "temperature_2m_max": [31.0]},
+                "daily_units": {"temperature_2m_max": "°C"},
+            }
+        ).encode()
+        transport = FakeHttpTransport(
+            (
+                HttpResponse(
+                    status=200, headers={"Content-Type": "application/json"}, body=geocoding
+                ),
+                HttpResponse(
+                    status=200, headers={"Content-Type": "application/json"}, body=forecast
+                ),
+            )
+        )
+        executor = WebToolExecutor(
+            registry=load_config().tool_registry,
+            session_policy=web_policy("WebAccessGrant"),
+            egress_guard=public_guard(),
+            http_transport=transport,
+        )
+
+        result = await executor.execute(
+            ToolCall(
+                id="weather-1",
+                name="get_weather",
+                arguments={"location": "Recife", "days": 1},
+            )
+        )
+
+        assert result.status.value == "success"
+        assert isinstance(result.data, Mapping)
+        place = result.data["place"]
+        assert isinstance(place, Mapping)
+        assert place["latitude"] == -8.05
+        assert place["country"] == "Brazil"
+        assert result.meta["taints"] == ["UntrustedWebTaint"]
+        assert result.meta["producer"] == "open_meteo"
+        assert len(transport.requests) == 2
+        assert "latitude=-8.05" in transport.requests[1][0].url
+
+    asyncio.run(scenario())
+
+
+def test_get_weather_without_a_grant_is_blocked_and_an_unknown_place_is_empty() -> None:
+    async def scenario() -> None:
+        ungranted = WebToolExecutor(
+            registry=load_config().tool_registry,
+            session_policy=web_policy(),
+            egress_guard=public_guard(),
+            http_transport=FakeHttpTransport(()),
+        )
+        blocked = await ungranted.execute(
+            ToolCall(id="weather-1", name="get_weather", arguments={"location": "Recife"})
+        )
+
+        assert blocked.status.value == "blocked"
+        assert blocked.error is not None
+        assert blocked.error["code"] == "web_access_grant_required"
+
+        empty_executor = WebToolExecutor(
+            registry=load_config().tool_registry,
+            session_policy=web_policy("WebAccessGrant"),
+            egress_guard=public_guard(),
+            http_transport=FakeHttpTransport(
+                (
+                    HttpResponse(
+                        status=200,
+                        headers={"Content-Type": "application/json"},
+                        body=b'{"generationtime_ms": 0.1}',
+                    ),
+                )
+            ),
+        )
+        empty = await empty_executor.execute(
+            ToolCall(id="weather-2", name="get_weather", arguments={"location": "Atlantis"})
+        )
+
+        assert empty.status.value == "empty"
+        assert empty.error is None
 
     asyncio.run(scenario())

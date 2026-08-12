@@ -415,9 +415,10 @@ if (profilesDocument && harness && registry && fixturesDocument && experimentsDo
     "rede deve ser data_egress guardado por WebAccessGrant",
   );
   check(
-    harness.network?.web_search?.provider === "brave_search" &&
-      harness.network?.browser?.engine === "brave",
-    "web deve usar Brave Search e navegador Brave",
+    harness.network?.web_search?.provider === "searxng" &&
+      harness.network?.web_search?.fallback === "duckduckgo_lite" &&
+      harness.network?.browser?.engine === "chromium",
+    "busca deve usar SearXNG com fallback DuckDuckGo e navegador Chromium",
   );
   check(
     harness.network?.browser?.separate_context_per_operation === true &&

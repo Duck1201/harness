@@ -94,7 +94,7 @@ class ApplicationService:
         runtime: ApplicationRuntime,
         estimator: TokenEstimator,
         allowed_workspace_roots: Sequence[str | Path],
-        brave_api_key: str | None = None,
+        search_endpoint: str | None = None,
         operator_notes: str = "",
         benchmark_lease: BenchmarkLease | None = None,
         eval_service: EvalService | None = None,
@@ -120,9 +120,11 @@ class ApplicationService:
         # declarada, enquanto lá dentro um default deixaria o corpus montar um
         # prompt diferente do de produção sem ninguém notar.
         self._operator_notes = operator_notes
-        if brave_api_key is not None and not brave_api_key.strip():
-            raise ValueError("brave_api_key must not be blank")
-        normalized_brave_key = brave_api_key.strip() if brave_api_key is not None else None
+        if search_endpoint is not None and not search_endpoint.strip():
+            raise ValueError("search_endpoint must not be blank")
+        normalized_search_endpoint = (
+            search_endpoint.strip() if search_endpoint is not None else None
+        )
         self._allowed_roots = tuple(roots)
         if (
             benchmark_lease is not None
@@ -163,7 +165,7 @@ class ApplicationService:
             registry=config.tool_registry,
             workspace_root=self.workspace_root,
             coordinator=self._workspace_coordinator,
-            brave_api_key=normalized_brave_key,
+            search_endpoint=normalized_search_endpoint,
             browser_capability=browser_capability,
             browser_egress_guard=browser_egress_guard,
         )
@@ -268,6 +270,7 @@ class ApplicationService:
         *,
         name: str | None = None,
         archived: bool | None = None,
+        yolo_disabled: bool | None = None,
     ) -> Conversation:
         conversation = await self.store.get_conversation(conversation_id)
         if name is not None:
@@ -276,7 +279,16 @@ class ApplicationService:
             conversation = await self.store.set_conversation_archived(
                 conversation_id, archived=archived
             )
+        if yolo_disabled is not None:
+            await self.store.set_conversation_yolo_disabled(conversation_id, yolo_disabled)
+            conversation = await self.store.get_conversation(conversation_id)
         return conversation
+
+    async def set_yolo_enabled(self, enabled: bool) -> None:
+        await self.store.set_yolo_enabled(enabled)
+
+    async def yolo_enabled(self) -> bool:
+        return await self.store.yolo_enabled()
 
     async def delete_conversation(self, conversation_id: str) -> None:
         await self.store.delete_conversation(conversation_id)
@@ -426,6 +438,7 @@ class ApplicationService:
             "feedback": feedback,
             "pending_confirmation": self._confirmation_gate.pending(conversation_id),
             "confirmation_waivers": sorted(await self.store.waived_confirmations(conversation_id)),
+            "yolo": await self.store.yolo_active(conversation_id),
         }
 
     async def stop(self, conversation_id: str) -> None:
@@ -612,7 +625,7 @@ class _ConversationToolExecutorFactory:
         registry: ToolRegistryConfig,
         workspace_root: Callable[[str], Path],
         coordinator: WorkspaceCoordinator,
-        brave_api_key: str | None,
+        search_endpoint: str | None,
         browser_capability: BrowserCapability | None = None,
         browser_egress_guard: BrowserEgressGuard | None = None,
     ) -> None:
@@ -620,7 +633,7 @@ class _ConversationToolExecutorFactory:
         self._registry = registry
         self._workspace_root = workspace_root
         self._coordinator = coordinator
-        self._brave_api_key = brave_api_key
+        self._search_endpoint = search_endpoint
         self._browser_capability = browser_capability
         self._browser_egress_guard = browser_egress_guard
 
@@ -636,11 +649,12 @@ class _ConversationToolExecutorFactory:
         the Operator can act on: write_grant_required.
         """
         del conversation_id
+        # web_search is always offered: its fallback provider needs no credential,
+        # so there is no configuration under which the tool cannot answer at all.
         return tuple(
             definition.tool_schema()
             for definition in self._registry.model_tools
             if definition.status == "enabled"
-            and (definition.name != "web_search" or self._brave_api_key is not None)
         )
 
     async def create(self, conversation_id: str) -> ToolExecutor:
@@ -661,13 +675,13 @@ class _ConversationToolExecutorFactory:
         web = WebToolExecutor(
             registry=registry,
             session_policy=policy,
-            brave_api_key=self._brave_api_key,
+            search_endpoint=self._search_endpoint,
             browser_capability=self._browser_capability,
             browser_egress_guard=self._browser_egress_guard,
         )
         routes: dict[str, ToolExecutor] = {}
         for definition in registry.model_tools:
-            routes[definition.name] = web if definition.name.startswith("web_") else local
+            routes[definition.name] = web if "data_egress" in definition.effects else local
         return CompositeToolExecutor(routes=routes)
 
 
@@ -728,6 +742,10 @@ class OperatorConfirmationGate:
         return not await self._waived(request)
 
     async def _waived(self, request: ConfirmationRequest) -> bool:
+        if request.reason_code in _YOLO_REASONS and await self._store.yolo_active(
+            request.conversation_id
+        ):
+            return True
         return request.reason_code in _WAIVABLE_REASONS and MUTATION_EFFECT in (
             await self._store.waived_confirmations(request.conversation_id)
         )
@@ -740,7 +758,10 @@ class OperatorConfirmationGate:
             # covers the plain write, never the tainted one: the web asking for a
             # write is a different question, and it was never answered.
             await self._record_grant(request)
-            return ConfirmationDecision(approved=True, reason_code="write_confirmation_waived")
+            return ConfirmationDecision(
+                approved=True,
+                reason_code=f"{request.reason_code.removesuffix('_required')}_waived",
+            )
         future: asyncio.Future[ConfirmationDecision] = asyncio.get_running_loop().create_future()
         self._pending[request.conversation_id] = (request, future)
         try:
@@ -817,21 +838,40 @@ class OperatorConfirmationGate:
         entry[1].set_result(ConfirmationDecision(approved=False, reason_code=reason_code))
 
     async def _record_grant(self, request: ConfirmationRequest) -> None:
-        """Gives the WriteGrant the approved batch is missing.
+        """Gives the grant the approved batch is missing.
 
-        Policy still requires the grant for every workspace_write; what changed is
-        where the Operator gives it. Being asked to find a chip before anything has
-        happened, and then to approve the same write in a dialog, is one decision
-        charged twice — so the dialog is where it is taken, with the diff in view.
+        Policy still requires the grant for every workspace_write and every
+        data_egress; what changed is where the Operator gives it. Being asked to
+        find a chip before anything has happened, and then to approve the same call
+        in a dialog — or worse, to re-send the prompt — is one decision charged
+        twice, so the dialog is where it is taken, with the call in view.
         """
-        if request.reason_code != "write_grant_required":
+        granted = _DIALOG_GRANTS.get(request.reason_code)
+        if granted is None:
             return
-        await self._store.grant(request.conversation_id, "WriteGrant", "workspace")
+        permission, scope = granted
+        await self._store.grant(request.conversation_id, permission, scope)
 
 
 # Reasons whose question is "may the model write here": the Operator can answer
 # them once for the whole Conversation. A tainted write is never one of them.
 _WAIVABLE_REASONS = frozenset({"write_confirmation_required", "write_grant_required"})
+
+# Yolo answers every question the gate can ask, including the tainted write. The
+# Operator turns it on knowing that a page the model read can now drive a write
+# without being announced — see docs/adr/0008-operator-yolo-mode.md. Each such
+# call is still recorded, as "waived" and never as "approved".
+_YOLO_REASONS = _WAIVABLE_REASONS | {
+    "web_taint_confirmation_required",
+    "web_access_grant_required",
+}
+
+# The grant each dialog reason gives when approved, with the scope the public
+# grant API uses for the same permission.
+_DIALOG_GRANTS = {
+    "write_grant_required": ("WriteGrant", "workspace"),
+    "web_access_grant_required": ("WebAccessGrant", "public-network"),
+}
 
 
 def _decision_reason_code(requested: str, *, approved: bool) -> str:

@@ -318,6 +318,59 @@
         "HTTP is attempted first; browser escalation is internal and symptom-driven.",
         "HTML extraction is shared and runs once before the result enters the model view."
       ]
+    },
+    {
+      "name": "calculate",
+      "status": "enabled",
+      "effects": ["pure_compute"],
+      "required_grants": [],
+      "description": "Evaluates one arithmetic expression exactly. Reads nothing, writes nothing and reaches no network.",
+      "replay_policy": "cache_normalized_arguments_per_turn",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "expression": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "Arithmetic expression using numbers, + - * / // % ** and parentheses."
+          }
+        },
+        "required": ["expression"]
+      },
+      "executor_invariants": [
+        "The expression is parsed into an AST and only arithmetic nodes are evaluated; no name, call or attribute is ever resolved."
+      ]
+    },
+    {
+      "name": "get_weather",
+      "status": "enabled",
+      "effects": ["data_egress"],
+      "required_grants": ["WebAccessGrant"],
+      "result_taints": ["UntrustedWebTaint"],
+      "description": "Reports current weather and the daily forecast for a place, resolving the place name to coordinates first.",
+      "replay_policy": "cache_normalized_arguments_per_turn",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "location": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Place name, optionally with region or country, such as \"Recife, Brazil\"."
+          },
+          "days": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 7,
+            "default": 3,
+            "description": "How many forecast days to return, starting today."
+          }
+        },
+        "required": ["location"]
+      }
     }
   ],
   "internal_automations": [

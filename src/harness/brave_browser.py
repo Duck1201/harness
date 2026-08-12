@@ -46,7 +46,16 @@ from .web_tools import (
     ResponseByteLimitError,
 )
 
-CANDIDATE_EXECUTABLES = ("brave-browser", "brave-browser-stable", "brave")
+# Any Chromium answers the same DevTools Protocol. Brave stays first because a
+# host that already recorded runs with it must keep picking the same binary.
+CANDIDATE_EXECUTABLES = (
+    "brave-browser",
+    "brave-browser-stable",
+    "brave",
+    "chromium",
+    "chromium-browser",
+    "google-chrome",
+)
 
 _LAUNCH_FLAGS = (
     "--headless=new",
@@ -129,7 +138,7 @@ def find_brave_executable(candidates: Sequence[str] = CANDIDATE_EXECUTABLES) -> 
 
 
 class BraveEgressGuard:
-    """Readiness probe and identity of the installed Brave binary."""
+    """Readiness probe and identity of the installed Chromium binary."""
 
     def __init__(
         self,
@@ -164,7 +173,7 @@ class BraveEgressGuard:
             return self._version
         executable = self.executable
         if executable is None:
-            raise BraveBrowserError("Brave executable was not found.")
+            raise BraveBrowserError("No Chromium executable was found.")
         process = await asyncio.create_subprocess_exec(
             executable,
             "--version",
@@ -176,9 +185,9 @@ class BraveEgressGuard:
                 stdout, _ = await process.communicate()
         except TimeoutError as error:
             process.kill()
-            raise BraveBrowserError("Brave did not report its version.") from error
+            raise BraveBrowserError("The browser did not report its version.") from error
         if process.returncode != 0:
-            raise BraveBrowserError("Brave exited with an error while reporting its version.")
+            raise BraveBrowserError("The browser exited with an error while reporting its version.")
         self._version = stdout.decode("utf-8", "replace").strip()
         return self._version
 
@@ -248,7 +257,9 @@ class _BraveProcess:
             async with asyncio.timeout(self._startup_timeout_seconds):
                 while True:
                     if self._process is not None and self._process.returncode is not None:
-                        raise BraveBrowserError("Brave exited before opening a debugging port.")
+                        raise BraveBrowserError(
+                            "The browser exited before opening a debugging port."
+                        )
                     if port_file.exists():
                         lines = port_file.read_text("utf-8").splitlines()
                         if len(lines) >= 2 and lines[0].strip().isdigit():
@@ -258,7 +269,7 @@ class _BraveProcess:
                             )
                     await asyncio.sleep(0.02)
         except TimeoutError as error:
-            raise BraveBrowserError("Brave did not open a debugging port in time.") from error
+            raise BraveBrowserError("The browser did not open a debugging port in time.") from error
 
 
 class _CdpConnection:
@@ -380,7 +391,7 @@ class _BraveSession:
 
 
 class BraveBrowserCapability:
-    """Loads a page in an isolated Brave process and returns its rendered DOM."""
+    """Loads a page in an isolated browser process and returns its rendered DOM."""
 
     def __init__(
         self,
@@ -403,7 +414,7 @@ class BraveBrowserCapability:
     ) -> BrowserPage:
         executable = self._guard.executable
         if executable is None:
-            raise BraveBrowserError("Brave executable was not found.")
+            raise BraveBrowserError("No Chromium executable was found.")
         try:
             target = await self._egress_guard.resolve(url)
         except EgressPolicyError as error:
@@ -468,7 +479,7 @@ class BraveBrowserVerifier:
     async def verify(self, request: BrowserVerificationRequest) -> BrowserVerification:
         executable = self._guard.executable
         if executable is None:
-            raise BraveBrowserError("Brave executable was not found.")
+            raise BraveBrowserError("No Chromium executable was found.")
         html = request.html.decode("utf-8", "replace")
 
         async with _BraveSession(

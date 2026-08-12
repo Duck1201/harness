@@ -1115,6 +1115,100 @@ def test_denied_web_taint_confirmation_blocks_without_writing(tmp_path: Path) ->
     asyncio.run(scenario())
 
 
+def test_missing_web_access_grant_is_asked_and_the_same_turn_continues(tmp_path: Path) -> None:
+    """The Operator answers in the dialog instead of re-sending the prompt."""
+
+    class GrantingFactory(ToolExecutorFactory):
+        def __init__(self) -> None:
+            self.granted = False
+            self.executors: list[FakeToolExecutor] = []
+
+        async def create(self, conversation_id: str) -> ToolExecutor:
+            del conversation_id
+            executor = FakeToolExecutor(
+                ToolBatchPreflight(allowed=True)
+                if self.granted
+                else ToolBatchPreflight(allowed=False, reason_code="web_access_grant_required")
+            )
+            self.executors.append(executor)
+            return executor
+
+        async def effective_tool_schemas(self, conversation_id: str) -> tuple[ToolSchema, ...]:
+            del conversation_id
+            return (ToolSchema("web_search", "search", {"type": "object"}),)
+
+    class GrantingGate(RecordingConfirmationGate):
+        def __init__(self, factory: GrantingFactory) -> None:
+            super().__init__(approved=True)
+            self.factory = factory
+
+        async def confirm(self, request: ConfirmationRequest) -> ConfirmationDecision:
+            self.requests.append(request)
+            # Stands in for the real gate, which records the grant before resolving.
+            self.factory.granted = True
+            return ConfirmationDecision(approved=True, reason_code="web_access_grant_approved")
+
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        search = ToolCall(id="search-1", name="web_search", arguments={"query": "harness"})
+        runtime = FakeRuntime([ModelResponse(tool_calls=(search,)), ModelResponse(content="achei")])
+        factory = GrantingFactory()
+        gate = GrantingGate(factory)
+        agent = AgentEngine(
+            store=store,
+            runtime=runtime,
+            tool_executor_factory=factory,
+            context_builder=ContextBuilder(FakeEstimator(), context_window=32768),
+            event_sink=FakeEventSink(),
+            system_prompt="Use tools when needed.",
+            tool_schemas=(ToolSchema("web_search", "search", {"type": "object"}),),
+            model_options={},
+            seed=0,
+            confirmation_gate=gate,
+            tool_effects={"web_search": ["data_egress"]},
+        )
+
+        finished = await agent.run(conversation_id, "pesquise harness")
+
+        assert [request.reason_code for request in gate.requests] == ["web_access_grant_required"]
+        assert [call.id for call in factory.executors[-1].executed] == ["search-1"]
+        assert finished.terminal_outcome is not None
+        assert finished.terminal_outcome.kind is TerminalOutcomeKind.COMPLETED
+        # One prompt, one Turn: the model was never asked to start over.
+        assert len(runtime.requests) == 2
+
+    asyncio.run(scenario())
+
+
+def test_denied_web_access_grant_blocks_the_turn(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        search = ToolCall(id="search-1", name="web_search", arguments={"query": "harness"})
+        runtime = FakeRuntime(
+            [ModelResponse(tool_calls=(search,)), ModelResponse(content="sem acesso")]
+        )
+        executor = FakeToolExecutor(
+            ToolBatchPreflight(allowed=False, reason_code="web_access_grant_required")
+        )
+        gate = RecordingConfirmationGate(approved=False)
+
+        finished = await engine(
+            store,
+            runtime,
+            executor,
+            FakeEventSink(),
+            confirmation_gate=gate,
+            tool_effects={"web_search": ["data_egress"]},
+        ).run(conversation_id, "pesquise harness")
+
+        assert [request.reason_code for request in gate.requests] == ["web_access_grant_required"]
+        assert executor.executed == []
+        assert finished.terminal_outcome is not None
+        assert finished.terminal_outcome.kind is TerminalOutcomeKind.BLOCKED
+
+    asyncio.run(scenario())
+
+
 def test_a_tool_call_serialized_as_text_is_rejected_instead_of_answered(
     tmp_path: Path,
 ) -> None:

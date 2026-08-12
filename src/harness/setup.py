@@ -7,7 +7,7 @@ from pathlib import Path
 from threading import Lock
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, SecretStr
+from pydantic import BaseModel, ConfigDict
 from tokenizers import Tokenizer
 
 from .host_config import CredentialStore, HostConfig, HostConfigStore, default_state_dir
@@ -20,7 +20,8 @@ class SetupSubmission(BaseModel):
     tokenizer_path: Path
     state_dir: Path
     allowed_origins: tuple[str, ...]
-    brave_api_key: SecretStr | None = None
+    searxng_url: str | None = None
+    ollama_url: str = "http://127.0.0.1:11434"
 
 
 class SetupStatus(BaseModel):
@@ -91,10 +92,7 @@ class SetupController:
     def complete(self, supplied_token: str | None, submission: SetupSubmission) -> None:
         with self._lock:
             self._authorize(supplied_token)
-            config, brave_api_key = _validated_config(submission)
-            if brave_api_key is not None:
-                self._credential_store.write_brave_api_key(brave_api_key)
-            self._host_store.write(config)
+            self._host_store.write(validated_host_config(submission))
             self._configured = True
             self._active = False
             self._restart_required = True
@@ -123,7 +121,8 @@ class SetupController:
             )
 
 
-def _validated_config(submission: SetupSubmission) -> tuple[HostConfig, str | None]:
+def validated_host_config(submission: SetupSubmission) -> HostConfig:
+    """Valida uma submissão e devolve o HostConfig — usada pelo setup e pelo painel."""
     tokenizer_path = submission.tokenizer_path
     if not tokenizer_path.is_absolute():
         raise SetupError(
@@ -173,16 +172,6 @@ def _validated_config(submission: SetupSubmission) -> tuple[HostConfig, str | No
             "Allowed origins must be HTTP or HTTPS origins.",
             status_code=422,
         )
-    brave_api_key: str | None = None
-    if submission.brave_api_key is not None:
-        raw_brave_api_key = submission.brave_api_key.get_secret_value()
-        brave_api_key = raw_brave_api_key.strip()
-        if not brave_api_key or "\n" in brave_api_key or "\r" in brave_api_key:
-            raise SetupError(
-                "invalid_brave_credential",
-                "The Brave credential must be a non-empty single line.",
-                status_code=422,
-            )
     try:
         config = HostConfig(
             allowed_workspace_roots=submission.allowed_workspace_roots,
@@ -190,7 +179,8 @@ def _validated_config(submission: SetupSubmission) -> tuple[HostConfig, str | No
             tokenizer_digest=actual_digest,
             state_dir=submission.state_dir,
             allowed_origins=origins,
-            brave_credential_ref=("brave_api_key" if brave_api_key is not None else None),
+            searxng_url=submission.searxng_url,
+            ollama_url=submission.ollama_url,
         )
     except ValueError as error:
         raise SetupError(
@@ -198,7 +188,7 @@ def _validated_config(submission: SetupSubmission) -> tuple[HostConfig, str | No
             "Setup paths and workspace roots must be absolute, canonical, and valid.",
             status_code=422,
         ) from error
-    return config, brave_api_key
+    return config
 
 
 def _valid_origin(value: str) -> bool:

@@ -1,6 +1,7 @@
 import type { HarnessClient } from "./HarnessClient";
 import type {
   AgUiEvent,
+  HostConfigSnapshot,
   ApiPendingRequest,
   ChatSnapshot,
   Conversation,
@@ -142,6 +143,17 @@ export class MockHarnessClient implements HarnessClient {
   private feedback: FeedbackRecord[] = [];
   private confirmations = new Map<string, PendingConfirmation>();
   private waivers = new Set<string>();
+  private yolo = false;
+  private hostConfig: HostConfigSnapshot = {
+    allowed_workspace_roots: ["/workspaces/harness-2"],
+    tokenizer_path: "/home/operator/.local/state/harness-2/tokenizer.json",
+    tokenizer_digest: "0".repeat(64),
+    state_dir: "/home/operator/.local/state/harness-2",
+    allowed_origins: ["http://127.0.0.1:8765"],
+    searxng_url: null,
+    ollama_url: "http://127.0.0.1:11434",
+  };
+  private yoloDisabled = new Set<string>();
   private password = "";
   private sessionStatus: SessionStatus = {
     authentication_required: false,
@@ -333,6 +345,7 @@ export class MockHarnessClient implements HarnessClient {
       pendingConfirmation: selected ? this.confirmations.get(selected.id) ?? null : null,
       confirmationWaivers:
         selected && this.waivers.has(selected.id) ? ["workspace_write"] : [],
+      yolo: this.yolo && !(selected ? this.yoloDisabled.has(selected.id) : false),
       execution: {
         defaultExecutionRoute: "local_web_tools",
         runtimeProfile: "local_mitos_ollama_reproduction",
@@ -495,6 +508,30 @@ export class MockHarnessClient implements HarnessClient {
     this.confirmations.set(confirmation.conversation_id, confirmation);
   }
 
+  async updateHostConfig(submission: SetupSubmission) {
+    this.hostConfig = {
+      allowed_workspace_roots: submission.allowed_workspace_roots,
+      tokenizer_path: submission.tokenizer_path,
+      tokenizer_digest: "0".repeat(64),
+      state_dir: submission.state_dir,
+      allowed_origins: submission.allowed_origins,
+      searxng_url: submission.searxng_url ?? null,
+      ollama_url: submission.ollama_url ?? "http://127.0.0.1:11434",
+    };
+    return { restart_required: true };
+  }
+
+  async setYoloEnabled(enabled: boolean) {
+    this.yolo = enabled;
+    return undefined;
+  }
+
+  async setConversationYolo(conversationId: string, disabled: boolean) {
+    if (disabled) this.yoloDisabled.add(conversationId);
+    else this.yoloDisabled.delete(conversationId);
+    return undefined;
+  }
+
   async stop(_conversationId: string) {
     this.confirmations.delete(_conversationId);
     return undefined;
@@ -609,9 +646,11 @@ export class MockHarnessClient implements HarnessClient {
     return clone({
       health,
       workspaces: this.workspaces,
-      mutable: false,
+      mutable: true,
+      host_config: this.hostConfig,
       default_execution_route: "local_web_tools",
       runtime_profile: "local_mitos_ollama_reproduction",
+      yolo_enabled: this.yolo,
       loop: {
         max_steps: 15,
         max_tool_calls_per_step: 4,
