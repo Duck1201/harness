@@ -2112,6 +2112,12 @@ details[open] > summary .summary-chevron {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  padding: 14px 17px 17px;
+}
+
+.settings-form-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .settings-notice {
@@ -2129,6 +2135,7 @@ details[open] > summary .summary-chevron {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 11px;
   align-items: start;
+  padding: 14px 17px 17px;
 }
 
 .settings-switch span {

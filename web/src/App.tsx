@@ -1972,7 +1972,7 @@ function SettingsArea({
                   host.json gravado. Reinicie o servidor para aplicar.
                 </p>
               )}
-              <div className="area-header-actions">
+              <div className="settings-form-actions">
                 <button
                   className="primary-button"
                   type="submit"
