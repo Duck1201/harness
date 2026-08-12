@@ -320,6 +320,39 @@
       ]
     },
     {
+      "name": "corpus_search",
+      "status": "enabled",
+      "effects": ["corpus_read"],
+      "required_grants": ["CorpusGrant"],
+      "description": "Searches the Corpus the Operator selected for this conversation and returns verbatim passages with their provenance. The first passages were already retrieved before this step: use this only to search again with different terms.",
+      "replay_policy": "cache_normalized_arguments_per_turn",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "description": "What to look for. Write it as a standalone question or phrase; earlier turns are not visible to the search."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 12,
+            "default": 6,
+            "description": "Maximum number of passages to return."
+          }
+        },
+        "required": ["query"]
+      },
+      "executor_invariants": [
+        "Passages are returned verbatim, with the Document title, the heading path and the page when the source has one; the retrieval never paraphrases or translates stored text.",
+        "A passage collected from the web carries UntrustedWebTaint and the result declares the union of the taints it returned.",
+        "Nothing above the relevance floor is empty, never a passage returned to fill the answer."
+      ]
+    },
+    {
       "name": "calculate",
       "status": "enabled",
       "effects": ["pure_compute"],
@@ -400,6 +433,15 @@
       "required_grants": [],
       "model_selectable": false,
       "config": "config/harness.json#context"
+    },
+    {
+      "id": "corpus_retrieval",
+      "kind": "InternalAutomation",
+      "trigger": "turn_started_with_corpus_grant",
+      "effects": ["corpus_read"],
+      "required_grants": ["CorpusGrant"],
+      "model_selectable": false,
+      "config": "config/harness.json#corpus"
     },
     {
       "id": "operator_confirmation",

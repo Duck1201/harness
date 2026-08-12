@@ -110,6 +110,19 @@ class ResultProducerIs(EvalModel):
     tool_call_id: str | None = None
 
 
+class ResultTaintIs(EvalModel):
+    """Whether a ResultPayload declared a provenance mark.
+
+    Taint is what makes the confirmation gate tighten for the rest of the Turn, so
+    a fixture that cannot assert it cannot prove the barrier exists.
+    """
+
+    operator: Literal["result_taint_is"]
+    taint: str = Field(min_length=1)
+    present: bool = True
+    tool_call_id: str | None = None
+
+
 class FileExists(EvalModel):
     operator: Literal["file_exists"]
     path: str = Field(min_length=1)
@@ -145,6 +158,7 @@ type TypedAssertion = Annotated[
     | ResultErrorCodeIs
     | ResultDataContains
     | ResultProducerIs
+    | ResultTaintIs
     | FileExists
     | FileContentEquals
     | FileContentContains

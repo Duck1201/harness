@@ -3,6 +3,7 @@ from .api import create_app
 from .application_service import (
     ApplicationService,
     ApplicationServiceError,
+    CorpusTurnRetrieval,
     OperatorConfirmationGate,
 )
 from .auth import (
@@ -35,11 +36,33 @@ from .conversation_store import (
     NotFoundError,
     TerminalOutcomeAlreadySetError,
 )
+from .corpus_ingestion import (
+    ACCEPTED_EXTENSIONS,
+    UnsupportedSourceError,
+    build_document,
+    embeddable_texts,
+    extract,
+    source_digest,
+)
+from .corpus_scraper import ScrapeError, ScrapePlan, Scraper
+from .corpus_service import (
+    CorpusIngestionService,
+    CorpusLibrary,
+    CorpusLibraryError,
+    CorpusRetriever,
+    IngestionJob,
+    IngestionJobStatus,
+    Retrieval,
+)
+from .corpus_store import CorpusStore, CorpusStoreError
+from .corpus_tools import CorpusToolExecutor, granted_corpus_id
 from .domain import (
     AgentStep,
     CanonicalHistoryEntry,
     CanonicalHistoryEntryKind,
     Conversation,
+    Corpus,
+    Document,
     Feedback,
     Grant,
     JsonValue,
@@ -99,6 +122,7 @@ from .observability_store import (
     ObservabilityStore,
 )
 from .ollama_runtime import (
+    OllamaEmbeddingRuntime,
     OllamaRuntime,
     OllamaRuntimeError,
 )
@@ -109,6 +133,7 @@ from .ports import (
     ConfirmationGate,
     ConfirmationPreview,
     ConfirmationRequest,
+    EmbeddingRuntime,
     EngineReadiness,
     MalformedModelResponseError,
     ModelMessage,
@@ -143,6 +168,7 @@ from .web_tools import (
 from .workspace_coordinator import WorkspaceCoordinator
 
 __all__ = [
+    "ACCEPTED_EXTENSIONS",
     "ActiveTurnExistsError",
     "AgentEngine",
     "AgentEvent",
@@ -177,10 +203,21 @@ __all__ = [
     "ContractCaseRunner",
     "Conversation",
     "ConversationStore",
+    "Corpus",
+    "CorpusIngestionService",
+    "CorpusLibrary",
+    "CorpusLibraryError",
+    "CorpusRetriever",
+    "CorpusStore",
+    "CorpusStoreError",
+    "CorpusToolExecutor",
+    "CorpusTurnRetrieval",
     "CredentialStore",
     "DatasetDriftError",
+    "Document",
     "EgressGuard",
     "EgressPolicyError",
+    "EmbeddingRuntime",
     "EngineReadiness",
     "EvalArm",
     "EvalCase",
@@ -204,6 +241,8 @@ __all__ = [
     "HttpResponse",
     "HuggingFaceTokenEstimator",
     "IdempotencyConflictError",
+    "IngestionJob",
+    "IngestionJobStatus",
     "JsonValue",
     "MalformedModelResponseError",
     "ModelCaseRunner",
@@ -215,6 +254,7 @@ __all__ = [
     "ModelRuntimeError",
     "NotFoundError",
     "ObservabilityStore",
+    "OllamaEmbeddingRuntime",
     "OllamaRuntime",
     "OllamaRuntimeError",
     "OperatorConfirmationGate",
@@ -228,6 +268,10 @@ __all__ = [
     "ResolvedAddress",
     "ResolvedTarget",
     "ResultPayload",
+    "Retrieval",
+    "ScrapeError",
+    "ScrapePlan",
+    "Scraper",
     "SessionController",
     "SessionPolicy",
     "SetupController",
@@ -247,15 +291,21 @@ __all__ = [
     "ToolSchema",
     "Turn",
     "TurnStatus",
+    "UnsupportedSourceError",
     "WebToolExecutor",
     "WorkspaceCoordinator",
+    "build_document",
     "create_app",
+    "embeddable_texts",
     "evaluate_oracle",
     "evaluate_promotion_gate",
+    "extract",
+    "granted_corpus_id",
     "hash_password",
     "load_config",
     "load_eval_catalog",
     "paired_bootstrap_difference",
+    "source_digest",
     "verify_password",
     "wilson_interval",
 ]

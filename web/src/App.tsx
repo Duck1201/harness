@@ -12,6 +12,7 @@ import {
   FlaskConical,
   Globe2,
   HardDrive,
+  Library,
   Menu,
   MessageSquare,
   Pencil,
@@ -31,23 +32,29 @@ import {
   ZapOff,
 } from "lucide-react";
 import {
+  Children,
   useEffect,
   useRef,
   useState,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { harnessClient, type HarnessClient } from "./client";
 import { ConfirmationDialog } from "./components/ConfirmationDialog";
 import { PendingQueue } from "./components/PendingQueue";
+import { RetrievalCard, passageAnchor } from "./components/RetrievalCard";
 import { ToolCallCard } from "./components/ToolCallCard";
 import type {
   AgUiEvent,
   AppArea,
   ChatMessage,
   ChatSnapshot,
+  CorporaSnapshot,
+  CorpusDocument,
+  IngestionJob,
   EvalPhase,
   EvalReport,
   EvalRun,
@@ -114,6 +121,7 @@ export function withLoopbackPair(origins: readonly string[]): string[] {
 
 const areaItems = [
   { id: "chat" as const, label: "Chat", icon: MessageSquare },
+  { id: "corpus" as const, label: "RAG", icon: Library },
   { id: "evals" as const, label: "Avaliações", icon: FlaskConical },
   { id: "settings" as const, label: "Configurações", icon: SettingsIcon },
 ];
@@ -126,6 +134,41 @@ const markdownComponents: Components = {
     </div>
   ),
 };
+
+/**
+ * Liga `[1]` à passagem 1 do card de recuperação.
+ *
+ * Um marcador fora da faixa — o modelo citando a quinta passagem de três — sai
+ * como texto comum: um link quebrado afirmaria que a fonte existe.
+ */
+function citationComponents(count: number): Components {
+  if (count === 0) return markdownComponents;
+  const cite = (children: ReactNode) =>
+    Children.map(children, (child) =>
+      typeof child === "string" ? linkedMarkers(child, count) : child,
+    );
+  return {
+    ...markdownComponents,
+    p: ({ node: _node, children, ...props }) => <p {...props}>{cite(children)}</p>,
+    li: ({ node: _node, children, ...props }) => <li {...props}>{cite(children)}</li>,
+    td: ({ node: _node, children, ...props }) => <td {...props}>{cite(children)}</td>,
+  };
+}
+
+function linkedMarkers(text: string, count: number): ReactNode {
+  const parts = text.split(/(\[\d{1,2}\])/g);
+  if (parts.length === 1) return text;
+  return parts.map((part, index) => {
+    const match = /^\[(\d{1,2})\]$/.exec(part);
+    const marker = match ? Number(match[1]) : 0;
+    if (!marker || marker > count) return part;
+    return (
+      <a className="citation-marker" href={`#${passageAnchor(marker)}`} key={`${index}-${part}`}>
+        {part}
+      </a>
+    );
+  });
+}
 
 export function App({ client = harnessClient }: AppProps) {
   const [area, setArea] = useState<AppArea>("chat");
@@ -244,6 +287,7 @@ export function App({ client = harnessClient }: AppProps) {
                 onSnapshot={(chat) => setData((current) => current && { ...current, chat })}
               />
             )}
+            {area === "corpus" && <CorpusArea client={client} />}
             {area === "evals" && (
               <EvalsArea
                 snapshot={data.evals}
@@ -910,7 +954,17 @@ function ChatArea({
         )}
       </section>
 
-      <ChatContext snapshot={snapshot} />
+      <ChatContext
+        snapshot={snapshot}
+        onSelectCorpus={(corpusId) => {
+          const conversationId = snapshot.conversationId;
+          if (!conversationId) return;
+          void runAction("corpus", async () => {
+            await client.selectCorpus(conversationId, corpusId);
+            await refresh(conversationId);
+          });
+        }}
+      />
       {snapshot.pendingConfirmation && (
         <ConfirmationDialog
           confirmation={snapshot.pendingConfirmation}
@@ -1226,6 +1280,7 @@ function TimelineMessage({
             <p>{message.reasoning.content}</p>
           </details>
         )}
+        {message.retrieval && <RetrievalCard retrieval={message.retrieval} />}
         {message.tools && message.tools.length > 0 && (
           <div className="tool-stack" aria-label="Chamadas de tools">
             {message.tools.map((tool) => (
@@ -1243,7 +1298,10 @@ function TimelineMessage({
         ))}
         {message.content && (
           <div className="assistant-answer">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={citationComponents(message.retrieval?.passages.length ?? 0)}
+            >
               {message.content}
             </ReactMarkdown>
           </div>
@@ -1490,7 +1548,13 @@ function EmptyState({
   );
 }
 
-function ChatContext({ snapshot }: { snapshot: ChatSnapshot }) {
+function ChatContext({
+  snapshot,
+  onSelectCorpus,
+}: {
+  snapshot: ChatSnapshot;
+  onSelectCorpus: (corpusId: string | null) => void;
+}) {
   if (!snapshot.execution) return <aside className="chat-context" />;
   return (
     <aside className="chat-context" aria-label="ExecutionRoute">
@@ -1498,6 +1562,25 @@ function ChatContext({ snapshot }: { snapshot: ChatSnapshot }) {
         <span className="eyebrow">ExecutionRoute</span>
         <span className="context-live">snapshot</span>
       </div>
+      {snapshot.corpora.length > 0 && (
+        <label className="context-corpus">
+          <span className="eyebrow">
+            <Library size={13} /> Corpus
+          </span>
+          <select
+            value={snapshot.corpusId ?? ""}
+            disabled={!snapshot.conversationId}
+            onChange={(event) => onSelectCorpus(event.target.value || null)}
+          >
+            <option value="">Desligado</option>
+            {snapshot.corpora.map((corpus) => (
+              <option key={corpus.id} value={corpus.id}>
+                {corpus.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <div className="context-model">
         <span className="context-model-icon">
           <Bot size={17} />
@@ -1516,6 +1599,315 @@ function ChatContext({ snapshot }: { snapshot: ChatSnapshot }) {
         ))}
       </dl>
     </aside>
+  );
+}
+
+function CorpusArea({ client }: { client: HarnessClient }) {
+  const [snapshot, setSnapshot] = useState<CorporaSnapshot | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [documents, setDocuments] = useState<CorpusDocument[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [name, setName] = useState("");
+  const [seed, setSeed] = useState("");
+
+  const load = async (keep = selectedId) => {
+    const next = await client.getCorporaSnapshot();
+    setSnapshot(next);
+    const selected = next.corpora.find((item) => item.id === keep) ?? next.corpora[0] ?? null;
+    setSelectedId(selected?.id ?? null);
+    setDocuments(selected ? await client.listCorpusDocuments(selected.id) : []);
+  };
+
+  useEffect(() => {
+    let active = true;
+    client
+      .getCorporaSnapshot()
+      .then(async (next) => {
+        if (!active) return;
+        setSnapshot(next);
+        const first = next.corpora[0] ?? null;
+        setSelectedId(first?.id ?? null);
+        if (first) {
+          const items = await client.listCorpusDocuments(first.id);
+          if (active) setDocuments(items);
+        }
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(errorMessage(cause));
+      });
+    return () => {
+      active = false;
+    };
+  }, [client]);
+
+  // Um job de coleta leva dezenas de minutos: o progresso chega por polling, o
+  // mesmo transporte que a aba de Avaliações já usa.
+  const running = (snapshot?.jobs ?? []).some(
+    (job) => job.status === "running" || job.status === "queued",
+  );
+  useEffect(() => {
+    if (!running) return;
+    const timer = setInterval(() => {
+      void client.getCorporaSnapshot().then(setSnapshot).catch(() => undefined);
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [client, running]);
+
+  const act = async (action: () => Promise<void>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+    } catch (cause: unknown) {
+      setError(errorMessage(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!snapshot) return <LoadingShell />;
+
+  if (!snapshot.available) {
+    return (
+      <div className="corpus-page">
+        <div className="corpus-empty" role="status">
+          <Library size={22} />
+          <h1>Nenhum modelo de embedding disponível</h1>
+          <p>
+            O RuntimeProfile ativo não declara um modelo de embedding, ou ele não está
+            instalado no Ollama. Instale-o com <code>ollama pull bge-m3</code> e reinicie o
+            servidor.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const selected = snapshot.corpora.find((item) => item.id === selectedId) ?? null;
+  const jobs = snapshot.jobs.filter((job) => job.corpus_id === selectedId);
+
+  return (
+    <div className="corpus-page">
+      <div className="corpus-layout">
+        <aside className="corpus-list" aria-label="Corpora">
+          <div className="corpus-list-heading">
+            <span className="eyebrow">Corpora</span>
+            <span>{snapshot.embedding_model}</span>
+          </div>
+          <ul>
+            {snapshot.corpora.map((corpus) => (
+              <li key={corpus.id}>
+                <button
+                  type="button"
+                  className={corpus.id === selectedId ? "active" : ""}
+                  onClick={() =>
+                    void act(async () => {
+                      setSelectedId(corpus.id);
+                      setDocuments(await client.listCorpusDocuments(corpus.id));
+                    })
+                  }
+                >
+                  <strong>{corpus.name}</strong>
+                  <span>
+                    {corpus.document_count} documentos · {corpus.chunk_count} chunks
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <form
+            className="corpus-create"
+            onSubmit={(event: FormEvent) => {
+              event.preventDefault();
+              if (!name.trim()) return;
+              void act(async () => {
+                const created = await client.createCorpus(name.trim());
+                setName("");
+                await load(created.id);
+              });
+            }}
+          >
+            <input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Nome do novo Corpus"
+              aria-label="Nome do novo Corpus"
+            />
+            <button className="secondary-button" type="submit" disabled={busy}>
+              <Plus size={15} /> Criar
+            </button>
+          </form>
+        </aside>
+
+        <main className="corpus-detail">
+          {error && (
+            <p className="corpus-error" role="alert">
+              {error}
+            </p>
+          )}
+          {!selected ? (
+            <div className="corpus-empty" role="status">
+              <Library size={22} />
+              <h1>Nenhum Corpus ainda</h1>
+              <p>Crie um para subir arquivos ou coletar uma wiki.</p>
+            </div>
+          ) : (
+            <>
+              <header className="corpus-detail-heading">
+                <div>
+                  <h1>{selected.name}</h1>
+                  <p>
+                    {selected.document_count} documentos · {selected.chunk_count} chunks ·{" "}
+                    {selected.embedding_model} ({selected.embedding_dimensions} dims)
+                  </p>
+                </div>
+                <button
+                  className="danger-button"
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    void act(async () => {
+                      await client.deleteCorpus(selected.id);
+                      await load(null);
+                    })
+                  }
+                >
+                  <Trash2 size={15} /> Apagar Corpus
+                </button>
+              </header>
+
+              <section className="corpus-card">
+                <h2>Subir arquivo</h2>
+                <p>Aceitos: {snapshot.accepted_extensions.join(", ")}</p>
+                <input
+                  type="file"
+                  aria-label="Arquivo para ingerir"
+                  disabled={busy}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = "";
+                    if (!file) return;
+                    void act(async () => {
+                      const job = await client.uploadCorpusDocument(selected.id, file);
+                      if (job.status === "failed") setError(job.detail ?? "Falha na ingestão.");
+                      await load(selected.id);
+                    });
+                  }}
+                />
+              </section>
+
+              <section className="corpus-card">
+                <h2>Coletar da web</h2>
+                <p>
+                  Wiki com <code>/api.php</code> é coletada pela API; qualquer outro site cai
+                  num crawl com teto, respeitando <code>robots.txt</code>.
+                </p>
+                <form
+                  onSubmit={(event: FormEvent) => {
+                    event.preventDefault();
+                    if (!seed.trim()) return;
+                    void act(async () => {
+                      await client.startCorpusScrape(selected.id, seed.trim());
+                      setSeed("");
+                      setSnapshot(await client.getCorporaSnapshot());
+                    });
+                  }}
+                >
+                  <input
+                    value={seed}
+                    onChange={(event) => setSeed(event.target.value)}
+                    placeholder="https://exemplo.fandom.com/wiki/Inicio"
+                    aria-label="URL semente da coleta"
+                  />
+                  <button className="secondary-button" type="submit" disabled={busy}>
+                    <Globe2 size={15} /> Coletar
+                  </button>
+                </form>
+                {jobs.length > 0 && (
+                  <ul className="corpus-jobs">
+                    {jobs.map((job) => (
+                      <li key={job.id}>
+                        <CorpusJobRow
+                          job={job}
+                          onCancel={() =>
+                            void act(async () => {
+                              await client.cancelCorpusJob(selected.id, job.id);
+                              setSnapshot(await client.getCorporaSnapshot());
+                            })
+                          }
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              <section className="corpus-card">
+                <h2>Documentos</h2>
+                {documents.length === 0 ? (
+                  <p>Nenhum documento ingerido.</p>
+                ) : (
+                  <ul className="corpus-documents">
+                    {documents.map((document) => (
+                      <li key={document.id}>
+                        <div>
+                          <strong>{document.title}</strong>
+                          <span>
+                            {document.origin_kind === "scrape" ? "web" : "upload"} ·{" "}
+                            {document.chunk_count} chunks · {document.origin_ref}
+                          </span>
+                        </div>
+                        {document.taints.length > 0 && (
+                          <span className="retrieval-taint" title="Coletado da web">
+                            <ShieldAlert size={13} /> web
+                          </span>
+                        )}
+                        <button
+                          className="icon-button"
+                          type="button"
+                          aria-label={`Remover ${document.title}`}
+                          disabled={busy}
+                          onClick={() =>
+                            void act(async () => {
+                              await client.deleteCorpusDocument(selected.id, document.id);
+                              await load(selected.id);
+                            })
+                          }
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            </>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+function CorpusJobRow({ job, onCancel }: { job: IngestionJob; onCancel: () => void }) {
+  const active = job.status === "running" || job.status === "queued";
+  return (
+    <div className="corpus-job">
+      <div>
+        <strong>{job.origin}</strong>
+        <span>
+          {job.status} · {job.indexed} indexados · {job.skipped} pulados · {job.chunks} chunks
+          {job.current ? ` · ${job.current}` : ""}
+          {job.detail && !active ? ` · ${job.detail}` : ""}
+        </span>
+      </div>
+      {active && (
+        <button className="icon-button" type="button" aria-label="Cancelar coleta" onClick={onCancel}>
+          <CircleStop size={15} />
+        </button>
+      )}
+    </div>
   );
 }
 

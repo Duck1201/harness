@@ -43,12 +43,14 @@
     "grant_types": [
       "WorkspaceRootGrant",
       "WriteGrant",
-      "WebAccessGrant"
+      "WebAccessGrant",
+      "CorpusGrant"
     ],
     "effect_grants": {
       "workspace_read": ["WorkspaceRootGrant"],
       "workspace_write": ["WorkspaceRootGrant", "WriteGrant"],
       "data_egress": ["WebAccessGrant"],
+      "corpus_read": ["CorpusGrant"],
       "pure_compute": []
     },
     "grant_authority": "Operator",
@@ -151,6 +153,86 @@
     "mechanical_prose_compression": false,
     "cut_oldest_model_view_blocks_to_budget": true
   },
+  "corpus": {
+    "effect": "corpus_read",
+    "required_grant": "CorpusGrant",
+    "grant_scope": "corpus_id",
+    "automation_id": "corpus_retrieval",
+    "store": {
+      "kind": "sqlite",
+      "one_file_per_corpus": true,
+      "directory": "state_dir/corpora",
+      "meta_lives_in_corpus_file": true,
+      "reached_by_retention": false,
+      "deleted_by": "operator_only"
+    },
+    "embedding": {
+      "source": "config/model-profiles.json#runtime_profiles[*].embedding",
+      "batch_size": 32
+    },
+    "ingestion": {
+      "accepted_extensions": [".txt", ".md", ".html", ".pdf"],
+      "reject_pdf_without_text_layer": true,
+      "max_upload_bytes": 134217728,
+      "cleaning": "deterministic_only",
+      "model_written_text_is_never_indexed_as_fact": true,
+      "chunk_target_tokens": 512,
+      "chunk_overlap_tokens": 64,
+      "chunk_boundary": "paragraph_or_heading",
+      "context_prefix": "document_title_heading_path_and_page",
+      "commit_unit": "document",
+      "deduplicate_by": ["source_digest", "chunk_digest"]
+    },
+    "retrieval": {
+      "dense_candidates": 40,
+      "lexical_candidates": 40,
+      "fusion": "reciprocal_rank",
+      "reciprocal_rank_constant": 60,
+      "floor_measured_on": "dense_cosine_similarity",
+      "dense_similarity_floor": 0.5,
+      "injected_passages": 6,
+      "max_injected_tokens": 4000,
+      "query_language_strategy": "dense_uses_operator_text_lexical_uses_generated_english_query",
+      "lexical_leg_without_generated_query": "skipped",
+      "translate_documents": false,
+      "empty_when_nothing_clears_floor": true
+    },
+    "scraper": {
+      "authorized_by": "Operator",
+      "requires_grant": false,
+      "egress_guard": "same_as_web_fetch",
+      "result_taint": "UntrustedWebTaint",
+      "mediawiki": {
+        "probe": "api.php",
+        "list": "allpages",
+        "extract": "extracts_explaintext",
+        "page_batch": 20,
+        "backoff_seconds": [5, 10, 20, 40, 80]
+      },
+      "html_crawl": {
+        "same_registrable_domain_only": true,
+        "respect_robots_txt": true,
+        "prefer_sitemap": true,
+        "max_depth": 3,
+        "max_pages": 5000,
+        "max_total_bytes": 2147483648,
+        "delay_milliseconds": 1000
+      }
+    },
+    "jobs": {
+      "transport": "polling_json",
+      "statuses": [
+        "queued",
+        "running",
+        "canceling",
+        "canceled",
+        "completed",
+        "failed"
+      ],
+      "resume": "idempotent_redispatch",
+      "resume_on_boot": false
+    }
+  },
   "workspace": {
     "model_visible_paths": "workspace_relative",
     "reject_absolute_paths": true,
@@ -239,6 +321,16 @@
       "stores_reasoning": false,
       "external_export_enabled": false,
       "failure_is_fatal": false
+    },
+    {
+      "id": "corpus",
+      "kind": "sqlite",
+      "implementation": "corpus_store",
+      "one_file_per_corpus": true,
+      "stores_content": true,
+      "stores_reasoning": false,
+      "stores_conversation_state": false,
+      "failure_is_fatal": false
     }
   ],
   "retention": {
@@ -246,7 +338,8 @@
     "retention_days": null,
     "deletion_unit": "conversation",
     "partial_history_deletion": false,
-    "per_conversation_override": false
+    "per_conversation_override": false,
+    "reaches_corpus_stores": false
   },
   "ui": {
     "delivery": "web_first",

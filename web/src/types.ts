@@ -1,4 +1,4 @@
-export type AppArea = "chat" | "evals" | "settings";
+export type AppArea = "chat" | "corpus" | "evals" | "settings";
 export type JsonValue =
   | string
   | number
@@ -130,6 +130,7 @@ export interface ApiChatSnapshot {
   pending_confirmation: PendingConfirmation | null;
   confirmation_waivers: string[];
   yolo: boolean;
+  corpus_id: string | null;
 }
 
 export interface WorkspaceGroup {
@@ -145,6 +146,78 @@ export interface ConversationSummary {
   updatedAt: string;
   active?: boolean;
   archived?: boolean;
+}
+
+export interface Corpus {
+  id: string;
+  name: string;
+  description: string;
+  embedding_model: string;
+  embedding_dimensions: number;
+  document_count: number;
+  chunk_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CorpusDocument {
+  id: string;
+  origin_kind: "upload" | "scrape";
+  origin_ref: string;
+  title: string;
+  source_digest: string;
+  taints: string[];
+  chunk_count: number;
+  ingested_at: string;
+}
+
+export type IngestionJobStatus =
+  | "queued"
+  | "running"
+  | "canceling"
+  | "canceled"
+  | "completed"
+  | "failed";
+
+export interface IngestionJob {
+  id: string;
+  corpus_id: string;
+  kind: "upload" | "scrape";
+  origin: string;
+  status: IngestionJobStatus;
+  seen: number;
+  indexed: number;
+  skipped: number;
+  chunks: number;
+  current: string | null;
+  reason_code: string | null;
+  detail: string | null;
+}
+
+export interface CorporaSnapshot {
+  available: boolean;
+  embedding_model: string | null;
+  accepted_extensions: string[];
+  corpora: Corpus[];
+  jobs: IngestionJob[];
+}
+
+export interface RetrievedPassage {
+  marker: number;
+  document: string;
+  location: string;
+  origin: "upload" | "scrape";
+  source: string;
+  untrusted: boolean;
+  text: string;
+}
+
+export interface Retrieval {
+  corpus: string;
+  status: string;
+  searchQuery: string | null;
+  passages: RetrievedPassage[];
+  detail: string | null;
 }
 
 export type ToolStatus = "success" | "error" | "running";
@@ -182,6 +255,7 @@ export interface ChatMessage {
   createdAt: string;
   reasoning?: ReasoningTrace;
   tools?: ToolCall[];
+  retrieval?: Retrieval;
   events?: TimelineEvent[];
   metrics?: Record<string, string | number>;
   terminalOutcome?: TerminalOutcome;
@@ -219,6 +293,8 @@ export interface ChatSnapshot {
   pendingConfirmation: PendingConfirmation | null;
   confirmationWaivers: string[];
   yolo: boolean;
+  corpusId: string | null;
+  corpora: Corpus[];
   execution?: ExecutionSnapshot;
 }
 

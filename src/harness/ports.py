@@ -1,7 +1,7 @@
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from .domain import JsonValue, ToolCall, ToolResult
 
@@ -104,6 +104,23 @@ class EngineReadiness:
 
 class ModelRuntime(Protocol):
     async def generate(self, request: ModelRequest) -> ModelResponse: ...
+
+
+class EmbeddingRuntime(Protocol):
+    """Turns text into the vectors a Corpus is searched by.
+
+    Separate from ModelRuntime because it is a separate model with a separate
+    digest, and because everything downstream of it — chunking, indexing, the
+    whole ingestion suite — has to be testable on a machine with no GPU.
+    """
+
+    @property
+    def model(self) -> str: ...
+
+    @property
+    def dimensions(self) -> int: ...
+
+    async def embed(self, texts: Sequence[str]) -> tuple[tuple[float, ...], ...]: ...
 
 
 class ModelRuntimeError(Exception):
@@ -244,6 +261,36 @@ class TokenEstimator(Protocol):
     def validated(self) -> bool: ...
 
     def estimate(self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]) -> int: ...
+
+
+@runtime_checkable
+class TextTokenCounter(Protocol):
+    """Counts a bare string, which is what chunking needs and a ModelView is not.
+
+    Kept apart from TokenEstimator so ingestion does not drag the message and
+    schema overheads of a Turn into a decision about where a paragraph ends.
+    """
+
+    def count_text(self, text: str) -> int: ...
+
+
+class TurnRetrieval(Protocol):
+    """Retrieval the harness performs before the first AgentStep.
+
+    Returns the entry payload to record, or ``None`` when this Conversation has
+    no Corpus granted — which is the common case and must cost nothing.
+
+    It runs ahead of the model rather than waiting to be called because a 4B
+    frequently does not call the tool it should; ``corpus_search`` stays in the
+    catalogue for the steps after this one, when the model knows the passages it
+    got are not the ones it needs.
+    """
+
+    async def for_turn(
+        self,
+        conversation_id: str,
+        question: str,
+    ) -> Mapping[str, JsonValue] | None: ...
 
 
 class EventSink(Protocol):

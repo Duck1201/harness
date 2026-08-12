@@ -43,7 +43,7 @@ _TEXT_CONTENT_TYPES = frozenset(
         "text/xml",
     }
 )
-_SUPPRESSED_HTML_TAGS = frozenset({"aside", "footer", "nav", "script", "style"})
+SUPPRESSED_HTML_TAGS = frozenset({"aside", "footer", "nav", "script", "style"})
 _BOUNDARY_HTML_TAGS = frozenset(
     {
         "article",
@@ -956,10 +956,10 @@ class _ReadableHTMLParser(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         lowered = tag.casefold()
         if self._suppressed_depth:
-            if lowered in _SUPPRESSED_HTML_TAGS:
+            if lowered in SUPPRESSED_HTML_TAGS:
                 self._suppressed_depth += 1
             return
-        if lowered in _SUPPRESSED_HTML_TAGS:
+        if lowered in SUPPRESSED_HTML_TAGS:
             self._suppressed_depth = 1
             return
         if lowered in _BOUNDARY_HTML_TAGS:
@@ -975,7 +975,7 @@ class _ReadableHTMLParser(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         lowered = tag.casefold()
         if self._suppressed_depth:
-            if lowered in _SUPPRESSED_HTML_TAGS:
+            if lowered in SUPPRESSED_HTML_TAGS:
                 self._suppressed_depth -= 1
             return
         if lowered == "a" and self._anchors:
@@ -991,7 +991,7 @@ class _ReadableHTMLParser(HTMLParser):
 
     def content(self) -> str:
         lines = (" ".join(line.split()) for line in "".join(self._parts).splitlines())
-        return "\n".join(_without_link_menus(line for line in lines if line)).strip()
+        return "\n".join(without_link_menus(line for line in lines if line)).strip()
 
 
 def _response_artifact(
@@ -1080,7 +1080,7 @@ def _is_link_only(line: str) -> bool:
     return start <= 80 and line.endswith(")") and " " not in line[start:]
 
 
-def _without_link_menus(lines: Iterable[str], *, run: int = 10) -> list[str]:
+def without_link_menus(lines: Iterable[str], *, run: int = 10) -> list[str]:
     # ponytail: menus (lista de idiomas, rodapé, barra lateral) viram longas
     # sequências de linhas que são só rótulo + URL, e comem o orçamento de
     # caracteres antes do texto da página. Heurística de densidade de links no

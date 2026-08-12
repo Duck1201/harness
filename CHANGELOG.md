@@ -6,6 +6,29 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
 ### Adicionado
 
+- **Recuperação por Corpus (RAG).** O Operator monta acervos por upload ou por
+  coleta web, escolhe qual está ativo em cada Conversation e o harness injeta as
+  passagens antes do primeiro AgentStep, com `corpus_search` disponível para o
+  modelo refinar a busca depois. Cada Corpus é um SQLite próprio em
+  `state_dir/corpora/`; apagar o Corpus apaga o arquivo, e a retenção global não
+  o alcança. Autorização é efeito novo `corpus_read` com `CorpusGrant` cujo
+  escopo nomeia o acervo — selecionar é conceder, "Desligado" é revogar. Chunk
+  vindo do scraper carrega `UntrustedWebTaint`, então material da web continua
+  custando confirmação de `data_egress`
+  ([ADR-0011](docs/adr/0011-corpus-retrieval-and-corpus-grant.md)).
+- **Busca híbrida com piso de relevância.** Vizinhança densa (`bge-m3`, 1024
+  dimensões, via `sqlite-vec`) e BM25 (FTS5) fundidas por rank recíproco. O piso
+  é lido na similaridade cosseno e não no escore de fusão — rank recíproco ordena
+  e não mede, e o primeiro colocado pontua igual respondendo ou não à pergunta.
+  Nada acima do piso é `empty`, com a instrução de dizer que não sabe.
+- **Tradução só na query.** Documento é indexado como foi extraído; uma geração
+  curta produz a versão autônoma em inglês que alimenta só a perna lexical,
+  enquanto a densa usa o texto do Operator. Medição local: a pergunta crua em
+  pt-BR na perna lexical contra corpus em inglês piora o ranking.
+- **Coleta por API quando o site tem uma.** Semente com `/api.php` é coletada
+  pela API do MediaWiki — wiki inteira, texto puro, sem seguir link; o resto cai
+  num crawl com teto que respeita `robots.txt`. Job em segundo plano com
+  progresso, cancelamento e retomada por idempotência.
 - **Modo yolo.** Decisão permanente do Operator, global e desligada de fábrica,
   com opt-out por Conversation: enquanto estiver ligada o gate aprova toda
   confirmação — inclusive escrita sob `UntrustedWebTaint` — e concede WriteGrant

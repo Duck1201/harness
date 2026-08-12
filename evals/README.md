@@ -26,6 +26,15 @@ consequências:
    a mesma decisão tomada para autenticação (`tests/test_auth.py`) e aplicada
    depois a `contract_boundary`, `state_projection` e `parser_contract`.
 
+As fixtures `corpus_contract` montam um Corpus a partir do próprio estímulo e
+rodam `corpus_search` contra ele com um embedder determinístico de bancada. Elas
+provam o gate — grant ausente é `blocked`, passagem coletada carrega taint, nada
+acima do piso é `empty` — e não medem qualidade de recuperação: para isso existe
+`corpus_retrieval_vs_baseline`, que precisa do `bge-m3` de verdade e fica sem
+resultado enquanto não for executado. O piso do contrato é calibrado no modelo
+real, então a bancada declara o seu; o que a fixture verifica é que existe piso e
+que ele zera o resultado.
+
 A verificação de página segue a mesma regra: enquanto a automação não estiver no
 caminho de escrita, nenhuma fixture consegue observá-la, e a cobertura vive em
 `tests/test_page_verification.py`. O experimento homônimo permanece como portão

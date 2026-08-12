@@ -7,7 +7,11 @@ import type {
   CanonicalHistoryEntry,
   ChatMessage,
   ChatSnapshot,
+  CorporaSnapshot,
   Conversation,
+  Corpus,
+  CorpusDocument,
+  IngestionJob,
   EvalReport,
   EvalRun,
   EvalsSnapshot,
@@ -23,6 +27,7 @@ import type {
   SettingsSnapshot,
   SetupStatus,
   SetupSubmission,
+  Retrieval,
   ToolCall,
   Turn,
   Workspace,
@@ -123,10 +128,11 @@ export class FetchHarnessClient implements HarnessClient {
   }
 
   async getChatSnapshot(conversationId?: string | null): Promise<ChatSnapshot> {
-    const [workspaces, conversations, settings] = await Promise.all([
+    const [workspaces, conversations, settings, corpora] = await Promise.all([
       this.listWorkspaces(),
       this.listConversations(),
       this.request<SettingsApiSnapshot>("/ui/settings"),
+      this.getCorporaSnapshot(),
     ]);
     const selected = conversationId
       ? conversations.find((conversation) => conversation.id === conversationId) ??
@@ -149,6 +155,8 @@ export class FetchHarnessClient implements HarnessClient {
         pendingConfirmation: null,
         confirmationWaivers: [],
         yolo: settings.yolo_enabled ?? false,
+        corpusId: null,
+        corpora: corpora.corpora,
         execution: toExecutionSnapshot(settings),
       };
     }
@@ -187,8 +195,92 @@ export class FetchHarnessClient implements HarnessClient {
       pendingConfirmation: snapshot.pending_confirmation,
       confirmationWaivers: snapshot.confirmation_waivers ?? [],
       yolo: snapshot.yolo ?? false,
+      corpusId: snapshot.corpus_id ?? null,
+      corpora: corpora.corpora,
       execution: toExecutionSnapshot(settings),
     };
+  }
+
+  async getCorporaSnapshot() {
+    return this.request<CorporaSnapshot>("/ui/corpora");
+  }
+
+  async createCorpus(name: string, description = "") {
+    const payload = await this.request<{ corpus: Corpus }>(
+      "/corpora",
+      this.jsonRequest("POST", { name, description }),
+    );
+    return payload.corpus;
+  }
+
+  async renameCorpus(corpusId: string, changes: { name?: string; description?: string }) {
+    const payload = await this.request<{ corpus: Corpus }>(
+      `/corpora/${encodeURIComponent(corpusId)}`,
+      this.jsonRequest("PATCH", changes),
+    );
+    return payload.corpus;
+  }
+
+  async deleteCorpus(corpusId: string) {
+    await this.request<void>(`/corpora/${encodeURIComponent(corpusId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async listCorpusDocuments(corpusId: string) {
+    const payload = await this.request<{ documents: CorpusDocument[] }>(
+      `/corpora/${encodeURIComponent(corpusId)}/documents`,
+    );
+    return payload.documents;
+  }
+
+  async deleteCorpusDocument(corpusId: string, documentId: string) {
+    await this.request<void>(
+      `/corpora/${encodeURIComponent(corpusId)}/documents/${encodeURIComponent(documentId)}`,
+      { method: "DELETE" },
+    );
+  }
+
+  async uploadCorpusDocument(corpusId: string, file: File) {
+    // multipart e não JSON: um PDF em base64 cresce um terço e ainda teria que
+    // passar inteiro pelo parser de JSON antes de virar bytes de novo.
+    const body = new FormData();
+    body.append("file", file, file.name);
+    const payload = await this.request<{ job: IngestionJob }>(
+      `/corpora/${encodeURIComponent(corpusId)}/documents`,
+      { method: "POST", body },
+    );
+    return payload.job;
+  }
+
+  async startCorpusScrape(corpusId: string, seed: string) {
+    const payload = await this.request<{ job: IngestionJob }>(
+      `/corpora/${encodeURIComponent(corpusId)}/jobs`,
+      this.jsonRequest("POST", { seed }),
+    );
+    return payload.job;
+  }
+
+  async listCorpusJobs(corpusId: string) {
+    const payload = await this.request<{ jobs: IngestionJob[] }>(
+      `/corpora/${encodeURIComponent(corpusId)}/jobs`,
+    );
+    return payload.jobs;
+  }
+
+  async cancelCorpusJob(corpusId: string, jobId: string) {
+    const payload = await this.request<{ job: IngestionJob }>(
+      `/corpora/${encodeURIComponent(corpusId)}/jobs/${encodeURIComponent(jobId)}`,
+      { method: "DELETE" },
+    );
+    return payload.job;
+  }
+
+  async selectCorpus(conversationId: string, corpusId: string | null) {
+    await this.request<void>(
+      `/conversations/${encodeURIComponent(conversationId)}/corpus`,
+      this.jsonRequest("PUT", { corpus_id: corpusId }),
+    );
   }
 
   async enqueueRequest(conversationId: string, content: string) {
@@ -615,6 +707,7 @@ export function projectTimeline(
     const turn = turnById.get(turnId);
     const tools = new Map<string, ToolCall>();
     const events: NonNullable<ChatMessage["events"]> = [];
+    let retrieval: Retrieval | undefined;
     let finalResponse: CanonicalHistoryEntry | undefined;
     let metrics: ChatMessage["metrics"];
 
@@ -679,6 +772,15 @@ export function projectTimeline(
         metrics ??= metricsValue(entry.payload.metrics);
       }
       if (
+        entry.kind === "internal_automation" &&
+        entry.payload.automation_id === "corpus_retrieval"
+      ) {
+        // A recuperação tem card próprio: despejar o JSON dela junto das outras
+        // automações esconderia as fontes atrás de um <pre>.
+        retrieval = toRetrieval(entry.payload);
+        continue;
+      }
+      if (
         entry.kind === "rejected_model_attempt" ||
         entry.kind === "internal_automation"
       ) {
@@ -686,7 +788,7 @@ export function projectTimeline(
       }
     }
 
-    if (finalResponse || tools.size || events.length) {
+    if (finalResponse || tools.size || events.length || retrieval) {
       messages.push({
         id: finalResponse?.id ?? `${turnId}-activity`,
         turnId,
@@ -695,6 +797,7 @@ export function projectTimeline(
         createdAt:
           finalResponse?.created_at ?? entries.at(-1)?.created_at ?? turn?.started_at ?? "",
         ...(tools.size ? { tools: [...tools.values()] } : {}),
+        ...(retrieval ? { retrieval } : {}),
         ...(events.length ? { events } : {}),
         ...(metrics ? { metrics } : {}),
         ...(turn?.terminal_outcome ? { terminalOutcome: turn.terminal_outcome } : {}),
@@ -702,6 +805,33 @@ export function projectTimeline(
     }
   }
   return messages;
+}
+
+function toRetrieval(payload: Record<string, JsonValue>): Retrieval {
+  const passages = arrayValue(payload.passages).flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const marker = typeof item.marker === "number" ? item.marker : 0;
+    const text = stringValue(item.text);
+    if (!marker || text === null) return [];
+    return [
+      {
+        marker,
+        document: stringValue(item.document) ?? "",
+        location: stringValue(item.location) ?? "",
+        origin: item.origin === "scrape" ? ("scrape" as const) : ("upload" as const),
+        source: stringValue(item.source) ?? "",
+        untrusted: item.untrusted === true,
+        text,
+      },
+    ];
+  });
+  return {
+    corpus: stringValue(payload.corpus) ?? "",
+    status: stringValue(payload.status) ?? "completed",
+    searchQuery: stringValue(payload.search_query),
+    passages,
+    detail: stringValue(payload.detail),
+  };
 }
 
 function groupConversations(

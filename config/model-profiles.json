@@ -52,6 +52,18 @@
         "tool_parser": "qwen3.5",
         "reasoning_parser": "qwen3.5"
       },
+      "embedding": {
+        "id": "bge-m3:latest",
+        "digest_sha256": "7907646426070047a77226ac3e684fbbe8410524f7b4a74d02837e43f2146bab",
+        "family": "bert",
+        "parameter_size": "566.70M",
+        "quantization": "F16",
+        "dimensions": 1024,
+        "max_input_tokens": 8192,
+        "endpoint": "/api/embed",
+        "multilingual": true,
+        "observed_on": "2026-08-12"
+      },
       "installation": {
         "observed_on": "2026-08-11",
         "installed_tag": "mitos:latest",
@@ -104,6 +116,16 @@
           }
         },
         {
+          "id": "embedding_model",
+          "evidence": {
+            "kind": "digest_sha256",
+            "subject": "bge-m3:latest served by the same Ollama installation",
+            "sha256": "7907646426070047a77226ac3e684fbbe8410524f7b4a74d02837e43f2146bab",
+            "provenance": "Modelo separado do chat, instalado por `ollama pull bge-m3`. Digest lido em /api/tags em 2026-08-12; 1024 dimensões confirmadas por uma chamada a /api/embed.",
+            "verify": "curl -s http://127.0.0.1:11434/api/tags | grep bge-m3"
+          }
+        },
+        {
           "id": "chat_template",
           "evidence": {
             "kind": "embedded_in_profile",
@@ -143,6 +165,14 @@
           "evidence": {
             "kind": "runtime_inspection",
             "source": "ollama_show"
+          },
+          "gate_status": "pending"
+        },
+        "embeddings": {
+          "support": "supported",
+          "evidence": {
+            "kind": "local_measurement",
+            "source": "POST /api/embed em bge-m3:latest devolveu 1024 dimensões (2026-08-12)"
           },
           "gate_status": "pending"
         },

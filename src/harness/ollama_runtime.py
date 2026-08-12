@@ -69,6 +69,17 @@ class OllamaChatResponse(OllamaWireModel):
     eval_duration: int | None = None
 
 
+class OllamaEmbedRequest(OllamaWireModel):
+    model: str
+    input: tuple[str, ...] = Field(min_length=1)
+    truncate: bool = True
+
+
+class OllamaEmbedResponse(OllamaWireModel):
+    model: str
+    embeddings: tuple[tuple[float, ...], ...] = Field(min_length=1)
+
+
 class OllamaTag(OllamaWireModel):
     name: str
     model: str | None = None
@@ -153,37 +164,7 @@ class OllamaRuntime:
         )
 
     async def verify_profile(self) -> OllamaProfileVerification:
-        response = await self._request("GET", "/api/tags")
-        try:
-            tags = OllamaTagsResponse.model_validate_json(response.content)
-        except ValidationError as error:
-            raise MalformedModelResponseError("Ollama returned invalid tags data") from error
-        tag = next(
-            (item for item in tags.models if item.name == self._model or item.model == self._model),
-            None,
-        )
-        if tag is None:
-            return OllamaProfileVerification(
-                ready=False,
-                model=self._model,
-                expected_digest=self._expected_digest,
-                reason_code="model_not_installed",
-            )
-        observed = _normalize_digest(tag.digest)
-        if observed != self._expected_digest:
-            return OllamaProfileVerification(
-                ready=False,
-                model=self._model,
-                expected_digest=self._expected_digest,
-                observed_digest=observed,
-                reason_code="model_digest_mismatch",
-            )
-        return OllamaProfileVerification(
-            ready=True,
-            model=self._model,
-            expected_digest=self._expected_digest,
-            observed_digest=observed,
-        )
+        return await _verify_tag(self._client, self._model, self._expected_digest)
 
     async def health(self) -> OllamaProfileVerification:
         return await self.verify_profile()
@@ -204,27 +185,153 @@ class OllamaRuntime:
         *,
         json: Mapping[str, object] | None = None,
     ) -> httpx.Response:
-        try:
-            response = await self._client.request(method, url, json=json)
-        except httpx.HTTPError as error:
-            payload: Mapping[str, JsonValue] = {
-                "code": "ollama_transport_error",
-                "message": str(error),
-            }
-            raise OllamaRuntimeError(
-                str(error),
-                error=payload,
-                retryable=True,
-            ) from error
-        if response.is_success:
-            return response
-        payload = _http_error_payload(response)
-        raise OllamaRuntimeError(
-            str(payload["message"]),
-            error=payload,
-            retryable=response.status_code in {408, 429} or response.status_code >= 500,
-            status_code=response.status_code,
+        return await _request(self._client, method, url, json=json)
+
+
+class OllamaEmbeddingRuntime:
+    """The embedding half of the same installation.
+
+    It is its own model with its own digest, so it verifies itself the way the
+    chat model does: an installation that answers with another build is not the
+    one the RuntimeProfile declared, and every vector already indexed was
+    produced by that declared one.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        model: str,
+        expected_digest: str,
+        dimensions: int,
+        timeout: float = 600.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._model = model
+        self._expected_digest = _normalize_digest(expected_digest)
+        self._dimensions = dimensions
+        self._client = httpx.AsyncClient(
+            base_url=base_url.rstrip("/"),
+            timeout=timeout,
+            transport=transport,
         )
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def dimensions(self) -> int:
+        return self._dimensions
+
+    async def embed(self, texts: Sequence[str]) -> tuple[tuple[float, ...], ...]:
+        if not texts:
+            return ()
+        request = OllamaEmbedRequest(model=self._model, input=tuple(texts))
+        response = await _request(
+            self._client,
+            "POST",
+            "/api/embed",
+            json=request.model_dump(mode="json"),
+        )
+        try:
+            wire = OllamaEmbedResponse.model_validate_json(response.content)
+        except ValidationError as error:
+            raise MalformedModelResponseError(
+                "Ollama returned an invalid embedding response",
+                raw=_safe_response_payload(response),
+            ) from error
+        if len(wire.embeddings) != len(texts):
+            raise MalformedModelResponseError(
+                "Ollama returned a different number of embeddings than inputs"
+            )
+        # A vector of another width would be indexed happily by nobody: vec0 fixes
+        # the column width at creation, and a silent mismatch here would only show
+        # up as an insert failure with no idea which model produced it.
+        for vector in wire.embeddings:
+            if len(vector) != self._dimensions:
+                raise MalformedModelResponseError(
+                    f"embedding model returned {len(vector)} dimensions, "
+                    f"expected {self._dimensions}"
+                )
+        return wire.embeddings
+
+    async def verify_profile(self) -> OllamaProfileVerification:
+        return await _verify_tag(self._client, self._model, self._expected_digest)
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        await self.aclose()
+
+
+async def _request(
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    *,
+    json: Mapping[str, object] | None = None,
+) -> httpx.Response:
+    try:
+        response = await client.request(method, url, json=json)
+    except httpx.HTTPError as error:
+        payload: Mapping[str, JsonValue] = {
+            "code": "ollama_transport_error",
+            "message": str(error),
+        }
+        raise OllamaRuntimeError(
+            str(error),
+            error=payload,
+            retryable=True,
+        ) from error
+    if response.is_success:
+        return response
+    payload = _http_error_payload(response)
+    raise OllamaRuntimeError(
+        str(payload["message"]),
+        error=payload,
+        retryable=response.status_code in {408, 429} or response.status_code >= 500,
+        status_code=response.status_code,
+    )
+
+
+async def _verify_tag(
+    client: httpx.AsyncClient,
+    model: str,
+    expected_digest: str,
+) -> OllamaProfileVerification:
+    response = await _request(client, "GET", "/api/tags")
+    try:
+        tags = OllamaTagsResponse.model_validate_json(response.content)
+    except ValidationError as error:
+        raise MalformedModelResponseError("Ollama returned invalid tags data") from error
+    tag = next((item for item in tags.models if model in {item.name, item.model}), None)
+    if tag is None:
+        return OllamaProfileVerification(
+            ready=False,
+            model=model,
+            expected_digest=expected_digest,
+            reason_code="model_not_installed",
+        )
+    observed = _normalize_digest(tag.digest)
+    if observed != expected_digest:
+        return OllamaProfileVerification(
+            ready=False,
+            model=model,
+            expected_digest=expected_digest,
+            observed_digest=observed,
+            reason_code="model_digest_mismatch",
+        )
+    return OllamaProfileVerification(
+        ready=True,
+        model=model,
+        expected_digest=expected_digest,
+        observed_digest=observed,
+    )
 
 
 def _chat_request(model: str, request: ModelRequest) -> OllamaChatRequest:

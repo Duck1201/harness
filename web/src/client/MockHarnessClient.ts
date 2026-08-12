@@ -4,7 +4,11 @@ import type {
   HostConfigSnapshot,
   ApiPendingRequest,
   ChatSnapshot,
+  CorporaSnapshot,
   Conversation,
+  Corpus,
+  CorpusDocument,
+  IngestionJob,
   EvalReport,
   EvalRun,
   EvalsSnapshot,
@@ -143,6 +147,33 @@ export class MockHarnessClient implements HarnessClient {
   private feedback: FeedbackRecord[] = [];
   private confirmations = new Map<string, PendingConfirmation>();
   private waivers = new Set<string>();
+  private corpora: Corpus[] = [
+    {
+      id: "manual-do-servidor",
+      name: "Manual do servidor",
+      description: "Notas de operação e rede",
+      embedding_model: "bge-m3:latest",
+      embedding_dimensions: 1024,
+      document_count: 3,
+      chunk_count: 42,
+      created_at: now,
+      updated_at: now,
+    },
+  ];
+  private corpusDocuments: CorpusDocument[] = [
+    {
+      id: "document-1",
+      origin_kind: "upload",
+      origin_ref: "manual.pdf",
+      title: "Manual do servidor",
+      source_digest: "a".repeat(64),
+      taints: [],
+      chunk_count: 42,
+      ingested_at: now,
+    },
+  ];
+  private corpusJobs: IngestionJob[] = [];
+  private selectedCorpus = new Map<string, string | null>();
   private yolo = false;
   private hostConfig: HostConfigSnapshot = {
     allowed_workspace_roots: ["/workspaces/harness-2"],
@@ -347,6 +378,8 @@ export class MockHarnessClient implements HarnessClient {
       confirmationWaivers:
         selected && this.waivers.has(selected.id) ? ["workspace_write"] : [],
       yolo: this.yolo && !(selected ? this.yoloDisabled.has(selected.id) : false),
+      corpusId: selected ? this.selectedCorpus.get(selected.id) ?? null : null,
+      corpora: this.corpora,
       execution: {
         defaultExecutionRoute: "local_web_tools",
         runtimeProfile: "local_mitos_ollama_reproduction",
@@ -360,6 +393,124 @@ export class MockHarnessClient implements HarnessClient {
         },
       },
     });
+  }
+
+  /** Troca a conversa de exemplo; é dublê de teste, não entra no bundle. */
+  setMessages(messages: ChatSnapshot["messages"]): void {
+    this.messages = messages;
+  }
+
+  async getCorporaSnapshot(): Promise<CorporaSnapshot> {
+    return clone({
+      available: true,
+      embedding_model: "bge-m3:latest",
+      accepted_extensions: [".txt", ".md", ".html", ".pdf"],
+      corpora: this.corpora,
+      jobs: this.corpusJobs,
+    });
+  }
+
+  async createCorpus(name: string, description = "") {
+    const corpus: Corpus = {
+      id: name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+      name,
+      description,
+      embedding_model: "bge-m3:latest",
+      embedding_dimensions: 1024,
+      document_count: 0,
+      chunk_count: 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    this.corpora = [...this.corpora, corpus];
+    return clone(corpus);
+  }
+
+  async renameCorpus(corpusId: string, changes: { name?: string; description?: string }) {
+    const corpus = this.requireCorpus(corpusId);
+    Object.assign(corpus, changes);
+    return clone(corpus);
+  }
+
+  async deleteCorpus(corpusId: string) {
+    this.requireCorpus(corpusId);
+    this.corpora = this.corpora.filter((item) => item.id !== corpusId);
+  }
+
+  async listCorpusDocuments(corpusId: string) {
+    this.requireCorpus(corpusId);
+    return clone(this.corpusDocuments);
+  }
+
+  async deleteCorpusDocument(corpusId: string, documentId: string) {
+    this.requireCorpus(corpusId);
+    this.corpusDocuments = this.corpusDocuments.filter((item) => item.id !== documentId);
+  }
+
+  async uploadCorpusDocument(corpusId: string, file: File) {
+    const corpus = this.requireCorpus(corpusId);
+    corpus.document_count += 1;
+    const job: IngestionJob = {
+      id: `job-${this.corpusJobs.length + 1}`,
+      corpus_id: corpusId,
+      kind: "upload",
+      origin: file.name,
+      status: "completed",
+      seen: 1,
+      indexed: 1,
+      skipped: 0,
+      chunks: 4,
+      current: null,
+      reason_code: null,
+      detail: null,
+    };
+    this.corpusJobs = [...this.corpusJobs, job];
+    return clone(job);
+  }
+
+  async startCorpusScrape(corpusId: string, seed: string) {
+    this.requireCorpus(corpusId);
+    const job: IngestionJob = {
+      id: `job-${this.corpusJobs.length + 1}`,
+      corpus_id: corpusId,
+      kind: "scrape",
+      origin: seed,
+      status: "running",
+      seen: 3,
+      indexed: 2,
+      skipped: 1,
+      chunks: 18,
+      current: seed,
+      reason_code: null,
+      detail: "mediawiki",
+    };
+    this.corpusJobs = [...this.corpusJobs, job];
+    return clone(job);
+  }
+
+  async listCorpusJobs(corpusId: string) {
+    return clone(this.corpusJobs.filter((job) => job.corpus_id === corpusId));
+  }
+
+  async cancelCorpusJob(corpusId: string, jobId: string) {
+    const job = this.corpusJobs.find(
+      (item) => item.id === jobId && item.corpus_id === corpusId,
+    );
+    if (!job) throw new Error(`Job inexistente: ${jobId}`);
+    job.status = "canceled";
+    job.current = null;
+    return clone(job);
+  }
+
+  async selectCorpus(conversationId: string, corpusId: string | null) {
+    this.requireConversation(conversationId);
+    this.selectedCorpus.set(conversationId, corpusId);
+  }
+
+  private requireCorpus(corpusId: string): Corpus {
+    const corpus = this.corpora.find((item) => item.id === corpusId);
+    if (!corpus) throw new Error(`Corpus inexistente: ${corpusId}`);
+    return corpus;
   }
 
   async enqueueRequest(conversationId: string, content: string) {

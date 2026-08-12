@@ -324,8 +324,31 @@ Cada Conversation começa sem autoridade nenhuma. Ler arquivos exige um
 exige `WebAccessGrant`. O modelo não concede nem amplia acesso: quem concede é o
 Operator, pela interface.
 
-As 8 tools expostas: `read_file`, `write_file`, `edit`, `list_directory`, `glob`,
-`grep_search`, `web_search`, `web_fetch`.
+As tools expostas: `read_file`, `write_file`, `edit`, `list_directory`, `glob`,
+`grep_search`, `web_search`, `web_fetch`, `corpus_search`, `calculate`,
+`get_weather`.
+
+### RAG: acervos por Corpus
+
+A aba **RAG** monta acervos de documentos. Cada Corpus é um arquivo SQLite em
+`$XDG_STATE_HOME/harness-2/corpora/`, isolado dos outros e dos dois stores do
+harness; apagar o Corpus apaga o arquivo, e a retenção de conversas não o alcança.
+
+Alimente por upload (`.txt`, `.md`, `.html`, `.pdf` — PDF digitalizado é recusado,
+não há OCR) ou por coleta web. Uma semente que responde `/api.php` é coletada pela
+API do MediaWiki, que devolve a wiki inteira em texto puro; qualquer outro site
+cai num crawl com teto que respeita `robots.txt`. A coleta roda em segundo plano,
+mostra progresso e pode ser cancelada; disparar de novo pula o que já entrou.
+
+Cada Conversation escolhe um Corpus ou "Desligado", no painel de contexto do chat.
+A escolha é o grant: enquanto estiver ligada, o harness recupera as passagens antes
+do modelo responder, a resposta cita `[1]`, `[2]` e o card do turno mostra o trecho
+literal com o documento, a seção e a página. Passagem coletada da web fica marcada
+e faz o harness voltar a pedir confirmação para sair de novo à rede.
+
+O modelo de embedding é o `bge-m3` (`ollama pull bge-m3`), declarado com digest
+próprio em `config/model-profiles.json`. Sem ele instalado, a aba diz isso em vez
+de fingir um acervo vazio.
 
 ## Desenvolvimento
 

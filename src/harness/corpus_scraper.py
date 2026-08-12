@@ -1,0 +1,406 @@
+"""Collects pages into a Corpus, by API when the site has one.
+
+Almost every game wiki is MediaWiki, and MediaWiki answers `/api.php`: the full
+page list comes paginated and the text comes as plain extracts, without
+navigation, infobox or footer. Following links through the HTML of the same site
+costs an order of magnitude more requests and delivers dirtier text, so it is
+the fallback, not the plan.
+
+Every request goes through the same EgressGuard as `web_fetch` — scheme, private
+ranges, SSRF revalidated on redirect. What the Operator gets to skip is the
+grant, not the guard: grants exist to contain the model, and the Operator is the
+authority that issues them.
+"""
+
+import asyncio
+import json
+import re
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from html.parser import HTMLParser
+from typing import cast
+from urllib.parse import SplitResult, urlencode, urljoin, urlsplit
+from urllib.robotparser import RobotFileParser
+
+from .config import CorpusScraperConfig
+from .web_tools import (
+    SUPPRESSED_HTML_TAGS,
+    AiohttpHttpTransport,
+    EgressGuard,
+    EgressPolicyError,
+    EgressResolutionError,
+    HttpResponse,
+    HttpTransport,
+)
+
+USER_AGENT = "harness-2-corpus/1.0 (local operator tool)"
+_MAX_REDIRECTS = 5
+_MAX_PAGE_BYTES = 4 * 1024 * 1024
+_TIMEOUT_SECONDS = 30.0
+_HTML_CONTENT_TYPES = frozenset({"text/html", "application/xhtml+xml"})
+_SITEMAP_LOCATION = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>", re.IGNORECASE)
+
+
+class ScrapeError(Exception):
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+@dataclass(frozen=True, slots=True)
+class ScrapedPage:
+    url: str
+    title: str
+    # HTML para a rota genérica, texto puro para a rota MediaWiki. O ingestor
+    # decide o extrator pela extensão que este campo declara.
+    filename: str
+    data: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class ScrapePlan:
+    seed: str
+    source: str
+    detail: str
+
+
+class Scraper:
+    def __init__(
+        self,
+        *,
+        config: CorpusScraperConfig,
+        egress_guard: EgressGuard | None = None,
+        transport: HttpTransport | None = None,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
+    ) -> None:
+        self._config = config
+        self._guard = egress_guard or EgressGuard()
+        self._transport = transport or AiohttpHttpTransport()
+        self._sleep = sleep
+
+    async def plan(self, seed: str) -> ScrapePlan:
+        """Decides the route before spending anything on it."""
+        endpoint = await self._mediawiki_endpoint(seed)
+        if endpoint is not None:
+            return ScrapePlan(seed=seed, source="mediawiki", detail=endpoint)
+        return ScrapePlan(seed=seed, source="html_crawl", detail=urlsplit(seed).netloc)
+
+    async def collect(self, plan: ScrapePlan) -> AsyncIterator[ScrapedPage]:
+        if plan.source == "mediawiki":
+            async for page in self._collect_mediawiki(plan.detail):
+                yield page
+            return
+        async for page in self._collect_html(plan.seed):
+            yield page
+
+    async def _mediawiki_endpoint(self, seed: str) -> str | None:
+        """Finds `/api.php` for the seed, trying the two shapes wikis actually use."""
+        parsed = urlsplit(seed)
+        if parsed.scheme.casefold() not in {"http", "https"}:
+            raise ScrapeError("disallowed_url_scheme", "A semente precisa ser HTTP ou HTTPS.")
+        root = f"{parsed.scheme}://{parsed.netloc}"
+        candidates = [f"{root}/api.php", f"{root}/w/api.php"]
+        prefix = parsed.path.rsplit("/", 1)[0]
+        if prefix and prefix != "/":
+            candidates.insert(0, f"{root}{prefix}/api.php")
+        for candidate in candidates:
+            query = urlencode({"action": "query", "meta": "siteinfo", "format": "json"})
+            try:
+                response = await self._get(f"{candidate}?{query}")
+            except (ScrapeError, EgressPolicyError, EgressResolutionError):
+                continue
+            if response.status != 200:
+                continue
+            payload = _json_object(response.body)
+            if payload is not None and "query" in payload:
+                return candidate
+        return None
+
+    async def _collect_mediawiki(self, endpoint: str) -> AsyncIterator[ScrapedPage]:
+        settings = self._config.mediawiki
+        continuation: dict[str, str] = {}
+        collected = 0
+        limit = self._config.html_crawl.max_pages
+        while collected < limit:
+            listing = await self._api(
+                endpoint,
+                {
+                    "action": "query",
+                    "list": "allpages",
+                    "aplimit": "500",
+                    "apfilterredir": "nonredirects",
+                    "format": "json",
+                    **continuation,
+                },
+            )
+            pages = _mediawiki_pages(listing)
+            if not pages:
+                return
+            for batch in _batched(pages, settings.page_batch):
+                extracts = await self._api(
+                    endpoint,
+                    {
+                        "action": "query",
+                        "prop": "extracts",
+                        "explaintext": "1",
+                        "exlimit": str(len(batch)),
+                        "pageids": "|".join(str(identifier) for identifier, _ in batch),
+                        "format": "json",
+                    },
+                )
+                for identifier, title in batch:
+                    text = _mediawiki_extract(extracts, identifier)
+                    if not text:
+                        continue
+                    collected += 1
+                    yield ScrapedPage(
+                        url=f"{endpoint.removesuffix('api.php')}index.php?curid={identifier}",
+                        title=title,
+                        filename=f"{title}.md",
+                        # O título vira heading para o prefixo de contexto ter
+                        # endereço, já que o extrato vem sem estrutura nenhuma.
+                        data=f"# {title}\n\n{text}\n".encode(),
+                    )
+                    if collected >= limit:
+                        return
+                await self._wait()
+            following = _mediawiki_continue(listing)
+            if not following:
+                return
+            continuation = following
+
+    async def _collect_html(self, seed: str) -> AsyncIterator[ScrapedPage]:
+        settings = self._config.html_crawl
+        robots = await self._robots(seed) if settings.respect_robots_txt else None
+        origin = urlsplit(seed)
+        queue: list[tuple[str, int]] = [(seed, 0)]
+        if settings.prefer_sitemap:
+            queue.extend((url, settings.max_depth) for url in await self._sitemap(seed))
+        seen: set[str] = set()
+        collected = 0
+        total_bytes = 0
+        while queue and collected < settings.max_pages and total_bytes < settings.max_total_bytes:
+            url, depth = queue.pop(0)
+            canonical = _canonical_url(url)
+            if canonical in seen or not _same_site(origin, urlsplit(canonical)):
+                continue
+            seen.add(canonical)
+            if robots is not None and not robots.can_fetch(USER_AGENT, canonical):
+                continue
+            try:
+                response = await self._get(canonical)
+            except (ScrapeError, EgressPolicyError, EgressResolutionError):
+                continue
+            await self._wait()
+            if response.status != 200 or not _is_html(response.headers):
+                continue
+            total_bytes += len(response.body)
+            collected += 1
+            yield ScrapedPage(
+                url=canonical,
+                title=canonical,
+                filename="page.html",
+                data=response.body,
+            )
+            if depth < settings.max_depth:
+                queue.extend(
+                    (link, depth + 1)
+                    for link in _links(response.body, canonical)
+                    if _canonical_url(link) not in seen
+                )
+
+    async def _api(self, endpoint: str, parameters: Mapping[str, str]) -> Mapping[str, object]:
+        """One API call, with the backoff a shared wiki asks for.
+
+        A 429 or a maxlag is the site saying "slower", not "no": retrying the
+        same page immediately is how a collector gets an IP banned and leaves the
+        Corpus half full.
+        """
+        backoff = self._config.mediawiki.backoff_seconds
+        for attempt in range(len(backoff) + 1):
+            response = await self._get(f"{endpoint}?{urlencode(dict(parameters))}")
+            if response.status in {429, 503} and attempt < len(backoff):
+                await self._wait(backoff[attempt])
+                continue
+            if response.status != 200:
+                raise ScrapeError(
+                    "mediawiki_http_error",
+                    f"A wiki respondeu {response.status} à consulta da API.",
+                )
+            payload = _json_object(response.body)
+            if payload is None:
+                raise ScrapeError("mediawiki_invalid_json", "A wiki respondeu algo que não é JSON.")
+            return payload
+        raise ScrapeError("mediawiki_throttled", "A wiki recusou as tentativas seguidas de coleta.")
+
+    async def _robots(self, seed: str) -> RobotFileParser | None:
+        parsed = urlsplit(seed)
+        try:
+            response = await self._get(f"{parsed.scheme}://{parsed.netloc}/robots.txt")
+        except (ScrapeError, EgressPolicyError, EgressResolutionError):
+            return None
+        if response.status != 200:
+            return None
+        parser = RobotFileParser()
+        parser.parse(response.body.decode("utf-8", errors="replace").splitlines())
+        return parser
+
+    async def _sitemap(self, seed: str) -> tuple[str, ...]:
+        parsed = urlsplit(seed)
+        try:
+            response = await self._get(f"{parsed.scheme}://{parsed.netloc}/sitemap.xml")
+        except (ScrapeError, EgressPolicyError, EgressResolutionError):
+            return ()
+        if response.status != 200:
+            return ()
+        body = response.body.decode("utf-8", errors="replace")
+        return tuple(match.group(1) for match in _SITEMAP_LOCATION.finditer(body))
+
+    async def _get(self, url: str) -> HttpResponse:
+        current = url
+        for _ in range(_MAX_REDIRECTS + 1):
+            # Resolvido de novo a cada salto: o guard vale para o destino final,
+            # não só para o que o Operator digitou.
+            target = await self._guard.resolve(current)
+            response = await self._transport.request(
+                target,
+                headers={"User-Agent": USER_AGENT, "Accept-Encoding": "identity"},
+                max_bytes=_MAX_PAGE_BYTES,
+                timeout_seconds=_TIMEOUT_SECONDS,
+            )
+            if response.status not in {301, 302, 303, 307, 308}:
+                return response
+            location = _header(response.headers, "location")
+            if location is None:
+                raise ScrapeError("invalid_redirect", "O redirecionamento não trouxe destino.")
+            current = urljoin(current, location)
+        raise ScrapeError("too_many_redirects", "O destino redirecionou vezes demais.")
+
+    async def _wait(self, seconds: float | None = None) -> None:
+        delay = (
+            seconds if seconds is not None else self._config.html_crawl.delay_milliseconds / 1000
+        )
+        if delay <= 0:
+            return
+        if self._sleep is not None:
+            await self._sleep(delay)
+            return
+        await asyncio.sleep(delay)
+
+
+class _LinkParser(HTMLParser):
+    def __init__(self, base_url: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self._base_url = base_url
+        self.links: list[str] = []
+        self._suppressed = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        lowered = tag.casefold()
+        if lowered in SUPPRESSED_HTML_TAGS:
+            self._suppressed += 1
+            return
+        if self._suppressed or lowered != "a":
+            return
+        href = next((value for name, value in attrs if name.casefold() == "href"), None)
+        if href is None:
+            return
+        absolute = urljoin(self._base_url, href.strip())
+        if urlsplit(absolute).scheme.casefold() in {"http", "https"}:
+            self.links.append(absolute)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.casefold() in SUPPRESSED_HTML_TAGS and self._suppressed:
+            self._suppressed -= 1
+
+
+def _links(body: bytes, base_url: str) -> tuple[str, ...]:
+    parser = _LinkParser(base_url)
+    parser.feed(body.decode("utf-8", errors="replace"))
+    parser.close()
+    return tuple(dict.fromkeys(parser.links))
+
+
+def _canonical_url(url: str) -> str:
+    parsed = urlsplit(url)
+    return parsed._replace(fragment="").geturl()
+
+
+def _same_site(seed: SplitResult, candidate: SplitResult) -> bool:
+    """Same registrable domain, so a link out is a link out.
+
+    Compares the last two labels rather than consulting a public-suffix list:
+    the crawl already has a page ceiling, and the failure mode of the shortcut is
+    refusing a sibling subdomain, not wandering off the site.
+    """
+    seed_host = (seed.hostname or "").casefold()
+    candidate_host = (candidate.hostname or "").casefold()
+    if not seed_host or not candidate_host:
+        return False
+    return seed_host.split(".")[-2:] == candidate_host.split(".")[-2:]
+
+
+def _is_html(headers: Mapping[str, str]) -> bool:
+    value = _header(headers, "content-type")
+    if value is None:
+        return False
+    return value.partition(";")[0].strip().casefold() in _HTML_CONTENT_TYPES
+
+
+def _header(headers: Mapping[str, str], name: str) -> str | None:
+    expected = name.casefold()
+    return next((value for key, value in headers.items() if key.casefold() == expected), None)
+
+
+def _json_object(body: bytes) -> Mapping[str, object] | None:
+    try:
+        decoded: object = json.loads(body.decode("utf-8", errors="replace"))
+    except ValueError:
+        return None
+    return cast(dict[str, object], decoded) if isinstance(decoded, dict) else None
+
+
+def _object(value: object) -> Mapping[str, object] | None:
+    return cast(dict[str, object], value) if isinstance(value, dict) else None
+
+
+def _mediawiki_pages(payload: Mapping[str, object]) -> tuple[tuple[int, str], ...]:
+    query = _object(payload.get("query"))
+    if query is None:
+        return ()
+    listing = query.get("allpages")
+    if not isinstance(listing, list):
+        return ()
+    pages: list[tuple[int, str]] = []
+    for raw in cast(list[object], listing):
+        item = _object(raw)
+        if item is None:
+            continue
+        identifier = item.get("pageid")
+        title = item.get("title")
+        if isinstance(identifier, int) and isinstance(title, str):
+            pages.append((identifier, title))
+    return tuple(pages)
+
+
+def _mediawiki_continue(payload: Mapping[str, object]) -> dict[str, str]:
+    following = _object(payload.get("continue"))
+    if following is None:
+        return {}
+    return {str(key): str(value) for key, value in following.items()}
+
+
+def _mediawiki_extract(payload: Mapping[str, object], identifier: int) -> str:
+    query = _object(payload.get("query"))
+    pages = _object(query.get("pages")) if query is not None else None
+    page = _object(pages.get(str(identifier))) if pages is not None else None
+    extract = page.get("extract") if page is not None else None
+    return extract.strip() if isinstance(extract, str) else ""
+
+
+def _batched[T](items: Sequence[T], size: int) -> Iterable[Sequence[T]]:
+    for start in range(0, len(items), max(1, size)):
+        yield items[start : start + size]
+
+
+__all__ = ["USER_AGENT", "ScrapeError", "ScrapePlan", "ScrapedPage", "Scraper"]

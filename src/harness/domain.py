@@ -12,6 +12,16 @@ type JsonValue = JsonScalar | Sequence[JsonValue] | Mapping[str, JsonValue]
 # the waiver the Operator can grant.
 MUTATION_EFFECT = "workspace_write"
 
+# The effect a Corpus read declares, and the grant that answers for it. The grant's
+# scope carries which Corpus was authorized, so the conversation's selection and its
+# authorization are the same fact instead of two that can disagree.
+CORPUS_EFFECT = "corpus_read"
+CORPUS_GRANT = "CorpusGrant"
+
+# The mark every derivation of web content keeps. Written here because the Corpus
+# applies it at ingestion, long before any Turn sees the Chunk.
+UNTRUSTED_WEB_TAINT = "UntrustedWebTaint"
+
 # The refusal each grant produces when it is missing. Shared data, not a shared
 # gate: both executors still check their own calls, they just name the refusal the
 # same way, so the Operator dialog can answer either one.
@@ -19,6 +29,7 @@ _GRANT_REASON_CODES = {
     "WorkspaceRootGrant": "workspace_root_grant_required",
     "WriteGrant": "write_grant_required",
     "WebAccessGrant": "web_access_grant_required",
+    "CorpusGrant": "corpus_grant_required",
 }
 
 
@@ -78,6 +89,60 @@ class Conversation:
     last_active_at: datetime
     name: str = "New conversation"
     archived_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Corpus:
+    """An acervo the Operator assembled, with a store of its own.
+
+    Counts travel with it because the only reason to list corpora is to choose
+    one, and a corpus with no Documents is a different choice from a full one.
+    """
+
+    id: str
+    name: str
+    description: str
+    embedding_model: str
+    embedding_dimensions: int
+    created_at: datetime
+    updated_at: datetime
+    document_count: int = 0
+    chunk_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class Document:
+    id: str
+    origin_kind: str
+    origin_ref: str
+    title: str
+    source_digest: str
+    taints: tuple[str, ...]
+    ingested_at: datetime
+    chunk_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievedChunk:
+    """A Chunk on its way to the model, address included.
+
+    ``text`` is sliced from the stored Document and never rewritten: an answer
+    can only be checked against a passage that says what the source said.
+    """
+
+    id: str
+    document_id: str
+    document_title: str
+    origin_kind: str
+    origin_ref: str
+    location: str
+    text: str
+    score: float
+    taints: tuple[str, ...]
+    # A fusão por rank ordena mas não mede: o primeiro colocado pontua igual
+    # sendo ótimo ou péssimo. A similaridade é a única das duas que diz o quanto
+    # a passagem se parece com a pergunta, e é ela que o Operator lê na UI.
+    similarity: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

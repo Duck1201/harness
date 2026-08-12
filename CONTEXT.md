@@ -81,3 +81,19 @@ _Avoid_: Hidden tool, system tool, background agent
 **PageRevision**:
 A identidade imutável de uma página em um Workspace, formada pelo workspace, path relativo, digest do HTML, revisão do workspace e digest do verificador.
 _Avoid_: Page SHA, screenshot cache key, file version
+
+**Corpus**:
+O conjunto durável de Documents reunidos pelo Operator sob uma identidade própria e um store isolado dos demais.
+_Avoid_: RAG, base de conhecimento, índice, coleção
+
+**Document**:
+A unidade ingerida em um Corpus, com o texto extraído e a proveniência que diz de onde ele veio e quando.
+_Avoid_: Arquivo, página, fonte
+
+**Chunk**:
+O trecho recuperável de um Document, unidade do embedding, do ranking e da citação.
+_Avoid_: Passage, fragmento, janela
+
+**CorpusGrant**:
+A autorização que vincula um Corpus a uma Conversation e habilita a recuperação naquele Turn.
+_Avoid_: Corpus selecionado, toggle de RAG, preferência

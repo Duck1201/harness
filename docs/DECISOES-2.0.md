@@ -44,14 +44,15 @@ O vocabulário canônico está em [`CONTEXT.md`](../CONTEXT.md). Em particular:
 | Último passo | Nenhuma tool é oferecida e o TerminalOutcome é persistido uma única vez |
 | Tools | Somente `model_tools` são model-selectable; automações internas e capacidades proibidas são coleções separadas. Qual executor recebe a call vem do efeito declarado, nunca do nome |
 | Resultados | Todo ToolResult contém `status`, `retryable`, `data`, `error` e `meta`; `blocked` só pode ser emitido pelo harness |
-| Grants | Workspace requer WorkspaceRootGrant; escrita também exige WriteGrant; rede também exige WebAccessGrant |
+| Grants | Workspace requer WorkspaceRootGrant; escrita também exige WriteGrant; rede também exige WebAccessGrant; Corpus exige CorpusGrant do corpus escolhido |
 | Rede | Toda operação web é efeito `data_egress`, negado por padrão e autorizado mecanicamente |
 | Web | Busca por SearXNG declarado pelo Operator, com DuckDuckGo sem chave como fallback; navegador Chromium local; HTTP pode anteceder browser dentro do executor, nunca por escolha do modelo |
 | Isolamento | Cada operação usa contexto de navegador efêmero; web e verificação de página não compartilham estado |
 | Contexto | Deduplicação, extração única de HTML e corte por orçamento; compressão de código desligada e experimental |
+| Corpus | Acervo curado pelo Operator, um store por Corpus; recuperação híbrida com piso de relevância, injetada antes do primeiro AgentStep e disponível como `corpus_search` ([ADR-0011](adr/0011-corpus-retrieval-and-corpus-grant.md)) |
 | Estado | CanonicalHistory completo em store conversacional; reasoning é transitório e nunca persistido |
-| Stores | Dois bancos separados: estado canônico e telemetria sem conteúdo |
-| Retenção | Uma policy global remove Conversation inteira; nunca cria buracos no histórico |
+| Stores | Estado canônico e telemetria sem conteúdo em bancos separados; cada Corpus em um arquivo próprio, isolado dos dois |
+| Retenção | Uma policy global remove Conversation inteira; nunca cria buracos no histórico; Corpus não é estado conversacional e só sai por exclusão explícita |
 | UI | AG-UI é projeção do estado, não fonte canônica; UX e evals são web-first |
 | Acesso | Sem senha de Operator, só loopback direto é atendido; com senha, toda rota exige sessão. Não há terceira opção |
 | Confirmação | Todo efeito `workspace_write` exige decisão do Operator para aquela chamada, e sob UntrustedWebTaint `data_egress` também; o gate lê o efeito no registry, nunca o nome da tool; sob taint, aprovar não cria grant nem amplia acesso |
@@ -66,6 +67,8 @@ O store conversacional persiste PendingRequest, Turn, AgentStep, tool calls, Too
 
 A telemetria usa outro store e recebe somente IDs, digests, classes, tamanhos, contagens e tempos. Falha de telemetria é não fatal. Retenção é uniforme e global; quando aplicada ao estado conversacional, sua unidade mínima é uma Conversation completa.
 
+Cada Corpus é um terceiro tipo de store, com um arquivo por acervo. Ele guarda conteúdo, como o canônico, mas não é histórico de ninguém: não participa da retenção, não recebe telemetria e some por exclusão explícita do Operator.
+
 ## Policy por efeitos
 
 Nomes de tools não autorizam nada. A policy resolve os efeitos declarados no registry:
@@ -73,6 +76,7 @@ Nomes de tools não autorizam nada. A policy resolve os efeitos declarados no re
 - `workspace_read` exige WorkspaceRootGrant;
 - `workspace_write` exige WorkspaceRootGrant e WriteGrant;
 - `data_egress` exige WebAccessGrant e controles de destino, DNS e redirect;
+- `corpus_read` exige CorpusGrant, que nomeia em seu escopo o Corpus autorizado;
 - `pure_compute` não exige grant algum, porque não lê, não escreve e não sai do host.
 
 WebAccessGrant não é consentimento para backend remoto. Conteúdo obtido da web recebe UntrustedWebTaint, que acompanha derivações e nunca cria grant, confirmação ou permissão. Uma página hostil pode instruir o modelo tanto a alterar arquivos quanto a levá-los embora numa consulta ou URL, então as duas pernas passam pela mesma confirmação enquanto o taint estiver no contexto, e um efeito desconhecido é tratado como se precisasse dela. Paths continuam relativos, canonicalizados, com symlinks resolvidos e confinados ao Workspace.
@@ -94,6 +98,30 @@ Quem não quer ser perguntado a cada escrita registra uma dispensa para a Conver
 `blocked` significa que o harness recusou a operação por policy, grant, validação ou limite. Indisponibilidade ou recusa de provedor é `failed`, com classe em `error`; `empty` é sucesso sem itens. Nenhum deles pode virar string vazia ambígua.
 
 A mesma separação vale no TerminalOutcome do Turn: provedor indisponível e provedor que recusa têm reason code próprio, e o `detail` carrega a classe que o runtime reportou. Erro interno do harness continua sendo `engine_error` e não se disfarça de problema do provedor — quem lê o outcome precisa saber se reinicia o runtime ou abre um bug.
+
+## Corpus e recuperação
+
+Um Corpus é acervo do Operator, não estado de conversa: vive em um arquivo SQLite
+próprio sob `state_dir/corpora/`, guarda seu próprio meta — e por isso o diretório
+é o índice, sem registro paralelo para discordar do disco. Apagar um Corpus apaga
+o arquivo. A retenção global, cuja unidade é a Conversation inteira, não o alcança.
+
+A recuperação entra por duas portas sobre um pipeline só. Havendo CorpusGrant, uma
+InternalAutomation recupera antes do primeiro AgentStep e injeta o resultado no
+CanonicalHistory; `corpus_search` fica exposta para o modelo refinar a busca nos
+passos seguintes. A busca funde vizinhança densa e BM25 por rank recíproco, corta
+pelo piso de relevância e devolve cada Chunk com Document, endereço e escore —
+nada acima do piso é `empty`, e a instrução de responder que não sabe viaja no
+próprio bloco injetado, não no prompt base.
+
+Nenhum fato ingerido passa por paráfrase: o Document é armazenado como foi
+extraído e limpo por regras determinísticas, e o que o Chunk acrescenta é um
+prefixo de contexto tirado da estrutura do próprio documento. Tradução existe só
+na query. Chunk vindo do scraper carrega UntrustedWebTaint e o ToolResult declara
+a união dos taints que devolveu, de modo que material coletado da web continua
+custando confirmação de `data_egress` enquanto estiver no contexto. Coletar é ato
+do Operator e não pede grant — grants contêm o modelo —, mas passa pelo mesmo
+EgressGuard de qualquer saída para a rede ([ADR-0011](adr/0011-corpus-retrieval-and-corpus-grant.md)).
 
 ## Web e browser
 

@@ -73,6 +73,15 @@ describe("FetchHarnessClient", () => {
           },
         });
       }
+      if (url === "/api/ui/corpora") {
+        return json({
+          available: true,
+          embedding_model: "bge-m3:latest",
+          accepted_extensions: [".txt", ".md", ".html", ".pdf"],
+          corpora: [],
+          jobs: [],
+        });
+      }
       if (url === "/api/conversations/conversation-1/grants") {
         return json({
           grants: [

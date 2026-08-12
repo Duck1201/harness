@@ -45,6 +45,7 @@ from .ports import (
     ToolExecutor,
     ToolExecutorFactory,
     ToolSchema,
+    TurnRetrieval,
 )
 
 
@@ -71,6 +72,7 @@ class AgentEngine:
         runtime_readiness: EngineReadiness | None = None,
         stop_signal: StopSignal | None = None,
         confirmation_gate: ConfirmationGate | None = None,
+        turn_retrieval: TurnRetrieval | None = None,
     ) -> None:
         if max_model_invocations < 1:
             raise ValueError("max_model_invocations must be positive")
@@ -105,6 +107,7 @@ class AgentEngine:
         self._runtime_readiness = runtime_readiness or EngineReadiness(ready=True)
         self._stop_signal = stop_signal or NeverStopSignal()
         self._confirmation_gate = confirmation_gate or DenyingConfirmationGate()
+        self._turn_retrieval = turn_retrieval
 
     @property
     def readiness(self) -> EngineReadiness:
@@ -148,6 +151,7 @@ class AgentEngine:
                         return await self._finish(
                             turn, TerminalOutcomeKind.CANCELLED, "operator_stop"
                         )
+                    await self._retrieve_for_turn(turn, request.content)
                     return await self._run_active_turn(turn, deadline)
             except TimeoutError:
                 if not _deadline_reached(deadline):
@@ -650,6 +654,41 @@ class AgentEngine:
             "turn_time_budget_exhausted",
         )
 
+    async def _retrieve_for_turn(self, turn: Turn, question: str) -> None:
+        """Consults the granted Corpus before the model gets its first word.
+
+        A failure here does not end the Turn, and it does not disappear either:
+        the entry says the Corpus was not consulted and why, so the model reads
+        that instead of assuming the passages simply did not exist — and the
+        Operator can tell "the acervo has nothing" from "the embedder is down".
+        """
+        if self._turn_retrieval is None:
+            return
+        try:
+            payload = await self._turn_retrieval.for_turn(turn.conversation_id, question)
+        except Exception as error:
+            await self._store.append_canonical_history(
+                turn.id,
+                CanonicalHistoryEntryKind.INTERNAL_AUTOMATION,
+                {
+                    "automation_id": _RETRIEVAL_AUTOMATION_ID,
+                    "status": "failed",
+                    "detail": f"{type(error).__name__}: {error}",
+                },
+            )
+            return
+        if payload is None:
+            return
+        await self._store.append_canonical_history(
+            turn.id,
+            CanonicalHistoryEntryKind.INTERNAL_AUTOMATION,
+            {
+                "automation_id": _RETRIEVAL_AUTOMATION_ID,
+                "status": "completed",
+                **payload,
+            },
+        )
+
     async def _append_blocked_automation(
         self,
         turn: Turn,
@@ -858,6 +897,7 @@ _TAINT_CONFIRMED_EFFECTS = frozenset({"workspace_write", "data_egress"})
 # it under the same name, so the CanonicalHistory entry, the contract and the
 # dialog are talking about one automation instead of three.
 _CONFIRMATION_AUTOMATION_ID = "operator_confirmation"
+_RETRIEVAL_AUTOMATION_ID = "corpus_retrieval"
 
 # A preflight refusal the model itself can act on: it named a tool that does not
 # exist, or filled its arguments wrong. The blocked automation entry already tells

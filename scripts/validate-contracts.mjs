@@ -155,6 +155,43 @@ function collectGithubHeadingAnchors(content) {
   return anchors;
 }
 
+// `1.0` é o mesmo número em JSON e dois digests diferentes: o canonicalizador JS
+// escreve `1`, o do Python escreve `1.0`, e a divergência só aparece longe daqui,
+// como drift de contrato no carregamento dos evals. Recusar a grafia é mais barato
+// que ensinar os dois lados a concordar sobre ela.
+// A regra vale só para o que o digest cobre: `results` guarda medição registrada,
+// fica fora do escopo e não se reescreve para agradar um canonicalizador.
+function withoutRecordedResults(text) {
+  const start = text.indexOf('"results"');
+  if (start < 0) return text;
+  const open = text.indexOf("[", start);
+  if (open < 0) return text;
+  let depth = 0;
+  for (let index = open; index < text.length; index += 1) {
+    if (text[index] === "[") depth += 1;
+    if (text[index] === "]") depth -= 1;
+    if (depth === 0) return text.slice(0, open) + text.slice(index + 1);
+  }
+  return text.slice(0, open);
+}
+
+for (const contractPath of [
+  "config/model-profiles.json",
+  "config/harness.json",
+  "config/tool-registry.json",
+  "evals/fixtures/regressions.json",
+  "evals/experiments.json",
+]) {
+  const scoped = withoutRecordedResults(
+    fs.readFileSync(path.join(root, contractPath), "utf8"),
+  );
+  for (const match of scoped.matchAll(/:\s*(-?\d+\.0+)\s*[,}\n]/g)) {
+    failures.push(
+      `${contractPath}: número inteiro escrito como decimal (${match[1]}); use ${Number(match[1])}`,
+    );
+  }
+}
+
 const profilesDocument = readJson("config/model-profiles.json");
 const harness = readJson("config/harness.json");
 const registry = readJson("config/tool-registry.json");
@@ -227,6 +264,30 @@ if (profilesDocument && harness && registry && fixturesDocument && experimentsDo
       ),
       `${profile.id}: faltam evidências discriminadas de componentes embutidos`,
     );
+
+    // O embedding é outro modelo servido pelo mesmo runtime: ou o perfil o declara
+    // inteiro — digest, dimensão e componente próprio — ou não declara nada.
+    if (profile.embedding) {
+      check(
+        shaPattern.test(profile.embedding.digest_sha256 ?? ""),
+        `${profile.id}.embedding: digest inválido`,
+      );
+      check(
+        Number.isInteger(profile.embedding.dimensions) && profile.embedding.dimensions > 0,
+        `${profile.id}.embedding: dimensões ausentes`,
+      );
+      const embeddingComponent = (profile.components ?? []).find(
+        (component) => component.id === "embedding_model",
+      );
+      check(
+        embeddingComponent?.evidence?.sha256 === profile.embedding.digest_sha256,
+        `${profile.id}: componente embedding_model diverge do embedding declarado`,
+      );
+      check(
+        profile.capabilities?.embeddings?.support === "supported",
+        `${profile.id}: perfil com embedding deve declarar a capacidade embeddings`,
+      );
+    }
 
     for (const [name, capability] of Object.entries(profile.capabilities ?? {})) {
       check(
@@ -405,8 +466,8 @@ if (profilesDocument && harness && registry && fixturesDocument && experimentsDo
   );
   const grantTypes = new Set(harness.policy?.grant_types ?? []);
   check(
-    sameValues(grantTypes, ["WorkspaceRootGrant", "WriteGrant", "WebAccessGrant"]),
-    "grant_types deve conter WorkspaceRootGrant, WriteGrant e WebAccessGrant",
+    sameValues(grantTypes, ["WorkspaceRootGrant", "WriteGrant", "WebAccessGrant", "CorpusGrant"]),
+    "grant_types deve conter WorkspaceRootGrant, WriteGrant, WebAccessGrant e CorpusGrant",
   );
   check(
     harness.network?.effect === "data_egress" &&
@@ -435,21 +496,73 @@ if (profilesDocument && harness && registry && fixturesDocument && experimentsDo
 
   const stores = harness.stores ?? [];
   const storeIds = unique(stores.map((store) => store.id), "stores");
-  check(stores.length === 2, "harness deve declarar exatamente dois stores");
+  check(stores.length === 3, "harness deve declarar exatamente três stores");
   check(
-    storeIds.has("canonical_state") && storeIds.has("telemetry"),
-    "stores devem separar canonical_state e telemetry",
+    storeIds.has("canonical_state") && storeIds.has("telemetry") && storeIds.has("corpus"),
+    "stores devem separar canonical_state, telemetry e corpus",
   );
   check(
     stores.find((store) => store.id === "canonical_state")?.stores_reasoning === false &&
       stores.find((store) => store.id === "telemetry")?.stores_content === false,
     "stores não podem persistir reasoning e telemetria não pode guardar conteúdo",
   );
+  const corpusStore = stores.find((store) => store.id === "corpus");
+  check(
+    corpusStore?.one_file_per_corpus === true &&
+      corpusStore?.stores_conversation_state === false &&
+      corpusStore?.stores_reasoning === false,
+    "store de Corpus deve ser um arquivo por acervo, sem estado de conversa nem reasoning",
+  );
   check(
     harness.retention?.policy_scope === "global" &&
       harness.retention?.deletion_unit === "conversation" &&
       harness.retention?.partial_history_deletion === false,
     "retenção deve ser global e remover Conversation inteira",
+  );
+  check(
+    harness.retention?.reaches_corpus_stores === false &&
+      harness.corpus?.store?.reached_by_retention === false,
+    "retenção não pode alcançar Corpus, que é acervo do Operator e não histórico",
+  );
+
+  check(
+    harness.corpus?.effect === "corpus_read" &&
+      harness.corpus?.required_grant === "CorpusGrant" &&
+      harness.corpus?.grant_scope === "corpus_id",
+    "Corpus deve ser efeito corpus_read guardado por CorpusGrant com escopo do corpus",
+  );
+  check(
+    harness.corpus?.ingestion?.cleaning === "deterministic_only" &&
+      harness.corpus?.ingestion?.model_written_text_is_never_indexed_as_fact === true &&
+      harness.corpus?.retrieval?.translate_documents === false,
+    "ingestão não pode indexar texto escrito nem traduzido pelo modelo",
+  );
+  // O piso não pode morar no escore de fusão: rank recíproco ordena e não mede,
+  // e o primeiro colocado pontua igual respondendo ou não à pergunta.
+  check(
+    harness.corpus?.retrieval?.empty_when_nothing_clears_floor === true &&
+      harness.corpus?.retrieval?.floor_measured_on === "dense_cosine_similarity" &&
+      typeof harness.corpus?.retrieval?.dense_similarity_floor === "number",
+    "o piso de relevância deve ser lido na similaridade densa e zerar o resultado",
+  );
+  check(
+    harness.corpus?.retrieval?.injected_passages <= harness.corpus?.retrieval?.dense_candidates,
+    "não se pode injetar mais passagens do que a busca produz candidatos",
+  );
+  check(
+    harness.corpus?.scraper?.result_taint === "UntrustedWebTaint" &&
+      harness.corpus?.scraper?.requires_grant === false &&
+      harness.corpus?.scraper?.authorized_by === "Operator",
+    "coleta é ato do Operator e produz UntrustedWebTaint",
+  );
+  check(
+    harness.corpus?.scraper?.html_crawl?.respect_robots_txt === true &&
+      harness.corpus?.scraper?.html_crawl?.same_registrable_domain_only === true,
+    "crawl HTML deve respeitar robots.txt e não sair do domínio da semente",
+  );
+  check(
+    harness.corpus?.jobs?.resume_on_boot === false,
+    "job de ingestão não pode retomar egress sozinho no boot",
   );
   check(
     harness.ui?.delivery === "web_first" &&
@@ -550,6 +663,10 @@ if (profilesDocument && harness && registry && fixturesDocument && experimentsDo
   check(
     automationIds.has(harness.page_verification?.automation_id),
     "page_verification referencia InternalAutomation inexistente",
+  );
+  check(
+    automationIds.has(harness.corpus?.automation_id),
+    "corpus.automation_id referencia InternalAutomation inexistente",
   );
 
   check(
@@ -725,6 +842,10 @@ const canonicalTerms = [
   "UntrustedWebTaint",
   "InternalAutomation",
   "PageRevision",
+  "Corpus",
+  "Document",
+  "Chunk",
+  "CorpusGrant",
 ];
 const glossaryTerms = [...contextContent.matchAll(/^\*\*([^*]+)\*\*:/gm)].map(
   (match) => match[1],

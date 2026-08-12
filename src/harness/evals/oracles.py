@@ -18,6 +18,7 @@ from .models import (
     ResultErrorCodeIs,
     ResultProducerIs,
     ResultStatusIs,
+    ResultTaintIs,
     TaskVerdict,
     TerminalOutcomeIs,
     ToolCalled,
@@ -169,6 +170,16 @@ def _evaluate(
             result.meta.get("producer") == assertion.producer for result in results
         )
         detail = f"result producer is {assertion.producer}"
+    elif isinstance(assertion, ResultTaintIs):
+        results = _selected_results(evidence, assertion.tool_call_id)
+        passed = bool(results) and all(
+            (assertion.taint in _taints(result)) is assertion.present for result in results
+        )
+        detail = (
+            f"result declares taint {assertion.taint}"
+            if assertion.present
+            else f"result declares no {assertion.taint}"
+        )
     elif isinstance(assertion, FileExists):
         path = _workspace_path(evidence.workspace_root, assertion.path)
         passed = path is not None and path.is_file()
@@ -208,6 +219,13 @@ def _evaluate(
         ),
         explanation=detail,
     )
+
+
+def _taints(result: ToolResult) -> tuple[str, ...]:
+    values = result.meta.get("taints")
+    if not isinstance(values, Sequence) or isinstance(values, str):
+        return ()
+    return tuple(item for item in values if isinstance(item, str))
 
 
 def _serialized_data(result: ToolResult) -> str:

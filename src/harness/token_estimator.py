@@ -67,6 +67,18 @@ class HuggingFaceTokenEstimator(TokenEstimator):
     def readiness(self) -> EngineReadiness:
         return self._readiness
 
+    def count_text(self, text: str) -> int:
+        tokenizer = self._tokenizer
+        if tokenizer is None:
+            raise RuntimeError("token estimator is not validated")
+        encoding = cast(
+            _Encoding,
+            tokenizer.encode(  # pyright: ignore[reportUnknownMemberType]
+                text, add_special_tokens=False
+            ),
+        )
+        return len(encoding.ids)
+
     def estimate(self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]) -> int:
         tokenizer = self._tokenizer
         if tokenizer is None:

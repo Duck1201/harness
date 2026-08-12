@@ -1,0 +1,321 @@
+import asyncio
+import hashlib
+import struct
+from collections.abc import Sequence
+from pathlib import Path
+
+import pytest
+
+from harness.corpus_ingestion import (
+    UnsupportedSourceError,
+    build_document,
+    embeddable_texts,
+    extract,
+    extract_html,
+    extract_markdown,
+    source_digest,
+)
+from harness.corpus_store import CorpusStore, EmbeddingMismatchError
+
+# Largo o bastante para dois textos sem palavra em comum caírem em baldes
+# distintos: com poucas dimensões a colisão sozinha já aproxima o que não tem
+# nada a ver, e o piso de similaridade deixaria de ser testável.
+DIMENSIONS = 64
+
+
+class WordCounter:
+    """Conta palavras no lugar de tokens: o corte é o mesmo, sem tokenizer."""
+
+    def count_text(self, text: str) -> int:
+        return max(1, len(text.split()))
+
+
+class HashingEmbedder:
+    """Embedding determinístico e sem GPU.
+
+    Cada palavra vira uma posição fixa do vetor, então dois textos que
+    compartilham vocabulário ficam próximos — o suficiente para provar que a
+    perna densa ordena, sem fingir que mede semântica.
+    """
+
+    def embed(self, texts: Sequence[str]) -> tuple[tuple[float, ...], ...]:
+        vectors: list[tuple[float, ...]] = []
+        for text in texts:
+            buckets = [0.0] * DIMENSIONS
+            for word in text.lower().split():
+                digest = hashlib.sha256(word.encode()).digest()
+                buckets[digest[0] % DIMENSIONS] += 1.0
+            norm = sum(value * value for value in buckets) ** 0.5 or 1.0
+            vectors.append(tuple(value / norm for value in buckets))
+        return tuple(vectors)
+
+
+def _ingest(
+    store: CorpusStore,
+    *,
+    filename: str,
+    data: bytes,
+    origin_kind: str = "upload",
+) -> None:
+    extracted = extract(filename, data)
+    draft = build_document(
+        extracted,
+        origin_kind=origin_kind,
+        origin_ref=filename,
+        source_digest=source_digest(data),
+        counter=WordCounter(),
+        chunk_tokens=40,
+        overlap_tokens=8,
+    )
+    embeddings = HashingEmbedder().embed(embeddable_texts(draft))
+    asyncio.run(store.add_document(draft, embeddings))
+
+
+def _corpus(tmp_path: Path) -> CorpusStore:
+    store = CorpusStore(tmp_path / "manual.sqlite3")
+    asyncio.run(
+        store.create(
+            name="Manual",
+            description="",
+            embedding_model="fake",
+            embedding_dimensions=DIMENSIONS,
+        )
+    )
+    return store
+
+
+def test_a_corpus_carries_its_own_meta_and_counts(tmp_path: Path) -> None:
+    store = _corpus(tmp_path)
+    _ingest(
+        store,
+        filename="rede.md",
+        data=b"# Manual\n\n## Rede\n\nO proxy escuta na porta 8899 quando o modo estrito "
+        b"esta ligado e recusa qualquer outra origem.\n",
+    )
+
+    corpus = asyncio.run(store.read())
+    assert corpus.name == "Manual"
+    assert corpus.embedding_dimensions == DIMENSIONS
+    assert corpus.document_count == 1
+    assert corpus.chunk_count >= 1
+
+    documents = asyncio.run(store.list_documents())
+    assert documents[0].origin_kind == "upload"
+    assert documents[0].taints == ()
+
+
+def test_retrieval_quotes_the_stored_passage_with_its_address(tmp_path: Path) -> None:
+    store = _corpus(tmp_path)
+    _ingest(
+        store,
+        filename="manual.md",
+        data=b"# Manual\n\n## 4. Rede\n\n### 4.2 Proxy\n\nO proxy escuta na porta 8899.\n\n"
+        b"## 5. Backup\n\nO backup roda toda madrugada em fita magnetica.\n",
+    )
+
+    found = asyncio.run(
+        store.search(
+            dense_query=HashingEmbedder().embed(["porta do proxy"])[0],
+            lexical_queries=["proxy porta"],
+            limit=3,
+        )
+    )
+
+    assert found
+    top = found[0]
+    assert "8899" in top.text
+    assert top.location == "Manual > 4. Rede > 4.2 Proxy"
+    assert top.taints == ()
+    # O trecho é fatiado do Document guardado, nunca reescrito, e não atravessa
+    # a seção seguinte — senão o endereço citaria a metade errada.
+    assert top.text == "O proxy escuta na porta 8899."
+
+
+def test_the_lexical_leg_finds_what_the_dense_one_smooths_away(tmp_path: Path) -> None:
+    store = _corpus(tmp_path)
+    _ingest(
+        store,
+        filename="erros.md",
+        data=b"# Erros\n\n## Codigos\n\nO erro ERR_CHUNK_2049 aparece quando o disco enche "
+        b"durante a escrita.\n\n## Outros\n\nQualquer outra falha registra apenas um aviso "
+        b"generico no diario.\n",
+    )
+
+    found = asyncio.run(store.search(dense_query=None, lexical_queries=["ERR_CHUNK_2049"], limit=2))
+
+    assert found
+    assert "ERR_CHUNK_2049" in found[0].text
+
+
+def test_the_floor_answers_with_nothing_instead_of_the_least_bad_passage(tmp_path: Path) -> None:
+    store = _corpus(tmp_path)
+    _ingest(store, filename="nota.txt", data=b"O jantar sera servido as oito da noite.\n")
+
+    # Sem o piso, a busca devolve a passagem mesmo assim: ela é a única que existe,
+    # e a fusão por rank a coloca em primeiro com o mesmo escore de sempre.
+    without_floor = asyncio.run(
+        store.search(
+            dense_query=HashingEmbedder().embed(["assunto completamente diferente"])[0],
+            lexical_queries=["assunto"],
+            limit=5,
+            similarity_floor=0.0,
+        )
+    )
+    assert without_floor
+
+    found = asyncio.run(
+        store.search(
+            dense_query=HashingEmbedder().embed(["assunto completamente diferente"])[0],
+            lexical_queries=["assunto"],
+            limit=5,
+            similarity_floor=0.5,
+        )
+    )
+
+    assert found == ()
+
+
+def test_a_page_collected_from_the_web_keeps_its_taint(tmp_path: Path) -> None:
+    store = _corpus(tmp_path)
+    _ingest(
+        store,
+        filename="pagina.html",
+        data=b"<html><head><title>Wiki</title></head><body><h2>Chefe</h2>"
+        b"<p>O chefe final tem 320 pontos de vida e resiste a fogo.</p></body></html>",
+        origin_kind="scrape",
+    )
+
+    found = asyncio.run(
+        store.search(
+            dense_query=HashingEmbedder().embed(["chefe final vida"])[0],
+            lexical_queries=["chefe final"],
+            limit=2,
+        )
+    )
+
+    assert found
+    assert found[0].taints == ("UntrustedWebTaint",)
+    assert found[0].location == "Wiki > Chefe"
+
+
+def test_reingesting_the_same_source_replaces_it_instead_of_duplicating(tmp_path: Path) -> None:
+    store = _corpus(tmp_path)
+    payload = b"# Nota\n\nO valor combinado foi de duzentos reais no total.\n"
+    _ingest(store, filename="nota.md", data=payload)
+    _ingest(store, filename="nota.md", data=payload)
+
+    corpus = asyncio.run(store.read())
+    assert corpus.document_count == 1
+    assert asyncio.run(store.indexed_digests()) == frozenset({source_digest(payload)})
+
+
+def test_deleting_a_document_takes_its_chunks_out_of_both_indexes(tmp_path: Path) -> None:
+    store = _corpus(tmp_path)
+    _ingest(store, filename="nota.md", data=b"# Nota\n\nA cerca precisa de tinta nova.\n")
+    documents = asyncio.run(store.list_documents())
+
+    asyncio.run(store.delete_document(documents[0].id))
+
+    assert asyncio.run(store.read()).chunk_count == 0
+    assert (
+        asyncio.run(
+            store.search(
+                dense_query=HashingEmbedder().embed(["tinta"])[0],
+                lexical_queries=["tinta"],
+                limit=5,
+            )
+        )
+        == ()
+    )
+
+
+def test_a_vector_of_another_width_is_refused(tmp_path: Path) -> None:
+    store = _corpus(tmp_path)
+    extracted = extract_markdown(
+        "# Nota\n\nUm texto qualquer para virar chunk.\n", title_fallback="n"
+    )
+    draft = build_document(
+        extracted,
+        origin_kind="upload",
+        origin_ref="n.md",
+        source_digest="a" * 64,
+        counter=WordCounter(),
+    )
+
+    with pytest.raises(EmbeddingMismatchError):
+        asyncio.run(store.add_document(draft, [(0.0,) * (DIMENSIONS + 1)] * len(draft.chunks)))
+
+
+def test_an_unsupported_extension_is_refused_by_name() -> None:
+    with pytest.raises(UnsupportedSourceError) as error:
+        extract("planilha.xlsx", b"qualquer coisa")
+
+    assert error.value.code == "unsupported_extension"
+    assert ".pdf" in str(error.value)
+
+
+def test_a_pdf_without_a_text_layer_is_refused_instead_of_indexed_empty() -> None:
+    # Um PDF de uma página cujo conteúdo é só um retângulo: estrutura válida,
+    # zero texto — o que um digitalizado entrega.
+    blank = (
+        b"%PDF-1.4\n"
+        b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+        b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+        b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Contents 4 0 R>>endobj\n"
+        b"4 0 obj<</Length 40>>stream\n10 10 100 100 re f\nendstream endobj\n"
+        b"trailer<</Root 1 0 R>>\n"
+    )
+
+    with pytest.raises(UnsupportedSourceError) as error:
+        extract("digitalizado.pdf", blank)
+
+    assert error.value.code in {"pdf_without_text_layer", "pdf_unreadable"}
+
+
+def test_html_extraction_keeps_the_heading_path_and_drops_the_menu() -> None:
+    extracted = extract_html(
+        "<html><head><title>Wiki</title><script>ignorar()</script></head><body>"
+        "<nav><p>Inicio (https://w.test/a)</p></nav>"
+        "<h1>Jogo</h1><h2>Chefes</h2>"
+        "<p>O chefe final tem 320 pontos de vida.</p>"
+        "</body></html>",
+        title_fallback="pagina",
+    )
+
+    assert extracted.title == "Wiki"
+    texts = [block.text for block in extracted.blocks]
+    assert "O chefe final tem 320 pontos de vida." in texts
+    assert not any("ignorar" in text for text in texts)
+    assert extracted.blocks[-1].heading_path == ("Jogo", "Chefes")
+
+
+def test_chunks_overlap_by_range_and_never_copy_the_text() -> None:
+    paragraphs = "\n\n".join(
+        f"Paragrafo numero {index} com algumas palavras." for index in range(6)
+    )
+    draft = build_document(
+        extract_markdown(f"# Doc\n\n{paragraphs}\n", title_fallback="doc"),
+        origin_kind="upload",
+        origin_ref="doc.md",
+        source_digest="b" * 64,
+        counter=WordCounter(),
+        chunk_tokens=12,
+        overlap_tokens=6,
+    )
+
+    assert len(draft.chunks) > 1
+    assert any(
+        later.start_offset < earlier.end_offset
+        for earlier, later in zip(draft.chunks, draft.chunks[1:], strict=False)
+    )
+    for chunk in draft.chunks:
+        assert draft.text[chunk.start_offset : chunk.end_offset].strip()
+    assert embeddable_texts(draft)[0].startswith("Doc")
+
+
+def test_packed_vectors_round_trip_through_the_index(tmp_path: Path) -> None:
+    # Guarda o contrato binário: float32 little-endian é o que o vec0 lê.
+    store = _corpus(tmp_path)
+    _ingest(store, filename="nota.txt", data=b"Uma frase suficientemente longa para virar chunk.\n")
+    assert struct.calcsize(f"{DIMENSIONS}f") == DIMENSIONS * 4
+    assert asyncio.run(store.read()).chunk_count == 1

@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.datastructures import UploadFile as StarletteUploadFile
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .ag_ui import encode_sse, project_agent_event, run_error_event, run_started_event
@@ -20,9 +21,12 @@ from .application_service import ApplicationService, ApplicationServiceError
 from .auth import AuthenticationError, SessionController, hash_password, verify_password
 from .config import load_config
 from .conversation_store import ConversationStore, NotFoundError
+from .corpus_service import IngestionJob
 from .domain import (
     CanonicalHistoryEntry,
     Conversation,
+    Corpus,
+    Document,
     Feedback,
     Grant,
     PendingRequest,
@@ -46,7 +50,7 @@ from .host_config import (
     default_state_dir,
 )
 from .observability_store import ObservabilityStore
-from .ollama_runtime import OllamaRuntime
+from .ollama_runtime import OllamaEmbeddingRuntime, OllamaRuntime
 from .ports import ConfirmationRequest
 from .setup import SetupController, SetupError, SetupSubmission, validated_host_config
 from .system_prompt import load_operator_notes
@@ -83,6 +87,24 @@ class RequestContent(ApiModel):
 
 class GrantRequest(ApiModel):
     permission: str
+
+
+class CorpusSelection(ApiModel):
+    corpus_id: str | None = None
+
+
+class CreateCorpusRequest(ApiModel):
+    name: str
+    description: str = ""
+
+
+class UpdateCorpusRequest(ApiModel):
+    name: str | None = None
+    description: str | None = None
+
+
+class ScrapeRequest(ApiModel):
+    seed: str
 
 
 class ConfirmationDecisionRequest(ApiModel):
@@ -235,7 +257,11 @@ def create_app(
         allow_headers=["Content-Type", "Accept", "X-Harness-Setup-Token"],
     )
     app.add_middleware(_OperatorAuthenticationMiddleware, sessions=sessions)
-    app.add_middleware(_BodyLimitMiddleware, max_body_bytes=max_body_bytes)
+    app.add_middleware(
+        _BodyLimitMiddleware,
+        max_body_bytes=max_body_bytes,
+        upload_body_bytes=application_service.config.corpus.ingestion.max_upload_bytes,
+    )
     app.add_middleware(_OriginAllowlistMiddleware, allowed_origins=origins)
 
     @app.exception_handler(ApplicationServiceError)
@@ -538,6 +564,103 @@ def create_app(
         await application_service.revoke_confirmation_waiver(conversation_id, effect)
         return Response(status_code=204)
 
+    @app.put("/api/conversations/{conversation_id}/corpus")
+    async def select_corpus(conversation_id: str, payload: CorpusSelection) -> dict[str, Any]:
+        granted = await application_service.select_corpus(conversation_id, payload.corpus_id)
+        return {"grant": _grant_json(granted) if granted is not None else None}
+
+    @app.get("/api/corpora")
+    async def list_corpora() -> dict[str, Any]:
+        corpora = await application_service.list_corpora()
+        return {"corpora": [_corpus_json(item) for item in corpora]}
+
+    @app.post("/api/corpora", status_code=201)
+    async def create_corpus(payload: CreateCorpusRequest) -> dict[str, Any]:
+        created = await application_service.create_corpus(payload.name, payload.description)
+        return {"corpus": _corpus_json(created)}
+
+    @app.patch("/api/corpora/{corpus_id}")
+    async def rename_corpus(corpus_id: str, payload: UpdateCorpusRequest) -> dict[str, Any]:
+        updated = await application_service.rename_corpus(
+            corpus_id,
+            name=payload.name,
+            description=payload.description,
+        )
+        return {"corpus": _corpus_json(updated)}
+
+    @app.delete("/api/corpora/{corpus_id}", status_code=204)
+    async def delete_corpus(corpus_id: str) -> Response:
+        await application_service.delete_corpus(corpus_id)
+        return Response(status_code=204)
+
+    @app.get("/api/corpora/{corpus_id}/documents")
+    async def list_corpus_documents(corpus_id: str) -> dict[str, Any]:
+        documents = await application_service.list_corpus_documents(corpus_id)
+        return {"documents": [_document_json(item) for item in documents]}
+
+    @app.delete("/api/corpora/{corpus_id}/documents/{document_id}", status_code=204)
+    async def delete_corpus_document(corpus_id: str, document_id: str) -> Response:
+        await application_service.delete_corpus_document(corpus_id, document_id)
+        return Response(status_code=204)
+
+    @app.post("/api/corpora/{corpus_id}/documents", status_code=202)
+    async def upload_corpus_document(corpus_id: str, request: Request) -> dict[str, Any]:
+        """Recebe um arquivo por multipart e devolve o job que o ingeriu.
+
+        O upload é awaited: é um arquivo só e o Operator está olhando. Coleta é
+        que roda em job de fundo, porque uma wiki leva dezenas de minutos.
+        """
+        form = await request.form()
+        upload = form.get("file")
+        if not isinstance(upload, StarletteUploadFile) or not upload.filename:
+            raise ApplicationServiceError(
+                "file_required",
+                "Envie o arquivo no campo `file` de um formulário multipart.",
+                status_code=422,
+            )
+        job = await application_service.upload_to_corpus(
+            corpus_id,
+            upload.filename,
+            await upload.read(),
+        )
+        return {"job": _ingestion_job_json(job)}
+
+    @app.post("/api/corpora/{corpus_id}/jobs", status_code=202)
+    async def start_corpus_scrape(corpus_id: str, payload: ScrapeRequest) -> dict[str, Any]:
+        job = await application_service.start_corpus_scrape(corpus_id, payload.seed)
+        return {"job": _ingestion_job_json(job)}
+
+    @app.get("/api/corpora/{corpus_id}/jobs")
+    async def list_corpus_jobs(corpus_id: str) -> dict[str, Any]:
+        jobs = application_service.list_corpus_jobs(corpus_id)
+        return {"jobs": [_ingestion_job_json(job) for job in jobs]}
+
+    @app.delete("/api/corpora/{corpus_id}/jobs/{job_id}", status_code=202)
+    async def cancel_corpus_job(corpus_id: str, job_id: str) -> dict[str, Any]:
+        del corpus_id
+        return {"job": _ingestion_job_json(application_service.cancel_corpus_job(job_id))}
+
+    @app.get("/api/ui/corpora")
+    async def corpora_snapshot() -> dict[str, Any]:
+        available = application_service.corpus_library is not None
+        corpora = await application_service.list_corpora() if available else ()
+        return {
+            "available": available,
+            "embedding_model": (
+                application_service.config.runtime_profile.embedding.id
+                if application_service.config.runtime_profile.embedding is not None
+                else None
+            ),
+            "accepted_extensions": list(
+                application_service.config.corpus.ingestion.accepted_extensions
+            ),
+            "corpora": [_corpus_json(item) for item in corpora],
+            "jobs": [
+                _ingestion_job_json(job)
+                for job in (application_service.list_corpus_jobs() if available else ())
+            ],
+        }
+
     @app.post("/api/conversations/{conversation_id}/stop", status_code=202)
     async def stop(conversation_id: str) -> dict[str, bool]:
         await application_service.stop(conversation_id)
@@ -640,6 +763,7 @@ def create_app(
             ),
             "confirmation_waivers": cast(list[str], snapshot["confirmation_waivers"]),
             "yolo": cast(bool, snapshot["yolo"]),
+            "corpus_id": cast(str | None, snapshot["corpus_id"]),
         }
 
     @app.get("/api/ui/evals")
@@ -796,6 +920,19 @@ def _default_service(
         tokenizer_path,
         expected_sha256=tokenizer_digest,
     )
+    # O embedding é outro modelo no mesmo Ollama, com digest próprio. Perfil sem
+    # ele é perfil sem Corpus: a aba diz isso em vez de o harness fingir um acervo.
+    embedding = config.runtime_profile.embedding
+    embedder = (
+        OllamaEmbeddingRuntime(
+            base_url=(host_config.ollama_url if host_config is not None else DEFAULT_OLLAMA_URL),
+            model=embedding.id,
+            expected_digest=embedding.digest_sha256,
+            dimensions=embedding.dimensions,
+        )
+        if embedding is not None
+        else None
+    )
     return ApplicationService(
         store=ConversationStore(state_dir / "conversations.sqlite3"),
         observability_store=ObservabilityStore(state_dir / "observability.sqlite3"),
@@ -806,6 +943,8 @@ def _default_service(
         search_endpoint=host_config.searxng_url if host_config is not None else None,
         browser_executable=host_config.browser_executable if host_config is not None else None,
         operator_notes=load_operator_notes(),
+        corpus_directory=state_dir / "corpora",
+        embedder=embedder,
     )
 
 
@@ -939,6 +1078,50 @@ def _grant_json(grant: Grant) -> dict[str, Any]:
         "scope": grant.scope,
         "granted_at": grant.granted_at.isoformat(),
         "expires_at": grant.expires_at.isoformat() if grant.expires_at is not None else None,
+    }
+
+
+def _corpus_json(corpus: Corpus) -> dict[str, Any]:
+    return {
+        "id": corpus.id,
+        "name": corpus.name,
+        "description": corpus.description,
+        "embedding_model": corpus.embedding_model,
+        "embedding_dimensions": corpus.embedding_dimensions,
+        "document_count": corpus.document_count,
+        "chunk_count": corpus.chunk_count,
+        "created_at": corpus.created_at.isoformat(),
+        "updated_at": corpus.updated_at.isoformat(),
+    }
+
+
+def _document_json(document: Document) -> dict[str, Any]:
+    return {
+        "id": document.id,
+        "origin_kind": document.origin_kind,
+        "origin_ref": document.origin_ref,
+        "title": document.title,
+        "source_digest": document.source_digest,
+        "taints": list(document.taints),
+        "chunk_count": document.chunk_count,
+        "ingested_at": document.ingested_at.isoformat(),
+    }
+
+
+def _ingestion_job_json(job: IngestionJob) -> dict[str, Any]:
+    return {
+        "id": job.id,
+        "corpus_id": job.corpus_id,
+        "kind": job.kind,
+        "origin": job.origin,
+        "status": job.status.value,
+        "seen": job.seen,
+        "indexed": job.indexed,
+        "skipped": job.skipped,
+        "chunks": job.chunks,
+        "current": job.current,
+        "reason_code": job.reason_code,
+        "detail": job.detail,
     }
 
 
@@ -1116,14 +1299,29 @@ class _OperatorAuthenticationMiddleware:
 
 
 class _BodyLimitMiddleware:
-    def __init__(self, app: ASGIApp, *, max_body_bytes: int) -> None:
+    """One ceiling for every route, and a second one where files come in.
+
+    A JSON body of a megabyte is already generous; a PDF is not a JSON body. The
+    upload route gets the Corpus limit from the contract instead of the general
+    one, and every other path keeps the tighter number.
+    """
+
+    def __init__(self, app: ASGIApp, *, max_body_bytes: int, upload_body_bytes: int) -> None:
         self._app = app
         self._max_body_bytes = max_body_bytes
+        self._upload_body_bytes = max(max_body_bytes, upload_body_bytes)
+
+    def _limit(self, scope: Scope) -> int:
+        path = str(scope.get("path", ""))
+        if path.startswith("/api/corpora/") and path.endswith("/documents"):
+            return self._upload_body_bytes
+        return self._max_body_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self._app(scope, receive, send)
             return
+        limit = self._limit(scope)
         messages: list[Message] = []
         total = 0
         while True:
@@ -1132,7 +1330,7 @@ class _BodyLimitMiddleware:
             if message["type"] != "http.request":
                 break
             total += len(message.get("body", b""))
-            if total > self._max_body_bytes:
+            if total > limit:
                 response = JSONResponse(
                     status_code=413,
                     content={

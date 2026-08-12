@@ -26,6 +26,7 @@ def test_config_loader_reads_harness_profiles_and_tool_registry() -> None:
         "grep_search",
         "web_search",
         "web_fetch",
+        "corpus_search",
         "calculate",
         "get_weather",
     ]

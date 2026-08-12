@@ -3,7 +3,11 @@ import type {
   AgUiTerminalEvent,
   ApiPendingRequest,
   ChatSnapshot,
+  CorporaSnapshot,
   Conversation,
+  Corpus,
+  CorpusDocument,
+  IngestionJob,
   EvalPhase,
   EvalReport,
   EvalRun,
@@ -70,6 +74,21 @@ export interface HarnessClient {
     turnId?: string,
     comment?: string,
   ): Promise<FeedbackRecord>;
+
+  getCorporaSnapshot(): Promise<CorporaSnapshot>;
+  createCorpus(name: string, description?: string): Promise<Corpus>;
+  renameCorpus(
+    corpusId: string,
+    changes: { name?: string; description?: string },
+  ): Promise<Corpus>;
+  deleteCorpus(corpusId: string): Promise<void>;
+  listCorpusDocuments(corpusId: string): Promise<CorpusDocument[]>;
+  deleteCorpusDocument(corpusId: string, documentId: string): Promise<void>;
+  uploadCorpusDocument(corpusId: string, file: File): Promise<IngestionJob>;
+  startCorpusScrape(corpusId: string, seed: string): Promise<IngestionJob>;
+  listCorpusJobs(corpusId: string): Promise<IngestionJob[]>;
+  cancelCorpusJob(corpusId: string, jobId: string): Promise<IngestionJob>;
+  selectCorpus(conversationId: string, corpusId: string | null): Promise<void>;
 
   getEvalsSnapshot(): Promise<EvalsSnapshot>;
   listEvalExperiments(): Promise<Experiment[]>;

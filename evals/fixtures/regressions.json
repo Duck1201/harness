@@ -2,7 +2,7 @@
   "schema_version": 2,
   "dataset_id": "harness_2_contract_regressions",
   "dataset_version": "3.0.0",
-  "dataset_digest_sha256": "71cfa19d172d17b363a942265a56b0ca28a4831f39cd4de237aa0b87dc5fd6fd",
+  "dataset_digest_sha256": "ec76e4dbc9dedbd64068e5f0c5a5129ade5367329003e6979decf96d31af1d6a",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -666,6 +666,123 @@
           "the gate reads the declared effect, so a tool added to the registry is refused without touching the gate",
           "no geocoding and no forecast request leaves the host before the grant exists",
           "with the grant, the returned forecast carries UntrustedWebTaint like any other web data"
+        ]
+      }
+    },
+    {
+      "id": "corpus_search_without_the_grant_is_blocked",
+      "type": "corpus_contract",
+      "tags": ["corpus", "corpus_grant", "security"],
+      "origin": "ADR-0011: autorização é por efeito, e corpus_read exige CorpusGrant",
+      "stimulus": {
+        "corpus_name": "Manual do servidor",
+        "corpus_granted": false,
+        "corpus_documents": [
+          {
+            "filename": "manual.md",
+            "origin_kind": "upload",
+            "origin_ref": "manual.md",
+            "text": "# Manual do servidor\n\n## 4. Rede\n\n### 4.1 Proxy\n\nO proxy reverso escuta na porta 8899 e recusa origem fora da allowlist. Cada recusa registra o erro ERR_ORIGIN_2049 no diario.\n"
+          }
+        ],
+        "tool_call": {"name": "corpus_search", "arguments": {"query": "porta do proxy"}}
+      },
+      "oracle": {
+        "must_call": ["corpus_search"],
+        "must_not_call": [],
+        "max_tool_calls": 1,
+        "result_payload": {
+          "status": "blocked",
+          "retryable": false,
+          "data": null,
+          "error": {"class": "corpus_grant_required"},
+          "meta": {"producer": "harness", "truncated": false, "taints": []}
+        },
+        "typed_assertions": [
+          {"operator": "tool_called", "tool": "corpus_search"},
+          {"operator": "max_tool_calls", "maximum": 1},
+          {"operator": "result_status_is", "status": "blocked"},
+          {"operator": "result_error_code_is", "code": "corpus_grant_required"},
+          {"operator": "result_producer_is", "producer": "harness"}
+        ],
+        "explanation": [
+          "the conversation has no CorpusGrant, so no passage leaves the acervo",
+          "blocked belongs to the harness, never to the executor",
+          "the refusal names the grant that is missing"
+        ]
+      }
+    },
+    {
+      "id": "corpus_passage_from_the_web_keeps_its_taint",
+      "type": "corpus_contract",
+      "tags": ["corpus", "web_taint", "security"],
+      "origin": "ADR-0011: taint por Chunk, pela origem",
+      "stimulus": {
+        "corpus_name": "Wiki do jogo",
+        "corpus_documents": [
+          {
+            "filename": "chefe.md",
+            "origin_kind": "scrape",
+            "origin_ref": "https://wiki.test/chefe",
+            "text": "# Chefe Final\n\nO chefe final tem 320 pontos de vida, resiste a fogo e some depois de tres turnos.\n"
+          }
+        ],
+        "tool_call": {
+          "name": "corpus_search",
+          "arguments": {"query": "chefe final pontos de vida"}
+        }
+      },
+      "oracle": {
+        "must_call": ["corpus_search"],
+        "must_not_call": [],
+        "max_tool_calls": 1,
+        "typed_assertions": [
+          {"operator": "tool_called", "tool": "corpus_search"},
+          {"operator": "result_status_is", "status": "success"},
+          {"operator": "result_taint_is", "taint": "UntrustedWebTaint", "present": true},
+          {"operator": "result_data_contains", "content": "320"}
+        ],
+        "explanation": [
+          "the passage came from the scraper and the result declares the taint",
+          "that taint is what tightens the data_egress confirmation for the rest of the Turn",
+          "the passage is returned verbatim, with the number its source states"
+        ]
+      }
+    },
+    {
+      "id": "corpus_answers_empty_when_nothing_clears_the_floor",
+      "type": "corpus_contract",
+      "tags": ["corpus", "threshold", "uncertainty"],
+      "origin": "ADR-0011: o piso de relevância é lido na similaridade densa",
+      "stimulus": {
+        "corpus_name": "Manual do servidor",
+        "corpus_documents": [
+          {
+            "filename": "manual.md",
+            "origin_kind": "upload",
+            "origin_ref": "manual.md",
+            "text": "# Manual do servidor\n\n## 4. Rede\n\n### 4.1 Proxy\n\nO proxy reverso escuta na porta 8899 e recusa origem fora da allowlist. Cada recusa registra o erro ERR_ORIGIN_2049 no diario.\n"
+          }
+        ],
+        "tool_call": {
+          "name": "corpus_search",
+          "arguments": {"query": "receita de bolo de cenoura com cobertura"}
+        }
+      },
+      "oracle": {
+        "must_call": ["corpus_search"],
+        "must_not_call": [],
+        "max_tool_calls": 1,
+        "typed_assertions": [
+          {"operator": "tool_called", "tool": "corpus_search"},
+          {"operator": "result_status_is", "status": "empty"},
+          {"operator": "result_taint_is", "taint": "UntrustedWebTaint", "present": false},
+          {"operator": "result_data_contains", "content": "nothing relevant"}
+        ],
+        "explanation": [
+          "nothing clears the floor, so the acervo answers with nothing instead of its least bad passage",
+          "empty is success without items, not a failure",
+          "the instruction tells the model to say it does not know rather than answer from memory"
         ]
       }
     }

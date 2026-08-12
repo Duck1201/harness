@@ -40,6 +40,52 @@ class ContextConfig(ConfigModel):
     initial_budget_tokens: int
 
 
+class CorpusIngestionConfig(ConfigModel):
+    accepted_extensions: tuple[str, ...]
+    max_upload_bytes: int
+    chunk_target_tokens: int
+    chunk_overlap_tokens: int
+
+
+class CorpusRetrievalConfig(ConfigModel):
+    dense_candidates: int
+    lexical_candidates: int
+    reciprocal_rank_constant: int
+    dense_similarity_floor: float
+    injected_passages: int
+    max_injected_tokens: int
+
+
+class CorpusCrawlConfig(ConfigModel):
+    respect_robots_txt: bool
+    prefer_sitemap: bool
+    max_depth: int
+    max_pages: int
+    max_total_bytes: int
+    delay_milliseconds: int
+
+
+class CorpusMediaWikiConfig(ConfigModel):
+    page_batch: int
+    backoff_seconds: tuple[float, ...]
+
+
+class CorpusScraperConfig(ConfigModel):
+    mediawiki: CorpusMediaWikiConfig
+    html_crawl: CorpusCrawlConfig
+
+
+class CorpusEmbeddingConfig(ConfigModel):
+    batch_size: int
+
+
+class CorpusConfig(ConfigModel):
+    embedding: CorpusEmbeddingConfig
+    ingestion: CorpusIngestionConfig
+    retrieval: CorpusRetrievalConfig
+    scraper: CorpusScraperConfig
+
+
 class ModelIdentityConfig(ConfigModel):
     id: str
     base_model: str
@@ -51,6 +97,13 @@ class CapabilityConfig(ConfigModel):
     gate_status: str
 
 
+class EmbeddingIdentityConfig(ConfigModel):
+    id: str
+    digest_sha256: str
+    dimensions: int
+    max_input_tokens: int
+
+
 class RuntimeProfileConfig(ConfigModel):
     id: str
     status: str
@@ -59,6 +112,9 @@ class RuntimeProfileConfig(ConfigModel):
     model: ModelIdentityConfig
     installation: Mapping[str, JsonValue]
     capabilities: Mapping[str, CapabilityConfig] = {}
+    # Ausente é uma resposta: um perfil sem modelo de embedding não tem Corpus,
+    # e o harness prefere dizer isso a inventar um padrão.
+    embedding: EmbeddingIdentityConfig | None = None
 
 
 class ModelProfilesConfig(ConfigModel):
@@ -131,6 +187,7 @@ class _HarnessFile(ConfigModel):
     execution_routes: tuple[ExecutionRouteConfig, ...]
     loop: LoopConfig
     context: ContextConfig
+    corpus: CorpusConfig
 
 
 class HarnessConfig(ConfigModel):
@@ -141,6 +198,7 @@ class HarnessConfig(ConfigModel):
     execution_routes: tuple[ExecutionRouteConfig, ...]
     loop: LoopConfig
     context: ContextConfig
+    corpus: CorpusConfig
     model_profiles: ModelProfilesConfig
     tool_registry: ToolRegistryConfig
 
@@ -187,6 +245,7 @@ def load_config(path: str | Path = Path("config/harness.json")) -> HarnessConfig
         execution_routes=harness.execution_routes,
         loop=harness.loop,
         context=harness.context,
+        corpus=harness.corpus,
         model_profiles=profiles,
         tool_registry=registry,
     )

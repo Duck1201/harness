@@ -81,6 +81,7 @@ def test_contract_runner_executes_all_required_deterministic_fixture_types() -> 
             "state_machine",
             "context_builder",
             "privacy_gate",
+            "corpus_contract",
         }
         fixtures = [
             fixture for fixture in _catalog().dataset.fixtures if fixture.type in required_types

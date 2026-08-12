@@ -1,3 +1,4 @@
+import hashlib
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -6,9 +7,12 @@ from pathlib import Path
 from typing import Protocol, cast
 
 from ..agent_engine import AgentEngine
-from ..config import ToolRegistryConfig
+from ..config import CorpusConfig, ToolRegistryConfig, load_config
 from ..context_builder import ContextBuilder, ContextTurn
 from ..conversation_store import ConversationStore
+from ..corpus_ingestion import build_document, embeddable_texts, extract, source_digest
+from ..corpus_service import CorpusLibrary, CorpusRetriever
+from ..corpus_tools import CorpusToolExecutor
 from ..domain import (
     CanonicalHistoryEntry,
     CanonicalHistoryEntryKind,
@@ -68,7 +72,13 @@ class CaseRunner(Protocol):
 
 class ContractCaseRunner:
     _SUPPORTED_TYPES = frozenset(
-        {"executor_contract", "state_machine", "context_builder", "privacy_gate"}
+        {
+            "executor_contract",
+            "state_machine",
+            "context_builder",
+            "privacy_gate",
+            "corpus_contract",
+        }
     )
 
     def __init__(self, *, registry: ToolRegistryConfig) -> None:
@@ -93,7 +103,21 @@ class ContractCaseRunner:
             if "workspace_setup" in stimulus:
                 (workspace / "link-outside").symlink_to(outside, target_is_directory=True)
 
-            if spec.fixture.type == "context_builder":
+            if spec.fixture.type == "corpus_contract":
+                calls = _fixture_calls(spec.fixture)
+                results = await _run_corpus_contract(
+                    spec.fixture,
+                    base / "corpora",
+                    registry=self._registry,
+                    calls=calls,
+                )
+                evidence = _evidence(
+                    workspace=workspace,
+                    calls=calls,
+                    effective_calls=calls,
+                    results=results,
+                )
+            elif spec.fixture.type == "context_builder":
                 evidence = _run_context_builder_contract()
                 results: tuple[ToolResult, ...] = ()
             elif spec.fixture.id == "final_step_has_no_tools":
@@ -138,6 +162,120 @@ class ContractCaseRunner:
                 security_violations=security_violations(spec.fixture, evaluation),
                 evaluation=evaluation,
             )
+
+
+async def _run_corpus_contract(
+    fixture: RegressionFixture,
+    directory: Path,
+    *,
+    registry: ToolRegistryConfig,
+    calls: Sequence[ToolCall],
+) -> tuple[ToolResult, ...]:
+    """Roda `corpus_search` contra um Corpus montado a partir da própria fixture.
+
+    O embedder é determinístico e não mede semântica nenhuma: ele existe para o
+    CI rodar sem GPU e sem Ollama. O que estas fixtures provam é o gate — grant
+    ausente é `blocked`, passagem coletada carrega taint, nada acima do piso é
+    `empty`. Qualidade de recuperação é o experimento comparativo, e esse precisa
+    do modelo de verdade.
+    """
+    library = CorpusLibrary(
+        directory,
+        embedding_model="eval_hashing_embedder",
+        embedding_dimensions=_EVAL_EMBEDDING_DIMENSIONS,
+    )
+    corpus = await library.create(name=str(fixture.stimulus.get("corpus_name", "Corpus")))
+    embedder = _HashingEmbedder()
+    counter = _WordCounter()
+    documents = fixture.stimulus.get("corpus_documents")
+    if isinstance(documents, Sequence) and not isinstance(documents, str):
+        for item in documents:
+            if not isinstance(item, Mapping):
+                continue
+            entry = cast(Mapping[str, JsonValue], item)
+            filename = str(entry.get("filename", "document.md"))
+            text = str(entry.get("text", ""))
+            data = text.encode("utf-8")
+            draft = build_document(
+                extract(filename, data),
+                origin_kind=str(entry.get("origin_kind", "upload")),
+                origin_ref=str(entry.get("origin_ref", filename)),
+                source_digest=source_digest(data),
+                counter=counter,
+                chunk_tokens=64,
+                overlap_tokens=8,
+            )
+            await library.store(corpus.id).add_document(
+                draft, await embedder.embed(embeddable_texts(draft))
+            )
+    granted = fixture.stimulus.get("corpus_granted", True) is not False
+    config = _corpus_eval_config()
+    executor = CorpusToolExecutor(
+        registry=registry,
+        session_policy=_corpus_policy(corpus.id if granted else None),
+        retriever=CorpusRetriever(
+            library=library,
+            embedder=embedder,
+            counter=counter,
+            config=config,
+        ),
+    )
+    return tuple([await executor.execute(call) for call in calls])
+
+
+_EVAL_EMBEDDING_DIMENSIONS = 64
+
+
+class _HashingEmbedder:
+    """Vetor determinístico por palavra. Não mede sentido, e não finge medir."""
+
+    model = "eval_hashing_embedder"
+    dimensions = _EVAL_EMBEDDING_DIMENSIONS
+
+    async def embed(self, texts: Sequence[str]) -> tuple[tuple[float, ...], ...]:
+        vectors: list[tuple[float, ...]] = []
+        for text in texts:
+            buckets = [0.0] * _EVAL_EMBEDDING_DIMENSIONS
+            for word in text.lower().split():
+                digest = hashlib.sha256(word.encode("utf-8")).digest()
+                buckets[digest[0] % _EVAL_EMBEDDING_DIMENSIONS] += 1.0
+            norm = sum(value * value for value in buckets) ** 0.5 or 1.0
+            vectors.append(tuple(value / norm for value in buckets))
+        return tuple(vectors)
+
+
+class _WordCounter:
+    def count_text(self, text: str) -> int:
+        return max(1, len(text.split()))
+
+
+def _corpus_eval_config() -> CorpusConfig:
+    """O piso do contrato foi medido no bge-m3; aqui a escala é outra.
+
+    Baixá-lo para o embedder da bancada é o que mantém a fixture medindo o gate
+    em vez de medir a coincidência de dois vetores de brinquedo.
+    """
+    config = load_config().corpus
+    return config.model_copy(
+        update={"retrieval": config.retrieval.model_copy(update={"dense_similarity_floor": 0.3})}
+    )
+
+
+def _corpus_policy(corpus_id: str | None) -> SessionPolicy:
+    if corpus_id is None:
+        return SessionPolicy(conversation_id="eval")
+    return SessionPolicy(
+        conversation_id="eval",
+        grants=(
+            Grant(
+                id="eval-corpus",
+                conversation_id="eval",
+                permission="CorpusGrant",
+                scope=corpus_id,
+                granted_at=datetime.now(UTC),
+            ),
+        ),
+    )
 
 
 def _contract_policy() -> SessionPolicy:

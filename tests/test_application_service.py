@@ -128,6 +128,8 @@ def test_service_exposes_effective_tool_schemas_without_disclosing_the_search_en
                 "calculate",
                 "get_weather",
             }
+            # corpus_search fica de fora: este serviço não tem modelo de embedding
+            # nem diretório de corpora, então não há executor por trás do nome.
             offered = [{schema.name for schema in request.tools} for request in runtime.requests]
             assert offered == [catalogue, catalogue, catalogue]
 

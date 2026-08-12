@@ -1,9 +1,9 @@
 import asyncio
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
 from .agent_engine import AgentEngine
 from .brave_browser import BraveBrowserCapability, BraveEgressGuard
@@ -11,9 +11,25 @@ from .composite_tools import CompositeToolExecutor
 from .config import HarnessConfig, ToolRegistryConfig
 from .context_builder import ContextBuilder
 from .conversation_store import ConversationStore
+from .corpus_scraper import Scraper
+from .corpus_service import (
+    CorpusIngestionService,
+    CorpusLibrary,
+    CorpusLibraryError,
+    CorpusRetriever,
+    IngestionJob,
+)
+from .corpus_store import CorpusStoreError
+from .corpus_tools import CorpusToolExecutor, granted_corpus_id
 from .domain import (
+    CORPUS_EFFECT,
+    CORPUS_GRANT,
     MUTATION_EFFECT,
+    CanonicalHistoryEntry,
+    CanonicalHistoryEntryKind,
     Conversation,
+    Corpus,
+    Document,
     Feedback,
     Grant,
     JsonValue,
@@ -31,6 +47,7 @@ from .evals import (
     EvalStore,
     EvalTier,
     ModelCaseRunner,
+    PortugueseDetector,
     RegressionDraft,
     load_eval_catalog,
 )
@@ -42,10 +59,16 @@ from .ports import (
     ConfirmationDecision,
     ConfirmationPreview,
     ConfirmationRequest,
+    EmbeddingRuntime,
     EngineReadiness,
     EventSink,
+    ModelMessage,
+    ModelRequest,
+    ModelRole,
     ModelRuntime,
+    ModelRuntimeError,
     StopSignal,
+    TextTokenCounter,
     TokenEstimator,
     ToolBatchPreflight,
     ToolExecutor,
@@ -101,6 +124,8 @@ class ApplicationService:
         eval_service: EvalService | None = None,
         browser_capability: BrowserCapability | None = None,
         browser_egress_guard: BrowserEgressGuard | None = None,
+        corpus_directory: str | Path | None = None,
+        embedder: EmbeddingRuntime | None = None,
     ) -> None:
         roots: list[Path] = []
         for candidate in allowed_workspace_roots:
@@ -161,6 +186,41 @@ class ApplicationService:
             brave_guard = BraveEgressGuard(executable=browser_executable)
             browser_capability = browser_capability or BraveBrowserCapability(guard=brave_guard)
             browser_egress_guard = browser_egress_guard or brave_guard
+        # Sem modelo de embedding declarado no perfil, ou sem diretório, não há
+        # Corpus: a aba diz isso e a tool recusa, em vez de o harness inventar um
+        # acervo vazio que responderia "não encontrei" para sempre.
+        self.embedder = embedder
+        counter = estimator if isinstance(estimator, TextTokenCounter) else None
+        # Uma condição só para tudo que é Corpus: sem embedder ou sem contador de
+        # tokens não há como indexar nem buscar, e uma biblioteca que só lista
+        # arquivos seria uma disponibilidade mentirosa na aba.
+        self.corpus_library = (
+            _corpus_library(config, corpus_directory)
+            if embedder is not None and counter is not None
+            else None
+        )
+        self._corpus_retriever = (
+            CorpusRetriever(
+                library=self.corpus_library,
+                embedder=embedder,
+                counter=counter,
+                config=config.corpus,
+            )
+            if self.corpus_library is not None and embedder is not None and counter is not None
+            else None
+        )
+        self.corpus_ingestion = (
+            CorpusIngestionService(
+                library=self.corpus_library,
+                embedder=embedder,
+                counter=counter,
+                config=config.corpus,
+                scraper=Scraper(config=config.corpus.scraper),
+                recorder=observability_store,
+            )
+            if self.corpus_library is not None and embedder is not None and counter is not None
+            else None
+        )
         self._tool_executor_factory: ToolExecutorFactory = _ConversationToolExecutorFactory(
             store=store,
             registry=config.tool_registry,
@@ -169,6 +229,7 @@ class ApplicationService:
             search_endpoint=normalized_search_endpoint,
             browser_capability=browser_capability,
             browser_egress_guard=browser_egress_guard,
+            corpus_retriever=self._corpus_retriever,
         )
         self._event_bus = _LiveEventBus()
         self._event_sink = _ServiceEventSink(self._event_bus, observability_store)
@@ -210,6 +271,8 @@ class ApplicationService:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         await self.eval_service.shutdown()
+        if self.corpus_ingestion is not None:
+            await self.corpus_ingestion.shutdown()
         await self.runtime.aclose()
 
     @property
@@ -343,6 +406,109 @@ class ApplicationService:
             )
         return await self.store.grant(conversation_id, permission, scope)
 
+    async def select_corpus(self, conversation_id: str, corpus_id: str | None) -> Grant | None:
+        """Selecting a Corpus *is* granting access to it; "Desligado" revokes.
+
+        One act, not two. A separate "which corpus is on" column would be a second
+        place to disagree with the grant the policy actually enforces.
+        """
+        await self.store.get_conversation(conversation_id)
+        library = self.corpus_library
+        if library is None:
+            raise ApplicationServiceError(
+                "corpus_unavailable",
+                "Este perfil não declara modelo de embedding, então não há Corpus.",
+                status_code=409,
+            )
+        for grant in (await self.store.get_session_policy(conversation_id)).grants:
+            if grant.permission == CORPUS_GRANT:
+                await self.store.revoke_grant(conversation_id, grant.id)
+        if corpus_id is None:
+            return None
+        try:
+            await library.read(corpus_id)
+        except CorpusLibraryError as error:
+            raise ApplicationServiceError(error.code, str(error), status_code=404) from error
+        return await self.store.grant(conversation_id, CORPUS_GRANT, corpus_id)
+
+    async def selected_corpus(self, conversation_id: str) -> str | None:
+        return granted_corpus_id(await self.store.get_session_policy(conversation_id))
+
+    async def list_corpora(self) -> tuple[Corpus, ...]:
+        return await self._library().list()
+
+    async def create_corpus(self, name: str, description: str = "") -> Corpus:
+        return await self._corpus_call(self._library().create(name=name, description=description))
+
+    async def rename_corpus(
+        self,
+        corpus_id: str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> Corpus:
+        return await self._corpus_call(
+            self._library().rename(corpus_id, name=name, description=description)
+        )
+
+    async def delete_corpus(self, corpus_id: str) -> None:
+        await self._corpus_call(self._library().delete(corpus_id))
+
+    async def list_corpus_documents(self, corpus_id: str) -> tuple[Document, ...]:
+        return await self._corpus_call(self._library().store(corpus_id).list_documents())
+
+    async def delete_corpus_document(self, corpus_id: str, document_id: str) -> None:
+        await self._corpus_call(self._library().store(corpus_id).delete_document(document_id))
+
+    async def upload_to_corpus(
+        self,
+        corpus_id: str,
+        filename: str,
+        data: bytes,
+    ) -> "IngestionJob":
+        return await self._corpus_call(self._ingestion().ingest_upload(corpus_id, filename, data))
+
+    async def start_corpus_scrape(self, corpus_id: str, seed: str) -> "IngestionJob":
+        return await self._corpus_call(self._ingestion().start_scrape(corpus_id, seed))
+
+    def list_corpus_jobs(self, corpus_id: str | None = None) -> tuple["IngestionJob", ...]:
+        return self._ingestion().list_jobs(corpus_id)
+
+    def cancel_corpus_job(self, job_id: str) -> "IngestionJob":
+        try:
+            return self._ingestion().cancel(job_id)
+        except CorpusLibraryError as error:
+            raise ApplicationServiceError(error.code, str(error), status_code=404) from error
+
+    def _library(self) -> CorpusLibrary:
+        if self.corpus_library is None:
+            raise ApplicationServiceError(
+                "corpus_unavailable",
+                "Este perfil não declara modelo de embedding, então não há Corpus.",
+                status_code=409,
+            )
+        return self.corpus_library
+
+    def _ingestion(self) -> "CorpusIngestionService":
+        if self.corpus_ingestion is None:
+            raise ApplicationServiceError(
+                "corpus_unavailable",
+                "Este perfil não declara modelo de embedding, então não há Corpus.",
+                status_code=409,
+            )
+        return self.corpus_ingestion
+
+    async def _corpus_call[T](self, awaitable: Awaitable[T]) -> T:
+        try:
+            return await awaitable
+        except CorpusLibraryError as error:
+            status = 404 if error.code.endswith("not_found") else 422
+            raise ApplicationServiceError(error.code, str(error), status_code=status) from error
+        except CorpusStoreError as error:
+            raise ApplicationServiceError("corpus_store_error", str(error), status_code=422) from (
+                error
+            )
+
     async def list_grants(self, conversation_id: str) -> tuple[Grant, ...]:
         return (await self.store.get_session_policy(conversation_id)).grants
 
@@ -440,6 +606,7 @@ class ApplicationService:
             "pending_confirmation": self._confirmation_gate.pending(conversation_id),
             "confirmation_waivers": sorted(await self.store.waived_confirmations(conversation_id)),
             "yolo": await self.store.yolo_active(conversation_id),
+            "corpus_id": granted_corpus_id(await self.store.get_session_policy(conversation_id)),
         }
 
     async def stop(self, conversation_id: str) -> None:
@@ -559,6 +726,16 @@ class ApplicationService:
             max_turn_duration_seconds=self.config.loop.max_turn_duration_seconds,
             runtime_readiness=self._runtime_readiness,
             stop_signal=stop_signal,
+            turn_retrieval=(
+                CorpusTurnRetrieval(
+                    store=self.store,
+                    retriever=self._corpus_retriever,
+                    runtime=self.runtime,
+                    observability_store=self.observability_store,
+                )
+                if self._corpus_retriever is not None
+                else None
+            ),
             confirmation_gate=self._confirmation_gate,
         )
 
@@ -618,6 +795,17 @@ def _default_eval_service(
     )
 
 
+def _corpus_library(config: HarnessConfig, directory: str | Path | None) -> CorpusLibrary | None:
+    embedding = config.runtime_profile.embedding
+    if directory is None or embedding is None:
+        return None
+    return CorpusLibrary(
+        directory,
+        embedding_model=embedding.id,
+        embedding_dimensions=embedding.dimensions,
+    )
+
+
 class _ConversationToolExecutorFactory:
     def __init__(
         self,
@@ -629,6 +817,7 @@ class _ConversationToolExecutorFactory:
         search_endpoint: str | None,
         browser_capability: BrowserCapability | None = None,
         browser_egress_guard: BrowserEgressGuard | None = None,
+        corpus_retriever: CorpusRetriever | None = None,
     ) -> None:
         self._store = store
         self._registry = registry
@@ -637,6 +826,7 @@ class _ConversationToolExecutorFactory:
         self._search_endpoint = search_endpoint
         self._browser_capability = browser_capability
         self._browser_egress_guard = browser_egress_guard
+        self._corpus_retriever = corpus_retriever
 
     async def effective_tool_schemas(self, conversation_id: str) -> tuple[ToolSchema, ...]:
         """The enabled catalogue, whatever the conversation has been granted.
@@ -652,10 +842,14 @@ class _ConversationToolExecutorFactory:
         del conversation_id
         # web_search is always offered: its fallback provider needs no credential,
         # so there is no configuration under which the tool cannot answer at all.
+        # corpus_search is the exception that proves the rule: without an embedding
+        # model there is no executor behind it, and offering a name that can only
+        # answer unknown_tool teaches the model to spend steps on it.
         return tuple(
             definition.tool_schema()
             for definition in self._registry.model_tools
             if definition.status == "enabled"
+            and (self._corpus_retriever is not None or CORPUS_EFFECT not in definition.effects)
         )
 
     async def create(self, conversation_id: str) -> ToolExecutor:
@@ -680,10 +874,136 @@ class _ConversationToolExecutorFactory:
             browser_capability=self._browser_capability,
             browser_egress_guard=self._browser_egress_guard,
         )
+        corpus = (
+            CorpusToolExecutor(
+                registry=registry,
+                session_policy=policy,
+                retriever=self._corpus_retriever,
+            )
+            if self._corpus_retriever is not None
+            else None
+        )
         routes: dict[str, ToolExecutor] = {}
         for definition in registry.model_tools:
+            # Pelo efeito declarado, nunca pelo nome: uma tool nova é roteada por
+            # ter dito o que faz, e uma sem executor não é oferecida ao modelo.
+            if CORPUS_EFFECT in definition.effects:
+                if corpus is not None:
+                    routes[definition.name] = corpus
+                continue
             routes[definition.name] = web if "data_egress" in definition.effects else local
         return CompositeToolExecutor(routes=routes)
+
+
+class CorpusTurnRetrieval:
+    """The automation side of the same retrieval the tool performs.
+
+    The rewrite is one short generation and it buys two things at once: a query
+    that stands on its own — "and the second one?" retrieves nothing — and an
+    English one for the lexical leg, which is blind to language. The dense leg
+    keeps the Operator's own words, so a bad rewrite degrades the search instead
+    of replacing it. When the rewrite fails there is simply no lexical leg:
+    feeding it Portuguese against an English Corpus measurably ranks worse than
+    not searching lexically at all.
+    """
+
+    def __init__(
+        self,
+        *,
+        store: ConversationStore,
+        retriever: CorpusRetriever,
+        runtime: ModelRuntime,
+        observability_store: ObservabilityStore,
+    ) -> None:
+        self._store = store
+        self._retriever = retriever
+        self._runtime = runtime
+        self._observability_store = observability_store
+        self._portuguese = PortugueseDetector()
+
+    async def for_turn(
+        self,
+        conversation_id: str,
+        question: str,
+    ) -> Mapping[str, JsonValue] | None:
+        policy = await self._store.get_session_policy(conversation_id)
+        corpus_id = granted_corpus_id(policy)
+        if corpus_id is None:
+            return None
+        history = await self._store.list_canonical_history(conversation_id)
+        lexical = await self._standalone_english_query(question, history)
+        try:
+            retrieval = await self._retriever.retrieve(
+                corpus_id,
+                question,
+                lexical_query=lexical,
+            )
+        except CorpusLibraryError as error:
+            return {"status": "blocked", "reason_code": error.code, "detail": str(error)}
+        # Contagens e classes, nunca a pergunta nem a passagem: o store de
+        # telemetria recusa conteúdo por construção, e esta é a informação que
+        # diz se a recuperação está entregando alguma coisa.
+        await self._observability_store.record(
+            event_type="corpus.retrieval",
+            payload={
+                "corpus_id": retrieval.corpus_id,
+                "passages": len(retrieval.chunks),
+                "rewritten": lexical is not None,
+                "taints": list(retrieval.taints),
+            },
+        )
+        payload = retrieval.payload()
+        return {
+            "corpus_id": retrieval.corpus_id,
+            "search_query": lexical,
+            **cast(Mapping[str, JsonValue], payload),
+        }
+
+    async def _standalone_english_query(
+        self,
+        question: str,
+        history: Sequence[CanonicalHistoryEntry],
+    ) -> str | None:
+        previous = [
+            content
+            for entry in history[-6:]
+            if entry.kind is CanonicalHistoryEntryKind.USER_MESSAGE
+            and isinstance(content := entry.payload.get("content"), str)
+        ][-2:]
+        context = "\n".join(f"- {item}" for item in previous)
+        instruction = (
+            "Translate the request below into an English search query that stands "
+            "on its own. Keep names, identifiers, error codes and numbers exactly "
+            "as written. Answer with the English query alone: no quotes, no "
+            "explanation, and never repeat the original wording.\n\n"
+            "Example\n"
+            "Request: Em que porta o proxy escuta?\n"
+            "Query: which port does the proxy listen on\n\n"
+            f"{'Earlier requests:\n' + context + '\n\n' if context else ''}"
+            f"Request: {question}\nQuery:"
+        )
+        try:
+            response = await self._runtime.generate(
+                ModelRequest(
+                    messages=(ModelMessage(role=ModelRole.USER, content=instruction),),
+                    tools=(),
+                    options={"temperature": 0},
+                    seed=0,
+                    max_output_tokens=64,
+                    think=False,
+                )
+            )
+        except ModelRuntimeError:
+            return None
+        content = (response.content or "").strip().splitlines()
+        query = content[0].strip().strip('"').removeprefix("Query:").strip() if content else ""
+        if not query:
+            return None
+        # Um 4B pedido para traduzir às vezes devolve a pergunta como veio. Entregar
+        # isso à perna lexical é pior do que não ter perna lexical: contra um acervo
+        # em inglês, uma palavra em comum carrega o casamento inteiro e derruba a
+        # perna densa, que já tinha acertado. Sem reescrita, sem BM25.
+        return None if self._portuguese.is_portuguese(query) else query
 
 
 class _CoordinatedToolExecutor:
