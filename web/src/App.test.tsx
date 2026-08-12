@@ -245,6 +245,11 @@ describe("App", () => {
     await user.clear(tokenizerPathField);
     await user.type(tokenizerPathField, "/var/lib/harness-2/tokenizer.json");
     const originsField = screen.getByLabelText("Origins autorizadas");
+    // Loopback tem duas grafias e o navegador manda a que foi digitada na barra:
+    // o formulário sugere o par para o painel não virar 403 pela outra.
+    expect(originsField).toHaveValue(
+      `${window.location.origin}\nhttp://127.0.0.1:${window.location.port}`,
+    );
     await user.clear(originsField);
     await user.type(originsField, "http://127.0.0.1:8765");
     await user.click(screen.getByRole("button", { name: "Concluir setup" }));

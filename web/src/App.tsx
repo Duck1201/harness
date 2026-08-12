@@ -85,6 +85,33 @@ interface LiveRun {
   error?: string;
 }
 
+// Uma origin de loopback tem duas grafias, e o navegador manda exatamente a que
+// o Operator digitou na barra: quem autoriza só uma vê a outra virar 403 nos
+// próprios assets, ou seja, tela branca sem erro visível. O fallback anterior ao
+// setup já autoriza o par; os formulários passam a sugerir o mesmo, e a lista
+// continua editável antes de salvar.
+const LOOPBACK_COUNTERPART: Record<string, string> = {
+  "127.0.0.1": "localhost",
+  localhost: "127.0.0.1",
+};
+
+export function withLoopbackPair(origins: readonly string[]): string[] {
+  const result = [...origins];
+  for (const origin of origins) {
+    let url: URL;
+    try {
+      url = new URL(origin);
+    } catch {
+      continue;
+    }
+    const counterpart = LOOPBACK_COUNTERPART[url.hostname];
+    if (!counterpart) continue;
+    url.hostname = counterpart;
+    if (!result.includes(url.origin)) result.push(url.origin);
+  }
+  return result;
+}
+
 const areaItems = [
   { id: "chat" as const, label: "Chat", icon: MessageSquare },
   { id: "evals" as const, label: "Avaliações", icon: FlaskConical },
@@ -350,7 +377,7 @@ function SetupArea({
   const [values, setValues] = useState<Record<string, string>>({
     state_dir: status.suggested_state_dir,
     tokenizer_path: status.suggested_tokenizer_path,
-    allowed_origins: window.location.origin,
+    allowed_origins: withLoopbackPair([window.location.origin]).join("\n"),
   });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1794,7 +1821,7 @@ function SettingsArea({
     allowed_workspace_roots: (stored?.allowed_workspace_roots ?? []).join("\n"),
     tokenizer_path: stored?.tokenizer_path ?? "",
     state_dir: stored?.state_dir ?? "",
-    allowed_origins: (stored?.allowed_origins ?? []).join("\n"),
+    allowed_origins: withLoopbackPair(stored?.allowed_origins ?? []).join("\n"),
     searxng_url: stored?.searxng_url ?? "",
     ollama_url: stored?.ollama_url ?? "http://127.0.0.1:11434",
   });
