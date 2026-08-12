@@ -23,7 +23,7 @@ from ..agent_engine import AgentEngine
 from ..brave_browser import BraveBrowserCapability, BraveEgressGuard
 from ..composite_tools import CompositeToolExecutor
 from ..config import HarnessConfig, ToolRegistryConfig
-from ..context_builder import ContextBuilder
+from ..context_builder import ContextBuilder, ModelViewFormat
 from ..conversation_store import ConversationStore
 from ..domain import (
     MUTATION_EFFECT,
@@ -69,6 +69,25 @@ _STUB_PAGES = {
     "known_url_requires_browser": "/js-only",
 }
 _URL_PATTERN = re.compile(r"https?://\S+")
+
+
+def _model_view_format(settings: Mapping[str, JsonValue]) -> ModelViewFormat:
+    """Qual render de ModelView o braço pede. Fora do experimento, o do contrato."""
+    declared = settings.get("model_view_format")
+    if declared == "json":
+        return "json"
+    if declared in (None, "xml"):
+        return "xml"
+    raise ValueError(f"unknown model_view_format in arm settings: {declared!r}")
+
+
+def _sampling(settings: Mapping[str, JsonValue], name: str, default: float) -> float:
+    declared = settings.get(name)
+    if declared is None:
+        return default
+    if isinstance(declared, bool) or not isinstance(declared, int | float):
+        raise ValueError(f"arm setting {name} must be a number: {declared!r}")
+    return float(declared)
 
 
 def _eval_policy(permissions: Sequence[str] = _ALL_GRANTS) -> SessionPolicy:
@@ -304,6 +323,7 @@ class ModelCaseRunner:
                         self._estimator,
                         context_window=self._config.context.initial_budget_tokens,
                         output_budget=self._config.loop.max_output_tokens,
+                        model_view_format=_model_view_format(spec.settings),
                     ),
                     event_sink=NullEventSink(),
                     system_prompt=build_system_prompt(
@@ -313,9 +333,15 @@ class ModelCaseRunner:
                     ),
                     tool_schemas=self._tool_schemas(policy),
                     model_options={
-                        "temperature": self._config.execution_route.sampling.temperature,
-                        "presence_penalty": (
-                            self._config.execution_route.sampling.presence_penalty
+                        "temperature": _sampling(
+                            spec.settings,
+                            "temperature",
+                            self._config.execution_route.sampling.temperature,
+                        ),
+                        "presence_penalty": _sampling(
+                            spec.settings,
+                            "presence_penalty",
+                            self._config.execution_route.sampling.presence_penalty,
                         ),
                     },
                     seed=spec.seed,

@@ -1,7 +1,8 @@
 import asyncio
+from collections.abc import Mapping
 from pathlib import Path
 
-from harness import ToolResultStatus, load_config
+from harness import JsonValue, ToolResultStatus, load_config
 from harness.evals import (
     BenchmarkLease,
     CaseRunner,
@@ -250,5 +251,55 @@ def test_cancel_releases_benchmark_lease(tmp_path: Path) -> None:
         await lease.enter_chat("chat-after-cancel")
         await lease.leave_chat("chat-after-cancel")
         await service.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_arm_settings_reach_the_runner_instead_of_dying_in_the_store(tmp_path: Path) -> None:
+    """Two arms declared different have to run different, or the comparison is noise."""
+
+    class RecordingRunner:
+        def __init__(self) -> None:
+            self.settings: list[Mapping[str, JsonValue]] = []
+
+        def supports(self, fixture_type: str) -> bool:
+            return fixture_type == "model_task"
+
+        async def run_case(self, spec: EvalCaseSpec) -> CaseRunResult:
+            self.settings.append(dict(spec.settings))
+            return CaseRunResult(evidence=EvalEvidence(), metrics={})
+
+    async def scenario() -> None:
+        runner = RecordingRunner()
+        service = EvalService(
+            store=EvalStore(tmp_path / "evals.sqlite3"),
+            catalog=_catalog(),
+            lease=BenchmarkLease(),
+            runners={EvalTier.EXPERIMENT: runner},
+        )
+        await service.initialize()
+        try:
+            run = await service.create_run(
+                experiment_id="model_view_serialization",
+                tier=EvalTier.EXPERIMENT,
+                phase=EvalPhase.PILOT,
+            )
+            await service.start(run.id)
+            status = EvalRunStatus.RUNNING
+            for _ in range(600):
+                status = (await service.status(run.id)).status
+                if status in {
+                    EvalRunStatus.COMPLETED,
+                    EvalRunStatus.BLOCKED,
+                    EvalRunStatus.FAILED,
+                }:
+                    break
+                await asyncio.sleep(0.01)
+            assert status is EvalRunStatus.COMPLETED, status
+        finally:
+            await service.shutdown()
+
+        formats = sorted({str(item.get("model_view_format")) for item in runner.settings})
+        assert formats == ["json", "xml"]
 
     asyncio.run(scenario())

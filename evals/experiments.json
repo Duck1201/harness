@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "manifest_version": "2.0.0",
-  "manifest_digest_sha256": "9db307c4a9d16f887b786809352edaf2223b49dd6c81139da7ea52183ccfb4bd",
+  "manifest_digest_sha256": "d970fe6dd8ec43db84f83b6f5960965f4ca0e1a0097b46eaf64ff9f60b9dd081",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -67,6 +67,93 @@
     "untrusted_web_taint_violations"
   ],
   "results": [
+    {
+      "experiment_id": "model_view_serialization",
+      "recorded_on": "2026-08-12",
+      "phase": "pilot",
+      "tier": "experiment",
+      "status": "completed",
+      "runner": "scripts/run-experiment.py",
+      "seeds": [
+        104729,
+        130363,
+        155921
+      ],
+      "frozen": {
+        "runtime_profile_id": "local_mitos_ollama_reproduction",
+        "runtime_profile_digest": "79d1056f6cb28d32c470a2206e76c83985dacabcac6bc141d088c15d344817f4",
+        "execution_route_id": "local_web_tools",
+        "dataset_version": "3.0.0",
+        "dataset_digest": "71cfa19d172d17b363a942265a56b0ca28a4831f39cd4de237aa0b87dc5fd6fd",
+        "harness_digest": "f7e44315d3e48e0b0534e3faf788fbf38f2529a4d6e1a3b035444d38f69e38d2",
+        "tool_registry_digest": "666f871e0aedde64dfba3e593154fa51b63784c05754e3fc71893d7d461512dd",
+        "operator_prompt_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "arms": [
+        {
+          "arm_id": "json_control",
+          "case_count": 15,
+          "verdict_counts": {
+            "fail": 4,
+            "inconclusive": 0,
+            "not_evaluated": 0,
+            "pass": 11
+          },
+          "wilson_95": {
+            "estimate": 0.7333333333333333,
+            "lower": 0.4804956594401943,
+            "upper": 0.8910254667430761
+          },
+          "rejected_model_attempts": 1.0,
+          "tool_noop_rate_sum": 0.667,
+          "steps_to_terminal_sum": 28.0,
+          "latency_ms_median": 7797,
+          "terminal_outcomes": {
+            "final_response": 11,
+            "write_confirmation_required": 4
+          }
+        },
+        {
+          "arm_id": "xml_candidate",
+          "case_count": 15,
+          "verdict_counts": {
+            "fail": 4,
+            "inconclusive": 0,
+            "not_evaluated": 0,
+            "pass": 11
+          },
+          "wilson_95": {
+            "estimate": 0.7333333333333333,
+            "lower": 0.4804956594401943,
+            "upper": 0.8910254667430761
+          },
+          "rejected_model_attempts": 0.0,
+          "tool_noop_rate_sum": 0.0,
+          "steps_to_terminal_sum": 26.0,
+          "latency_ms_median": 6613,
+          "terminal_outcomes": {
+            "final_response": 11,
+            "model_provider_unavailable": 1,
+            "write_confirmation_required": 3
+          }
+        }
+      ],
+      "security_violations": 0,
+      "verdict": "inconclusive",
+      "environment": {
+        "ollama": "0.32.5",
+        "model": "mitos:latest"
+      },
+      "notes": [
+        "Pilot: 15 cases per arm, directional only by the promotion protocol. It does not promote or revert anything.",
+        "Task success tied at 11/15 in both arms, fixture by fixture, so this pilot found no difference in what the corpus measures.",
+        "The two counters that would show the model choking on the format moved for XML, not against it: rejected_model_attempts 1 -> 0 and tool_noop_rate 0.7 -> 0.0 in absolute terms.",
+        "Latency is not claimed: the arms ran sequentially against one Ollama, so the medians (7797 ms control, 6613 ms candidate) carry warm-up and contention.",
+        "One candidate case ended in model_provider_unavailable, a provider hiccup unrelated to the format.",
+        "Four failures per arm are the same fixtures in both: tool_write_required_relative_path and edit_preserves_whitespace_round_trip end in write_confirmation_required, because ModelCaseRunner waives the confirmation in the store while AgentEngine still runs with DenyingConfirmationGate. No write fixture can pass in the corpus today, in either arm.",
+        "ADR-0010 keeps the default by the declared gate: a tie holds what is already in force. A promotion run of 50 cases per arm is what would settle it."
+      ]
+    },
     {
       "experiment_id": "guarded_web_brave_escalation",
       "recorded_on": "2026-08-10",
@@ -554,6 +641,43 @@
         "turns_killed_at_limit": "6/12"
       },
       "promotion_gate": "Improve valid delivered HTML without duplicate PageRevision verification, material abandonment or unacceptable latency."
+    },
+    {
+      "id": "model_view_serialization",
+      "status": "required_before_keeping_the_default",
+      "runtime_profile": "local_mitos_ollama_reproduction",
+      "execution_route": "local_web_tools",
+      "fixture_tags": [
+        "tool_selection",
+        "parser",
+        "tool_noop"
+      ],
+      "fixed": {
+        "temperature": 0.3,
+        "presence_penalty": 0,
+        "thinking": true,
+        "max_steps": 15,
+        "max_tool_calls_per_turn": 20
+      },
+      "arms": [
+        {
+          "id": "json_control",
+          "model_view_format": "json"
+        },
+        {
+          "id": "xml_candidate",
+          "model_view_format": "xml"
+        }
+      ],
+      "metrics_of_record": [
+        "task_verdict",
+        "rejected_model_attempts",
+        "terminal_outcome",
+        "steps_to_terminal",
+        "latency_ms"
+      ],
+      "question": "ADR-0010 trocou o conteudo das mensagens do modelo de JSON minificado para XML por argumento de legibilidade, sem medicao. Este experimento decide se o default fica.",
+      "promotion_gate": "O XML fica se nao perder verdict PASS contra o controle e nao aumentar rejected_model_attempts; empate mantem o default por ja estar em vigor. Perda em qualquer um dos dois reverte ADR-0010."
     },
     {
       "id": "guarded_web_brave_escalation",

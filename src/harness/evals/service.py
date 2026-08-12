@@ -179,6 +179,7 @@ class EvalService:
                             seed=seed,
                             order_index=order_index,
                             tier=run.tier,
+                            settings=arm.settings,
                         )
                     )
                     evaluation = result.evaluation or evaluate_oracle(

@@ -1,9 +1,9 @@
 import hashlib
 import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 from xml.sax.saxutils import escape, quoteattr
 
 from .domain import (
@@ -15,6 +15,9 @@ from .domain import (
 from .ports import EngineReadiness, ModelMessage, ModelRole, TokenEstimator, ToolSchema
 
 _XML_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
+
+type ModelViewFormat = Literal["xml", "json"]
+type PayloadRenderer = Callable[[str, JsonValue], str]
 
 
 class ContextBuilderError(Exception):
@@ -56,12 +59,17 @@ class ContextBuilder:
         *,
         context_window: int,
         output_budget: int = 8192,
+        model_view_format: ModelViewFormat = "xml",
     ) -> None:
         if context_window <= output_budget:
             raise ValueError("context window must exceed output budget")
         self._estimator = estimator
         self._context_window = context_window
         self._output_budget = output_budget
+        # XML é o formato do harness (ADR-0010). JSON continua construível porque
+        # é o controle do experimento que mede a troca: um braço que não pode ser
+        # executado não é controle, é lembrança.
+        self._render_payload = _xml_document if model_view_format == "xml" else _json_document
 
     @property
     def readiness(self) -> EngineReadiness:
@@ -107,13 +115,14 @@ class ContextBuilder:
         seen_payloads: dict[str, CanonicalHistoryEntry] = {}
         for turn in turns:
             for entry in turn.entries:
-                messages.append(_entry_message(entry, seen_payloads))
+                messages.append(_entry_message(entry, seen_payloads, self._render_payload))
         return tuple(messages)
 
 
 def _entry_message(
     entry: CanonicalHistoryEntry,
     seen_payloads: dict[str, CanonicalHistoryEntry],
+    render: PayloadRenderer,
 ) -> ModelMessage:
     payload = entry.payload
     if entry.kind is CanonicalHistoryEntryKind.USER_MESSAGE:
@@ -121,11 +130,11 @@ def _entry_message(
     if entry.kind is CanonicalHistoryEntryKind.REJECTED_MODEL_ATTEMPT:
         return ModelMessage(
             role=ModelRole.ASSISTANT,
-            content=_xml_document("rejected_model_attempt", payload),
+            content=render("rejected_model_attempt", payload),
         )
     if entry.kind is CanonicalHistoryEntryKind.MODEL_ATTEMPT:
         content = payload.get("content")
-        text = content if isinstance(content, str) else _xml_document("model_attempt", payload)
+        text = content if isinstance(content, str) else render("model_attempt", payload)
         return ModelMessage(
             role=ModelRole.ASSISTANT,
             content=text,
@@ -135,7 +144,7 @@ def _entry_message(
         rendered = dict(payload)
         data = payload.get("data")
         if data is not None:
-            digest = hashlib.sha256(_xml_text(data).encode()).hexdigest()
+            digest = hashlib.sha256(render("data", data).encode()).hexdigest()
             original = seen_payloads.get(digest)
             if original is None:
                 seen_payloads[digest] = entry
@@ -143,7 +152,7 @@ def _entry_message(
                 rendered["data"] = {"$ref": {"entry_id": original.id, "sha256": digest}}
         return ModelMessage(
             role=ModelRole.TOOL,
-            content=_xml_document("tool_result", rendered),
+            content=render("tool_result", rendered),
             tool_call_id=_optional_string(payload, "tool_call_id"),
             name=_optional_string(payload, "tool_name"),
         )
@@ -152,7 +161,7 @@ def _entry_message(
     if entry.kind is CanonicalHistoryEntryKind.INTERNAL_AUTOMATION:
         return ModelMessage(
             role=ModelRole.TOOL,
-            content=_xml_document("internal_automation", payload),
+            content=render("internal_automation", payload),
             name=_optional_string(payload, "automation_id"),
         )
     raise ContextBuilderError(f"unsupported canonical history entry: {entry.kind}")
@@ -214,6 +223,19 @@ def _optional_string(payload: Mapping[str, JsonValue], key: str) -> str | None:
 
 def _xml_document(root: str, value: JsonValue) -> str:
     return f"<{root}>{_xml_text(value)}</{root}>"
+
+
+def _json_document(root: str, value: JsonValue) -> str:
+    """O render anterior ao ADR-0010, mantido como braço de controle."""
+    del root
+    serialized = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return serialized.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
 def _xml_text(value: JsonValue) -> str:

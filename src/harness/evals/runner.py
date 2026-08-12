@@ -1,6 +1,6 @@
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol, cast
@@ -44,6 +44,12 @@ class EvalCaseSpec:
     seed: int
     order_index: int
     tier: EvalTier
+    # O que o braço muda em relação ao contrato. Vinha sendo gravado no EvalStore
+    # e parava ali: dois braços declarados diferentes rodavam idênticos, e a
+    # comparação media ruído. Quem aplica é o runner, campo por campo.
+    settings: Mapping[str, JsonValue] = field(
+        default_factory=lambda: cast(Mapping[str, JsonValue], {})
+    )
 
 
 @dataclass(frozen=True, slots=True)
