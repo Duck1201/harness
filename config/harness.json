@@ -206,7 +206,7 @@
         "probe": "api.php",
         "list": "allpages",
         "extract": "extracts_explaintext",
-        "page_batch": 20,
+        "page_batch": 1,
         "backoff_seconds": [5, 10, 20, 40, 80]
       },
       "html_crawl": {

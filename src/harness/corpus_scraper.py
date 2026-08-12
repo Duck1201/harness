@@ -39,12 +39,25 @@ _MAX_PAGE_BYTES = 4 * 1024 * 1024
 _TIMEOUT_SECONDS = 30.0
 _HTML_CONTENT_TYPES = frozenset({"text/html", "application/xhtml+xml"})
 _SITEMAP_LOCATION = re.compile(r"<loc>\s*([^<\s]+)\s*</loc>", re.IGNORECASE)
+# `== Seção ==` até `====== ======`: o nível do heading é a contagem de iguais.
+_WIKI_HEADING = re.compile(r"^(={2,6})\s*(.+?)\s*\1$")
 
 
 class ScrapeError(Exception):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+# Uma página que não veio é uma página a menos, não um motivo para abandonar o
+# resto: `aiohttp` levanta TimeoutError puro, e falha de conexão chega como OSError.
+_FETCH_FAILURES = (
+    ScrapeError,
+    EgressPolicyError,
+    EgressResolutionError,
+    TimeoutError,
+    OSError,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,9 +98,21 @@ class Scraper:
             return ScrapePlan(seed=seed, source="mediawiki", detail=endpoint)
         return ScrapePlan(seed=seed, source="html_crawl", detail=urlsplit(seed).netloc)
 
-    async def collect(self, plan: ScrapePlan) -> AsyncIterator[ScrapedPage]:
+    async def collect(
+        self, plan: ScrapePlan, known_urls: frozenset[str] = frozenset()
+    ) -> AsyncIterator[ScrapedPage]:
+        """Collects the seed, skipping what the Corpus already carries.
+
+        The skip happens before the request that would fetch the page, not after:
+        a wiki that does not fit under the ceiling gets collected across several
+        runs, and each run spends its budget on pages the Corpus does not have.
+
+        Only the MediaWiki route resumes. The crawl discovers the next URL inside
+        the page it just fetched, so skipping a known page there would also drop
+        the links only that page declares — it would resume by shrinking reach.
+        """
         if plan.source == "mediawiki":
-            async for page in self._collect_mediawiki(plan.detail):
+            async for page in self._collect_mediawiki(plan.detail, known_urls):
                 yield page
             return
         async for page in self._collect_html(plan.seed):
@@ -107,7 +132,7 @@ class Scraper:
             query = urlencode({"action": "query", "meta": "siteinfo", "format": "json"})
             try:
                 response = await self._get(f"{candidate}?{query}")
-            except (ScrapeError, EgressPolicyError, EgressResolutionError):
+            except _FETCH_FAILURES:
                 continue
             if response.status != 200:
                 continue
@@ -116,7 +141,9 @@ class Scraper:
                 return candidate
         return None
 
-    async def _collect_mediawiki(self, endpoint: str) -> AsyncIterator[ScrapedPage]:
+    async def _collect_mediawiki(
+        self, endpoint: str, known_urls: frozenset[str]
+    ) -> AsyncIterator[ScrapedPage]:
         settings = self._config.mediawiki
         continuation: dict[str, str] = {}
         collected = 0
@@ -136,7 +163,14 @@ class Scraper:
             pages = _mediawiki_pages(listing)
             if not pages:
                 return
-            for batch in _batched(pages, settings.page_batch):
+            # A listagem é barata e o extrato não é: o que o Corpus já tem sai
+            # aqui, antes de virar requisição.
+            fresh = tuple(
+                (identifier, title, url)
+                for identifier, title in pages
+                if (url := _mediawiki_page_url(endpoint, identifier)) not in known_urls
+            )
+            for batch in _batched(fresh, settings.page_batch):
                 extracts = await self._api(
                     endpoint,
                     {
@@ -144,22 +178,20 @@ class Scraper:
                         "prop": "extracts",
                         "explaintext": "1",
                         "exlimit": str(len(batch)),
-                        "pageids": "|".join(str(identifier) for identifier, _ in batch),
+                        "pageids": "|".join(str(identifier) for identifier, _, _ in batch),
                         "format": "json",
                     },
                 )
-                for identifier, title in batch:
+                for identifier, title, url in batch:
                     text = _mediawiki_extract(extracts, identifier)
                     if not text:
                         continue
                     collected += 1
                     yield ScrapedPage(
-                        url=f"{endpoint.removesuffix('api.php')}index.php?curid={identifier}",
+                        url=url,
                         title=title,
                         filename=f"{title}.md",
-                        # O título vira heading para o prefixo de contexto ter
-                        # endereço, já que o extrato vem sem estrutura nenhuma.
-                        data=f"# {title}\n\n{text}\n".encode(),
+                        data=_mediawiki_markdown(title, text).encode(),
                     )
                     if collected >= limit:
                         return
@@ -189,7 +221,7 @@ class Scraper:
                 continue
             try:
                 response = await self._get(canonical)
-            except (ScrapeError, EgressPolicyError, EgressResolutionError):
+            except _FETCH_FAILURES:
                 continue
             await self._wait()
             if response.status != 200 or not _is_html(response.headers):
@@ -214,11 +246,22 @@ class Scraper:
 
         A 429 or a maxlag is the site saying "slower", not "no": retrying the
         same page immediately is how a collector gets an IP banned and leaves the
-        Corpus half full.
+        Corpus half full. A read timeout gets the same treatment for the same
+        reason — over hours of collecting, one is certain to happen, and letting
+        it end the job would throw away everything after it.
         """
         backoff = self._config.mediawiki.backoff_seconds
         for attempt in range(len(backoff) + 1):
-            response = await self._get(f"{endpoint}?{urlencode(dict(parameters))}")
+            try:
+                response = await self._get(f"{endpoint}?{urlencode(dict(parameters))}")
+            except (TimeoutError, OSError) as error:
+                if attempt >= len(backoff):
+                    raise ScrapeError(
+                        "mediawiki_unreachable",
+                        f"A wiki parou de responder durante a coleta: {error}",
+                    ) from error
+                await self._wait(backoff[attempt])
+                continue
             if response.status in {429, 503} and attempt < len(backoff):
                 await self._wait(backoff[attempt])
                 continue
@@ -237,7 +280,7 @@ class Scraper:
         parsed = urlsplit(seed)
         try:
             response = await self._get(f"{parsed.scheme}://{parsed.netloc}/robots.txt")
-        except (ScrapeError, EgressPolicyError, EgressResolutionError):
+        except _FETCH_FAILURES:
             return None
         if response.status != 200:
             return None
@@ -249,7 +292,7 @@ class Scraper:
         parsed = urlsplit(seed)
         try:
             response = await self._get(f"{parsed.scheme}://{parsed.netloc}/sitemap.xml")
-        except (ScrapeError, EgressPolicyError, EgressResolutionError):
+        except _FETCH_FAILURES:
             return ()
         if response.status != 200:
             return ()
@@ -388,6 +431,31 @@ def _mediawiki_continue(payload: Mapping[str, object]) -> dict[str, str]:
     if following is None:
         return {}
     return {str(key): str(value) for key, value in following.items()}
+
+
+def _mediawiki_markdown(title: str, extract: str) -> str:
+    """Turns the extract into the Markdown the ingestor actually reads.
+
+    `explaintext` answers plain text with wikitext headings and one paragraph
+    per line — two conventions the Markdown extractor does not know. Handed over
+    as it arrives, the section heading is invisible, so every Chunk of the page
+    is addressed by the title alone, and the single line breaks are undone as if
+    they were hard wrapping, gluing the whole section into one paragraph that
+    blows past the Chunk budget by itself.
+    """
+    lines = [f"# {title}"]
+    for line in extract.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        heading = _WIKI_HEADING.match(stripped)
+        lines.append(f"{'#' * len(heading.group(1))} {heading.group(2)}" if heading else stripped)
+    return "\n\n".join(lines) + "\n"
+
+
+def _mediawiki_page_url(endpoint: str, identifier: int) -> str:
+    """The address a collected page carries, and the key a later run resumes by."""
+    return f"{endpoint.removesuffix('api.php')}index.php?curid={identifier}"
 
 
 def _mediawiki_extract(payload: Mapping[str, object], identifier: int) -> str:

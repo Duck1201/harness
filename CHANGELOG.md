@@ -28,7 +28,11 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 - **Coleta por API quando o site tem uma.** Semente com `/api.php` é coletada
   pela API do MediaWiki — wiki inteira, texto puro, sem seguir link; o resto cai
   num crawl com teto que respeita `robots.txt`. Job em segundo plano com
-  progresso, cancelamento e retomada por idempotência.
+  progresso, cancelamento e retomada: a página que o Corpus já tem sai pelo
+  endereço na listagem, antes de virar requisição, então uma wiki maior que o
+  teto é coletada em rodadas sucessivas em vez de recomeçar do alfabeto. O
+  extrato de artigo inteiro vem um por requisição porque é o que o MediaWiki
+  concede — pedir vinte devolve dezenove páginas vazias.
 - **Modo yolo.** Decisão permanente do Operator, global e desligada de fábrica,
   com opt-out por Conversation: enquanto estiver ligada o gate aprova toda
   confirmação — inclusive escrita sob `UntrustedWebTaint` — e concede WriteGrant

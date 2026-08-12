@@ -4,14 +4,16 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+import pytest
 from test_corpus_store import DIMENSIONS, HashingEmbedder, WordCounter
 
 from harness.config import load_config
-from harness.corpus_scraper import ScrapePlan, Scraper
+from harness.corpus_scraper import ScrapeError, ScrapePlan, Scraper
 from harness.corpus_service import CorpusIngestionService, CorpusLibrary, IngestionJobStatus
 from harness.web_tools import EgressGuard, HttpResponse, ResolvedAddress, ResolvedTarget
 
 WIKI = "https://wiki.test/index.php/Inicio"
+ENDPOINT = "https://wiki.test/api.php"
 
 
 class FakeEmbedder:
@@ -39,8 +41,14 @@ class FakeGuard(EgressGuard):
 class FakeTransport:
     """Responde por chave, não por URL exata: a ordem dos parâmetros é do scraper."""
 
-    def __init__(self, pages: Mapping[str, tuple[int, str, bytes]]) -> None:
+    def __init__(
+        self,
+        pages: Mapping[str, tuple[int, str, bytes]],
+        *,
+        timeouts: int = 0,
+    ) -> None:
         self._pages = pages
+        self._timeouts = timeouts
         self.requested: list[str] = []
 
     async def request(
@@ -53,6 +61,10 @@ class FakeTransport:
     ) -> HttpResponse:
         del headers, max_bytes, timeout_seconds
         self.requested.append(target.url)
+        if self._timeouts > 0:
+            self._timeouts -= 1
+            # O que o aiohttp levanta quando a leitura estoura.
+            raise TimeoutError
         status, content_type, body = self._pages.get(_key(target.url), (404, "text/plain", b""))
         return HttpResponse(status=status, headers={"Content-Type": content_type}, body=body)
 
@@ -90,7 +102,13 @@ def _mediawiki_pages() -> dict[str, tuple[int, str, bytes]]:
             {
                 "query": {
                     "pages": {
-                        "1": {"extract": "O chefe final tem 320 pontos de vida e resiste a fogo."},
+                        # Como a API responde de verdade: heading de wikitext e
+                        # um parágrafo por linha, sem linha em branco entre eles.
+                        "1": {
+                            "extract": "O chefe final tem 320 pontos de vida e resiste a fogo.\n"
+                            "\n\n== Fraquezas ==\nEle recua diante de gelo.\n"
+                            "A segunda fase ignora veneno."
+                        },
                         "2": {"extract": "A espada longa custa 500 moedas na loja da vila."},
                     }
                 }
@@ -122,10 +140,85 @@ def test_a_mediawiki_seed_is_collected_by_api_without_following_a_single_link() 
         assert plan.source == "mediawiki"
         assert [page.title for page in collected] == ["Chefe Final", "Itens"]
         assert all(page.filename.endswith(".md") for page in collected)
-        assert b"# Chefe Final" in collected[0].data
+        # O extrato vira Markdown de verdade: a seção da wiki é um heading, e
+        # cada parágrafo fica separado. Sem isso o Chunk perde o endereço da
+        # seção e a página inteira é remontada como um parágrafo só.
+        assert collected[0].data.decode() == (
+            "# Chefe Final\n\n"
+            "O chefe final tem 320 pontos de vida e resiste a fogo.\n\n"
+            "## Fraquezas\n\n"
+            "Ele recua diante de gelo.\n\n"
+            "A segunda fase ignora veneno.\n"
+        )
         # Nenhuma requisição fora do api.php: a rota da wiki não navega por HTML.
         # As sondas de descoberta também são api.php, em prefixos diferentes.
         assert all(urlsplit(url).path.endswith("api.php") for url in transport.requested)
+
+    asyncio.run(scenario())
+
+
+def test_a_read_timeout_is_retried_instead_of_ending_the_collection() -> None:
+    """Coletando por horas, um timeout é certo — e não pode custar o resto.
+
+    Medido contra a wiki: `aiohttp` levanta `TimeoutError` puro, que passava
+    direto pelo scraper e chegava ao job como falha genérica de ingestão. A
+    coleta morria na página 23 e ainda dizia o motivo errado.
+    """
+
+    async def scenario() -> None:
+        transport = FakeTransport(_mediawiki_pages(), timeouts=2)
+        scraper = _scraper(transport)
+
+        plan = ScrapePlan(seed=WIKI, source="mediawiki", detail=ENDPOINT)
+        collected = [page async for page in scraper.collect(plan)]
+
+        assert [page.title for page in collected] == ["Chefe Final", "Itens"]
+
+    asyncio.run(scenario())
+
+
+def test_a_wiki_that_stops_answering_fails_by_its_own_name() -> None:
+    async def scenario() -> None:
+        backoff = load_config().corpus.scraper.mediawiki.backoff_seconds
+        transport = FakeTransport(_mediawiki_pages(), timeouts=len(backoff) + 1)
+        scraper = _scraper(transport)
+
+        plan = ScrapePlan(seed=WIKI, source="mediawiki", detail=ENDPOINT)
+        with pytest.raises(ScrapeError) as error:
+            _ = [page async for page in scraper.collect(plan)]
+
+        # Insistir tem fim, e o fim diz o que aconteceu — não "erro de ingestão".
+        assert error.value.code == "mediawiki_unreachable"
+
+    asyncio.run(scenario())
+
+
+def test_a_page_the_corpus_already_has_never_becomes_a_request() -> None:
+    """A retomada vale pelo que ela não gasta.
+
+    Pular depois de baixar já era idempotência; o que faz uma wiki maior que o
+    teto caber em rodadas sucessivas é a página conhecida não virar requisição.
+    """
+
+    async def scenario() -> None:
+        transport = FakeTransport(_mediawiki_pages())
+        scraper = _scraper(transport)
+
+        plan = await scraper.plan(WIKI)
+        collected = [
+            page
+            async for page in scraper.collect(
+                plan, frozenset({"https://wiki.test/index.php?curid=1"})
+            )
+        ]
+
+        assert [page.title for page in collected] == ["Itens"]
+        assert [page.url for page in collected] == ["https://wiki.test/index.php?curid=2"]
+        requested = [
+            parse_qs(urlsplit(url).query).get("pageids", []) for url in transport.requested
+        ]
+        assert ["1"] not in requested
+        assert ["2"] in requested
 
     asyncio.run(scenario())
 
@@ -216,6 +309,7 @@ def test_redispatching_a_finished_job_skips_what_is_already_indexed(tmp_path: Pa
 
         first = await service.start_scrape(corpus.id, WIKI)
         await _settle(service, first.id)
+        after_first = len(transport.requested)
         second = await service.start_scrape(corpus.id, WIKI)
         await _settle(service, second.id)
 
@@ -224,8 +318,14 @@ def test_redispatching_a_finished_job_skips_what_is_already_indexed(tmp_path: Pa
         assert finished_first is not None and finished_second is not None
         assert finished_first.status is IngestionJobStatus.COMPLETED
         assert (finished_first.seen, finished_first.indexed, finished_first.skipped) == (2, 2, 0)
-        assert (finished_second.seen, finished_second.indexed, finished_second.skipped) == (2, 0, 2)
+        # A segunda rodada não pula depois de baixar: ela não chega a ver a
+        # página, porque o endereço conhecido sai antes de virar requisição.
+        assert (finished_second.seen, finished_second.indexed, finished_second.skipped) == (0, 0, 0)
         assert (await library.read(corpus.id)).document_count == 2
+        # O que a segunda rodada gastou foi a descoberta e a listagem, nunca um
+        # extrato — é isso que faz uma wiki maior que o teto caber em rodadas.
+        spent = transport.requested[after_first:]
+        assert spent and not any("extracts" in url for url in spent)
 
     asyncio.run(scenario())
 

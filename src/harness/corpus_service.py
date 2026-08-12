@@ -399,8 +399,13 @@ class CorpusIngestionService:
         try:
             plan = await self._scraper.plan(seed)
             self._update(job_id, detail=plan.source)
-            known = await self._library.store(corpus_id).indexed_digests()
-            async for page in self._scraper.collect(plan):
+            store = self._library.store(corpus_id)
+            known = await store.indexed_digests()
+            # O digest só pega o conteúdo depois de baixado; o endereço poupa a
+            # requisição, e é o que faz a segunda rodada começar onde a primeira
+            # parou em vez de recomeçar do começo do alfabeto.
+            known_urls = frozenset(await store.indexed_origins())
+            async for page in self._scraper.collect(plan, known_urls):
                 seen += 1
                 self._update(job_id, seen=seen, current=page.url)
                 digest = source_digest(page.data)
