@@ -22,9 +22,14 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
   e não mede, e o primeiro colocado pontua igual respondendo ou não à pergunta.
   Nada acima do piso é `empty`, com a instrução de dizer que não sabe. O piso
   vale por passagem, inclusive para quem só a perna lexical trouxe, e está em
-  0,55 porque a calibragem original só tinha perguntas: medido depois, um comando
-  como "cria um arquivo .md" pontua 0,50-0,54 contra um livro técnico, enquanto
-  pergunta respondível começa em 0,56. A margem é fina e vale para o `bge-m3`.
+  0,53. Varredura de 25 textos contra um livro técnico: comando genérico ("cria
+  um arquivo .md", "roda os testes") não passa de 0,521, então 0,53 já zera todos
+  eles, enquanto 0,55 devolvia vazia uma pergunta que o livro responde — "explica
+  o algoritmo de janela deslizante", topo 0,541. Não existe piso que separe
+  comando de pergunta: um comando com anexo pontua 0,535 e um comando sobre o
+  assunto do acervo passa de 0,60. O piso mede relevância, não intenção — quem
+  impede a passagem irrelevante de sequestrar o Turn é a instrução injetada. O
+  número é do `bge-m3` e não se transfere para outro embedder.
 - **Tradução só na query.** Documento é indexado como foi extraído; uma geração
   curta produz a versão autônoma em inglês que alimenta só a perna lexical,
   enquanto a densa usa o texto do Operator. Medição local: a pergunta crua em
