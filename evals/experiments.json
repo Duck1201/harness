@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "manifest_version": "2.0.0",
-  "manifest_digest_sha256": "2f2151a20a8b046d5dc7170254a0cbea2cb9211e98ee576a628300271c13d3e4",
+  "manifest_digest_sha256": "a6e86d8112634839d24430b43787a57b02d00fd763a784835f9216efab0ed0bf",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -709,7 +709,7 @@
         "chunk_target_tokens": 512,
         "chunk_overlap_tokens": 64,
         "injected_passages": 6,
-        "dense_similarity_floor": 0.5
+        "dense_similarity_floor": 0.53
       },
       "arms": [
         {"id": "no_corpus", "corpus_granted": false},
@@ -721,7 +721,7 @@
         "claims_not_supported_by_any_returned_passage"
       ],
       "promotion_gate": "The granted arm answers more questions correctly with a citation and does not invent more than the baseline when the acervo has nothing; zero taint or grant violations.",
-      "note": "Comparação entre responder sem acervo e responder com ele. O piso de 0.5 saiu de uma medição local no bge-m3 — perguntas respondíveis pontuaram 0.61-0.69 e as sem resposta no corpus não passaram de 0.37 — mas essa é a calibração do piso, não o resultado do experimento. Sem execução, o resultado é ausente: inventar medição para preencher contrato é proibido."
+      "note": "Comparação entre responder sem acervo e responder com ele. O piso acompanha o contrato, hoje 0.53: a calibração está no CHANGELOG e é do bge-m3, não do experimento. Uma execução piloto em 13/08/2026 mostrou que a comparação declarada ainda não é executável — `corpus_granted` é lido do stimulus da fixture (`evals/runner.py`) e não das settings do braço, as fixtures que as tags selecionam medem gate, taint e piso em vez de resposta, e nenhum oráculo cobre os `measures` acima. Os dois braços rodaram trabalho idêntico e mesmo assim divergiram 13 pontos por não determinismo de geração e uma queda do provedor. O resultado continua ausente: inventar medição para preencher contrato é proibido."
     }
   ]
 }
