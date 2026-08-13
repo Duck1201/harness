@@ -25,7 +25,10 @@ from ..composite_tools import CompositeToolExecutor
 from ..config import HarnessConfig, ToolRegistryConfig
 from ..context_builder import ContextBuilder, ModelViewFormat
 from ..conversation_store import ConversationStore
+from ..corpus_service import CorpusRetriever
+from ..corpus_tools import CorpusToolExecutor
 from ..domain import (
+    CORPUS_EFFECT,
     MUTATION_EFFECT,
     Grant,
     JsonValue,
@@ -49,7 +52,14 @@ from .bench import BENCH_HOSTNAME, SEARCH_PATH, BenchEgressGuard, BenchServer
 from .language import PortugueseDetector
 from .models import RegressionFixture
 from .oracles import EvalEvidence, evaluate_oracle
-from .runner import CaseRunner, CaseRunResult, EvalCaseSpec, security_violations
+from .runner import (
+    CaseRunner,
+    CaseRunResult,
+    EvalCaseSpec,
+    EvalCorpus,
+    build_eval_corpus,
+    security_violations,
+)
 
 _ALL_GRANTS = ("WorkspaceRootGrant", "WriteGrant", "WebAccessGrant")
 
@@ -260,10 +270,48 @@ class BrowserBenchCaseRunner:
         return path
 
 
+class _CorpusArmRetrieval:
+    """The retrieval the harness runs before the first AgentStep, for one arm.
+
+    The production one reads the grant from the ConversationStore and generates a
+    standalone English query first. Here the grant is the arm — that is the whole
+    point of the comparison — and there is no rewrite: it costs a generation per
+    case and, measured against three acervos, changed no injected passage at all.
+    Making it a variable belongs to its own experiment, not to the background of
+    this one.
+    """
+
+    def __init__(self, *, corpus_id: str | None, retriever: CorpusRetriever) -> None:
+        self._corpus_id = corpus_id
+        self._retriever = retriever
+        self.injected_passages: int | None = None
+
+    async def for_turn(
+        self,
+        conversation_id: str,
+        question: str,
+    ) -> Mapping[str, JsonValue] | None:
+        del conversation_id
+        if self._corpus_id is None:
+            # O braço sem acervo não recupera nada, e isso é fato medido: zero
+            # passagens, não "a automação não rodou".
+            self.injected_passages = 0
+            return None
+        retrieval = await self._retriever.retrieve(self._corpus_id, question)
+        self.injected_passages = len(retrieval.chunks)
+        return {
+            "corpus_id": retrieval.corpus_id,
+            "search_query": None,
+            **cast(Mapping[str, JsonValue], retrieval.payload()),
+        }
+
+
 class ModelCaseRunner:
     """Runs a fixture's user request through the real AgentEngine and RuntimeProfile."""
 
-    _SUPPORTED_TYPES = frozenset({"model_task", "loop_recovery", "capability_gate"})
+    _SUPPORTED_TYPES = frozenset(
+        {"model_task", "loop_recovery", "capability_gate", "corpus_answer"}
+    )
 
     def __init__(
         self,
@@ -302,6 +350,21 @@ class ModelCaseRunner:
             workspace.mkdir()
             _seed_workspace(workspace, spec.fixture)
 
+            corpus = (
+                await build_eval_corpus(spec.fixture, base / "corpora")
+                if "corpus_documents" in spec.fixture.stimulus
+                else None
+            )
+            granted = _corpus_granted(spec)
+            retrieval = (
+                _CorpusArmRetrieval(
+                    corpus_id=corpus.corpus_id if granted else None,
+                    retriever=corpus.retriever,
+                )
+                if corpus is not None
+                else None
+            )
+
             async with BenchServer() as bench:
                 request = _bench_request(raw_request, spec.fixture, bench)
                 store = ConversationStore(base / "c.sqlite3")
@@ -313,8 +376,18 @@ class ModelCaseRunner:
                 # model. The waiver is the Operator's own mechanism, used here in
                 # the open rather than a gate that only evals have.
                 await store.waive_confirmation(conversation.id, MUTATION_EFFECT)
-                policy = _eval_policy()
-                executor = self._executor(workspace, policy, bench)
+                # Um acervo é a fonte, não uma fonte a mais. Com WebAccessGrant o
+                # braço sem Corpus sai para a web, volta com UntrustedWebTaint e o
+                # gate encerra o Turn — medido: nove de quinze casos terminaram em
+                # web_taint_confirmation_required sem resposta nenhuma. Isso compara
+                # acervo contra web barrada, e o experimento declara comparar acervo
+                # contra memória.
+                policy = _eval_policy(
+                    ("WorkspaceRootGrant", "WriteGrant") if corpus is not None else _ALL_GRANTS
+                )
+                if corpus is not None and granted:
+                    policy = _with_corpus_grant(policy, corpus.corpus_id)
+                executor = self._executor(workspace, policy, bench, corpus)
                 engine = AgentEngine(
                     store=store,
                     runtime=self._runtime,
@@ -352,6 +425,7 @@ class ModelCaseRunner:
                     tool_effects=self._config.tool_registry.effects_by_tool,
                     max_turn_duration_seconds=self._config.loop.max_turn_duration_seconds,
                     runtime_readiness=self._runtime_readiness,
+                    turn_retrieval=retrieval,
                 )
                 turn = await engine.run(conversation.id, request)
 
@@ -377,6 +451,7 @@ class ModelCaseRunner:
                 workspace_root=workspace,
                 observed_paths=(),
                 response=response,
+                injected_passages=retrieval.injected_passages if retrieval is not None else None,
             )
             evaluation = evaluate_oracle(
                 spec.fixture.oracle.typed_assertions,
@@ -398,6 +473,14 @@ class ModelCaseRunner:
                     "rejected_model_attempts": float(
                         sum(entry.kind.value == "rejected_model_attempt" for entry in history)
                     ),
+                    # O oráculo é o mesmo nos dois braços — tem que ser, ou a
+                    # comparação não compara nada. Quem mostra que os braços
+                    # rodaram experimentos diferentes é esta métrica.
+                    **(
+                        {"injected_passages": float(retrieval.injected_passages or 0)}
+                        if retrieval is not None
+                        else {}
+                    ),
                 },
                 security_violations=security_violations(spec.fixture, evaluation),
                 evaluation=evaluation,
@@ -412,7 +495,13 @@ class ModelCaseRunner:
             and all(grant in effective for grant in definition.required_grants)
         )
 
-    def _executor(self, workspace: Path, policy: SessionPolicy, bench: BenchServer) -> ToolExecutor:
+    def _executor(
+        self,
+        workspace: Path,
+        policy: SessionPolicy,
+        bench: BenchServer,
+        corpus: EvalCorpus | None = None,
+    ) -> ToolExecutor:
         registry = self._config.tool_registry
         local: ToolExecutor = RegistryToolExecutor(
             registry=registry,
@@ -433,12 +522,64 @@ class ModelCaseRunner:
             ),
             browser_egress_guard=self._browser_guard,
         )
+        corpus_executor: ToolExecutor | None = (
+            CorpusToolExecutor(
+                registry=registry,
+                session_policy=policy,
+                retriever=corpus.retriever,
+            )
+            if corpus is not None
+            else None
+        )
         return CompositeToolExecutor(
             routes={
-                definition.name: (web if "data_egress" in definition.effects else local)
+                definition.name: self._route(definition.effects, local, web, corpus_executor)
                 for definition in registry.model_tools
             }
         )
+
+    @staticmethod
+    def _route(
+        effects: Sequence[str],
+        local: ToolExecutor,
+        web: ToolExecutor,
+        corpus: ToolExecutor | None,
+    ) -> ToolExecutor:
+        """Rota pelo efeito, como em produção — nunca pelo nome da tool."""
+        if CORPUS_EFFECT in effects and corpus is not None:
+            return corpus
+        if "data_egress" in effects:
+            return web
+        return local
+
+
+def _corpus_granted(spec: EvalCaseSpec) -> bool:
+    """Quem decide o grant é o braço; a fixture só diz o que vale fora de um.
+
+    É esta linha que faz `no_corpus` e `corpus_granted` rodarem experimentos
+    diferentes. Sem ela o braço vira rótulo, os dois lados executam o mesmo
+    trabalho e a diferença que aparecer no relatório é ruído de geração.
+    """
+    declared = spec.settings.get("corpus_granted")
+    if declared is not None:
+        return declared is not False
+    return spec.fixture.stimulus.get("corpus_granted", True) is not False
+
+
+def _with_corpus_grant(policy: SessionPolicy, corpus_id: str) -> SessionPolicy:
+    return SessionPolicy(
+        conversation_id=policy.conversation_id,
+        grants=(
+            *policy.grants,
+            Grant(
+                id="eval-CorpusGrant",
+                conversation_id=policy.conversation_id,
+                permission="CorpusGrant",
+                scope=corpus_id,
+                granted_at=datetime.now(UTC),
+            ),
+        ),
+    )
 
 
 def _bench_request(request: str, fixture: RegressionFixture, bench: BenchServer) -> str:

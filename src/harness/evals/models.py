@@ -149,6 +149,49 @@ class ResponseLanguagePt(EvalModel):
     operator: Literal["response_language_pt"]
 
 
+class ResponseContains(EvalModel):
+    """Whether the answer the Operator reads carries a given string.
+
+    The corpus experiment needs it in both directions: with ``present`` the
+    fixture asserts the fact the acervo holds actually reached the answer, and
+    with ``present=False`` it asserts the model did not state what no passage
+    supports. Comparison is case-insensitive because the model is free to
+    capitalise as it likes; everything else is a literal match, so a fixture
+    stays a fixture instead of becoming a judgement.
+    """
+
+    operator: Literal["response_contains"]
+    content: str = Field(min_length=1)
+    present: bool = True
+
+
+class ResponseAdmitsIgnorance(EvalModel):
+    """Whether the answer says it does not know instead of filling the gap.
+
+    A phrase list, not a model: what counts as admitting ignorance is decided
+    here, in the open, and the fixture that depends on it can be read without
+    running anything. It is a heuristic over pt-BR wording and it says so — a
+    refusal phrased in a way this list does not carry scores as not admitting,
+    which is the safe direction for a measure about invention.
+    """
+
+    operator: Literal["response_admits_ignorance"]
+
+
+class InjectedPassages(EvalModel):
+    """How many Corpus passages the harness injected before the first AgentStep.
+
+    This is what makes an arm an arm: the granted arm has to show passages and
+    the baseline has to show none, or the two arms ran the same experiment twice.
+    Evidence with no retrieval at all scores inconclusive rather than zero — "the
+    automation never ran" and "the acervo answered nothing" are different facts.
+    """
+
+    operator: Literal["injected_passages"]
+    minimum: int | None = Field(default=None, ge=0)
+    maximum: int | None = Field(default=None, ge=0)
+
+
 type TypedAssertion = Annotated[
     ToolCalled
     | ToolNotCalled
@@ -163,7 +206,10 @@ type TypedAssertion = Annotated[
     | FileContentEquals
     | FileContentContains
     | PathWithinWorkspace
-    | ResponseLanguagePt,
+    | ResponseLanguagePt
+    | ResponseContains
+    | ResponseAdmitsIgnorance
+    | InjectedPassages,
     Field(discriminator="operator"),
 ]
 

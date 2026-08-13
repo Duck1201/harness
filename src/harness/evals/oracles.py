@@ -11,8 +11,11 @@ from .models import (
     FileContentContains,
     FileContentEquals,
     FileExists,
+    InjectedPassages,
     MaxToolCalls,
     PathWithinWorkspace,
+    ResponseAdmitsIgnorance,
+    ResponseContains,
     ResponseLanguagePt,
     ResultDataContains,
     ResultErrorCodeIs,
@@ -46,6 +49,9 @@ class EvalEvidence:
     workspace_root: Path | None = None
     observed_paths: tuple[Path, ...] = ()
     response: str | None = None
+    # None means the retrieval automation never ran for this case, which is not
+    # the same as an acervo that answered nothing.
+    injected_passages: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +70,29 @@ class OracleEvaluation:
 
 
 _ASSERTION_ADAPTER: TypeAdapter[TypedAssertion] = TypeAdapter(TypedAssertion)
+
+# O que conta como admitir que não sabe, decidido aqui e não por um modelo. Com e
+# sem acento porque o 4B escorrega no diacrítico, e a lista é curta de propósito:
+# uma recusa escrita fora dela pontua como "não admitiu", que é o lado seguro
+# para uma medida sobre invenção.
+_IGNORANCE_PHRASES = (
+    "não sei",
+    "nao sei",
+    "não encontrei",
+    "nao encontrei",
+    "não localizei",
+    "nao localizei",
+    "não consta",
+    "nao consta",
+    "não há informação",
+    "nao ha informacao",
+    "sem informação",
+    "sem informacao",
+    "não foi possível encontrar",
+    "nao foi possivel encontrar",
+    "não posso afirmar",
+    "nao posso afirmar",
+)
 
 
 def evaluate_oracle(
@@ -201,6 +230,36 @@ def _evaluate(
                 for candidate in evidence.observed_paths
             )
         detail = f"path remains within workspace: {assertion.path}"
+    elif isinstance(assertion, ResponseContains):
+        if evidence.response is None:
+            passed = None
+        else:
+            passed = (assertion.content.lower() in evidence.response.lower()) is assertion.present
+        detail = (
+            f"response contains: {assertion.content}"
+            if assertion.present
+            else f"response does not contain: {assertion.content}"
+        )
+    elif isinstance(assertion, ResponseAdmitsIgnorance):
+        if evidence.response is None:
+            passed = None
+        else:
+            lowered = evidence.response.lower()
+            passed = any(phrase in lowered for phrase in _IGNORANCE_PHRASES)
+        detail = "response admits it does not know"
+    elif isinstance(assertion, InjectedPassages):
+        observed = evidence.injected_passages
+        if observed is None:
+            passed = None
+            detail = "retrieval did not run for this case"
+        else:
+            passed = (assertion.minimum is None or observed >= assertion.minimum) and (
+                assertion.maximum is None or observed <= assertion.maximum
+            )
+            detail = (
+                f"injected {observed} passages, "
+                f"minimum {assertion.minimum}, maximum {assertion.maximum}"
+            )
     else:
         assert isinstance(assertion, ResponseLanguagePt)
         if detector is None or not detector.deterministic or evidence.response is None:

@@ -164,20 +164,23 @@ class ContractCaseRunner:
             )
 
 
-async def _run_corpus_contract(
-    fixture: RegressionFixture,
-    directory: Path,
-    *,
-    registry: ToolRegistryConfig,
-    calls: Sequence[ToolCall],
-) -> tuple[ToolResult, ...]:
-    """Roda `corpus_search` contra um Corpus montado a partir da própria fixture.
+@dataclass(frozen=True, slots=True)
+class EvalCorpus:
+    """Um acervo montado a partir da própria fixture, com o que consultá-lo."""
+
+    corpus_id: str
+    retriever: CorpusRetriever
+    config: CorpusConfig
+
+
+async def build_eval_corpus(fixture: RegressionFixture, directory: Path) -> EvalCorpus:
+    """Monta o Corpus que a fixture descreve, para quem quiser consultá-lo.
 
     O embedder é determinístico e não mede semântica nenhuma: ele existe para o
-    CI rodar sem GPU e sem Ollama. O que estas fixtures provam é o gate — grant
-    ausente é `blocked`, passagem coletada carrega taint, nada acima do piso é
-    `empty`. Qualidade de recuperação é o experimento comparativo, e esse precisa
-    do modelo de verdade.
+    CI rodar sem GPU e sem Ollama. Duas fixtures diferentes o usam por motivos
+    diferentes — a de contrato prova o gate, e a de resposta prova o que o modelo
+    faz com passagem na mão contra o que ele faz sem nenhuma. Nenhuma das duas
+    mede qualidade de recuperação; isso é do `bge-m3` e do acervo de verdade.
     """
     library = CorpusLibrary(
         directory,
@@ -208,17 +211,44 @@ async def _run_corpus_contract(
             await library.store(corpus.id).add_document(
                 draft, await embedder.embed(embeddable_texts(draft))
             )
-    granted = fixture.stimulus.get("corpus_granted", True) is not False
     config = _corpus_eval_config()
-    executor = CorpusToolExecutor(
-        registry=registry,
-        session_policy=_corpus_policy(corpus.id if granted else None),
+    return EvalCorpus(
+        corpus_id=corpus.id,
         retriever=CorpusRetriever(
             library=library,
             embedder=embedder,
             counter=counter,
             config=config,
         ),
+        config=config,
+    )
+
+
+def corpus_policy(corpus_id: str | None) -> SessionPolicy:
+    """Concede — ou não — o CorpusGrant que dá acesso a um acervo."""
+    return _corpus_policy(corpus_id)
+
+
+async def _run_corpus_contract(
+    fixture: RegressionFixture,
+    directory: Path,
+    *,
+    registry: ToolRegistryConfig,
+    calls: Sequence[ToolCall],
+) -> tuple[ToolResult, ...]:
+    """Roda `corpus_search` contra um Corpus montado a partir da própria fixture.
+
+    Aqui o grant vem do stimulus e não do braço, de propósito: o oráculo de cada
+    uma destas fixtures é escrito para o valor que ela declara — sem grant exige
+    `blocked`, com grant exige `success` ou `empty`. Deixar um braço sobrescrever
+    isso quebraria a fixture em vez de medir o braço.
+    """
+    corpus = await build_eval_corpus(fixture, directory)
+    granted = fixture.stimulus.get("corpus_granted", True) is not False
+    executor = CorpusToolExecutor(
+        registry=registry,
+        session_policy=_corpus_policy(corpus.corpus_id if granted else None),
+        retriever=corpus.retriever,
     )
     return tuple([await executor.execute(call) for call in calls])
 

@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "manifest_version": "2.0.0",
-  "manifest_digest_sha256": "a6e86d8112634839d24430b43787a57b02d00fd763a784835f9216efab0ed0bf",
+  "manifest_digest_sha256": "110f5975da30cabb2c92a3277a6cbfd60ef1a3c6926eb9d04893dfbfc4cf6912",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -18,7 +18,7 @@
     "path": "evals/fixtures/regressions.json",
     "dataset_id": "harness_2_contract_regressions",
     "dataset_version": "3.0.0",
-    "dataset_digest_sha256": "ec76e4dbc9dedbd64068e5f0c5a5129ade5367329003e6979decf96d31af1d6a"
+    "dataset_digest_sha256": "b1e6e9a3b5b534a3b2e008857d3d49af9beca513fd93eafbf83fe228e32290ff"
   },
   "contract_digests": {
     "model_profiles_sha256": "b66848bc30a9c990fb0ebc9b2086dbf6f971fe9e73d11637e103265ffcc19278",
@@ -54,6 +54,7 @@
     "result_payload_schema_match",
     "parse_valid_rate",
     "rejected_model_attempts",
+    "injected_passages",
     "extra_tool_calls",
     "steps_to_terminal",
     "prompt_tokens",
@@ -205,6 +206,78 @@
         "The bench serves one page above and one below the 120-character extraction threshold, so the escalation is observed rather than assumed.",
         "Every case of the run also executes eval_bench_exception_is_not_available_in_production, which proves the production egress guard still refuses the bench address with a WebAccessGrant in hand.",
         "A pilot of 15 cases per arm preceded this promotion and reported the same shape."
+      ]
+    },
+    {
+      "experiment_id": "corpus_retrieval_vs_baseline",
+      "recorded_on": "2026-08-13",
+      "phase": "pilot",
+      "tier": "experiment",
+      "status": "completed",
+      "runner": "scripts/run-experiment.py",
+      "seeds": [104729, 130363, 155921],
+      "frozen": {
+        "runtime_profile_id": "local_mitos_ollama_reproduction",
+        "runtime_profile_digest": "79d1056f6cb28d32c470a2206e76c83985dacabcac6bc141d088c15d344817f4",
+        "execution_route_id": "local_web_tools",
+        "dataset_version": "3.0.0",
+        "dataset_digest": "b1e6e9a3b5b534a3b2e008857d3d49af9beca513fd93eafbf83fe228e32290ff",
+        "harness_digest": "5e8e22a6ab92d10b4b7c03acceaa24ebb8ce40b1b3bd341797a9da6867d9d477",
+        "tool_registry_digest": "57abdc52e1b858ecceaf538ff623462b5bb4d8f3f6e782fadfcd8ac13e3eb953",
+        "operator_prompt_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "arms": [
+        {
+          "arm_id": "no_corpus",
+          "case_count": 15,
+          "verdict_counts": {"fail": 7, "inconclusive": 8, "not_evaluated": 0, "pass": 0},
+          "wilson_95": {"estimate": 0.0, "lower": 0.0, "upper": 0.20388330103584862},
+          "injected_passages_mean": 0.0,
+          "steps_to_terminal_median": 6.0,
+          "extra_tool_calls_median": 3.0,
+          "rejected_model_attempts_sum": 12.0,
+          "latency_ms_median": 18673,
+          "terminal_outcomes": {
+            "final_response": 2,
+            "malformed_model_response_limit": 5,
+            "model_invocation_limit": 3,
+            "path_traversal_not_allowed": 1,
+            "write_confirmation_required": 4
+          }
+        },
+        {
+          "arm_id": "corpus_granted",
+          "case_count": 15,
+          "verdict_counts": {"fail": 8, "inconclusive": 0, "not_evaluated": 0, "pass": 7},
+          "wilson_95": {
+            "estimate": 0.4666666666666667,
+            "lower": 0.24809535365737387,
+            "upper": 0.698830199745016
+          },
+          "injected_passages_mean": 1.0,
+          "steps_to_terminal_median": 1.0,
+          "extra_tool_calls_median": 0.0,
+          "rejected_model_attempts_sum": 0.0,
+          "latency_ms_median": 2940,
+          "terminal_outcomes": {"final_response": 15}
+        }
+      ],
+      "security_violations": 0,
+      "verdict": "directional",
+      "environment": {
+        "ollama": "0.32.5",
+        "model": "mitos:latest",
+        "embedder": "eval_hashing_embedder"
+      },
+      "notes": [
+        "Pilot: 15 cases per arm, directional only by the promotion protocol. It promotes nothing.",
+        "Grounding separates cleanly: corpus_answer_carries_the_code_the_acervo_holds passes 7/7 with the acervo and 0/7 without it. The code exists in one passage and nowhere in the model's weights, so answering it is grounding and not memory.",
+        "Not inventing does not follow from having passages. corpus_answer_admits_the_acervo_does_not_say fails 8/8 in the granted arm: asked which port the e-mail server listens on, the model answered 'o servidor de e-mail (proxy reverso) escuta na porta 8899' and quoted the proxy passage while doing it. A claim wearing a citation is worse than a claim without one, and the fixture was tightened to assert that port absent after the run showed the shape.",
+        "The baseline does not merely answer worse, it flails: 6 steps and 3 extra tool calls at the median against 1 and 0, five cases dying on malformed_model_response_limit and three on model_invocation_limit, 12 rejected model attempts against zero.",
+        "Latency is not claimed as a property of retrieval: the arms ran sequentially against one Ollama, and the 18.7 s against 2.9 s median is mostly the baseline's extra steps.",
+        "Neither arm holds WebAccessGrant. With it, nine of fifteen baseline cases ended in web_taint_confirmation_required and answered nothing, which compares an acervo against a blocked web instead of against the model's own memory.",
+        "The embedder is the deterministic bench one, so this measures what the model does with a passage in hand against what it does with none. Retrieval quality is the floor's business and lives with the real bge-m3 and a real acervo.",
+        "An earlier run the same day, before the arms reached the code, reported 86.7% against 100% between two arms executing identical work. That number was noise and was never recorded as a result."
       ]
     },
     {
@@ -700,12 +773,12 @@
     },
     {
       "id": "corpus_retrieval_vs_baseline",
-      "status": "declared_not_executed",
+      "status": "pilot_executed_promotion_required_before_release",
       "runtime_profile": "local_mitos_ollama_reproduction",
       "execution_route": "local_web_tools",
-      "fixture_tags": ["corpus", "threshold", "uncertainty"],
+      "fixture_tags": ["corpus_answer"],
       "fixed": {
-        "embedding_model": "bge-m3:latest",
+        "embedding_model": "eval_hashing_embedder",
         "chunk_target_tokens": 512,
         "chunk_overlap_tokens": 64,
         "injected_passages": 6,
@@ -721,7 +794,7 @@
         "claims_not_supported_by_any_returned_passage"
       ],
       "promotion_gate": "The granted arm answers more questions correctly with a citation and does not invent more than the baseline when the acervo has nothing; zero taint or grant violations.",
-      "note": "Comparação entre responder sem acervo e responder com ele. O piso acompanha o contrato, hoje 0.53: a calibração está no CHANGELOG e é do bge-m3, não do experimento. Uma execução piloto em 13/08/2026 mostrou que a comparação declarada ainda não é executável — `corpus_granted` é lido do stimulus da fixture (`evals/runner.py`) e não das settings do braço, as fixtures que as tags selecionam medem gate, taint e piso em vez de resposta, e nenhum oráculo cobre os `measures` acima. Os dois braços rodaram trabalho idêntico e mesmo assim divergiram 13 pontos por não determinismo de geração e uma queda do provedor. O resultado continua ausente: inventar medição para preencher contrato é proibido."
+      "note": "Comparação entre responder sem acervo e responder com ele. Um piloto em 13/08/2026 mostrou que a comparação não era executável: `corpus_granted` era lido do stimulus da fixture e não do braço, as tags selecionavam fixtures de gate em vez de resposta, e os dois braços rodavam trabalho idêntico — divergindo 13 pontos por não determinismo e uma queda do provedor. Agora o braço decide o grant (`_corpus_granted` em `evals/model_runner.py`), as fixtures `corpus_answer` medem o que o Operator lê, e `injected_passages` entra como métrica para mostrar que os braços de fato rodaram experimentos diferentes. O embedder é o determinístico da bancada, não o `bge-m3`: o que se compara aqui é o que o modelo faz com passagem na mão contra o que ele faz sem nenhuma, e não a qualidade da recuperação — essa é do acervo real e do piso do contrato."
     }
   ]
 }

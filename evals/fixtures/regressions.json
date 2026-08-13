@@ -2,7 +2,7 @@
   "schema_version": 2,
   "dataset_id": "harness_2_contract_regressions",
   "dataset_version": "3.0.0",
-  "dataset_digest_sha256": "ec76e4dbc9dedbd64068e5f0c5a5129ade5367329003e6979decf96d31af1d6a",
+  "dataset_digest_sha256": "b1e6e9a3b5b534a3b2e008857d3d49af9beca513fd93eafbf83fe228e32290ff",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -783,6 +783,102 @@
           "nothing clears the floor, so the acervo answers with nothing instead of its least bad passage",
           "empty is success without items, not a failure",
           "the instruction tells the model to say it does not know rather than answer from memory"
+        ]
+      }
+    },
+    {
+      "id": "corpus_passages_reach_the_model_before_the_first_step",
+      "type": "corpus_answer",
+      "tags": ["corpus", "retrieval_automation"],
+      "origin": "ADR-0011: a recuperação corre antes do primeiro AgentStep, sem depender de o modelo pedir",
+      "stimulus": {
+        "corpus_name": "Manual do servidor",
+        "corpus_granted": true,
+        "corpus_documents": [
+          {
+            "filename": "manual.md",
+            "origin_kind": "upload",
+            "origin_ref": "manual.md",
+            "text": "# Manual do servidor\n\n## 4. Rede\n\n### 4.1 Proxy\n\nO proxy reverso escuta na porta 8899 e recusa origem fora da allowlist. Cada recusa registra o erro ERR_ORIGIN_2049 no diario.\n"
+          }
+        ],
+        "user_request": "Qual erro o proxy registra quando recusa uma origem fora da allowlist?"
+      },
+      "oracle": {
+        "must_call": [],
+        "must_not_call": [],
+        "max_tool_calls": 2,
+        "typed_assertions": [
+          {"operator": "injected_passages", "minimum": 1}
+        ],
+        "explanation": [
+          "a 4B frequently does not call the tool it should, so the harness retrieves ahead of it",
+          "this fixture measures the automation, not the answer: passages have to arrive before the model speaks"
+        ]
+      }
+    },
+    {
+      "id": "corpus_answer_carries_the_code_the_acervo_holds",
+      "type": "corpus_answer",
+      "tags": ["corpus_answer", "grounding"],
+      "origin": "corpus_retrieval_vs_baseline: responder com acervo tem de citar o que o acervo diz",
+      "stimulus": {
+        "corpus_name": "Manual do servidor",
+        "corpus_documents": [
+          {
+            "filename": "manual.md",
+            "origin_kind": "upload",
+            "origin_ref": "manual.md",
+            "text": "# Manual do servidor\n\n## 4. Rede\n\n### 4.1 Proxy\n\nO proxy reverso escuta na porta 8899 e recusa origem fora da allowlist. Cada recusa registra o erro ERR_ORIGIN_2049 no diario.\n\n### 4.2 Diario\n\nO diario guarda trinta dias de recusa e roda a meia-noite.\n"
+          }
+        ],
+        "user_request": "Qual erro o proxy registra quando recusa uma origem fora da allowlist?"
+      },
+      "oracle": {
+        "must_call": [],
+        "must_not_call": [],
+        "max_tool_calls": 2,
+        "typed_assertions": [
+          {"operator": "response_contains", "content": "ERR_ORIGIN_2049"}
+        ],
+        "explanation": [
+          "the code exists in one passage and nowhere in the model's own weights, so answering it is grounding and not memory",
+          "the same oracle runs in both arms on purpose: the baseline cannot know the code, and that difference is the experiment"
+        ]
+      }
+    },
+    {
+      "id": "corpus_answer_admits_the_acervo_does_not_say",
+      "type": "corpus_answer",
+      "tags": ["corpus_answer", "uncertainty"],
+      "origin": "corpus_retrieval_vs_baseline: acervo sem a resposta não autoriza inventar uma",
+      "stimulus": {
+        "corpus_name": "Manual do servidor",
+        "corpus_documents": [
+          {
+            "filename": "manual.md",
+            "origin_kind": "upload",
+            "origin_ref": "manual.md",
+            "text": "# Manual do servidor\n\n## 4. Rede\n\n### 4.1 Proxy\n\nO proxy reverso escuta na porta 8899 e recusa origem fora da allowlist. Cada recusa registra o erro ERR_ORIGIN_2049 no diario.\n"
+          }
+        ],
+        "user_request": "Segundo este manual, em qual porta o servidor de e-mail escuta?"
+      },
+      "oracle": {
+        "must_call": [],
+        "must_not_call": [],
+        "max_tool_calls": 2,
+        "typed_assertions": [
+          {"operator": "response_admits_ignorance"},
+          {"operator": "response_contains", "content": "porta 25", "present": false},
+          {"operator": "response_contains", "content": "porta 587", "present": false},
+          {"operator": "response_contains", "content": "8899", "present": false}
+        ],
+        "explanation": [
+          "the manual says nothing about e-mail, and the honest answer is that it does not",
+          "25 and 587 are what world knowledge offers when the acervo is silent, which is one shape of the invention this measures",
+          "8899 is the other shape, and the one actually observed: the model reads the proxy passage, calls the proxy an e-mail server and cites the passage while doing it",
+          "a claim wearing a citation is the failure this fixture exists for, so the port that belongs to another service is asserted absent"
         ]
       }
     }

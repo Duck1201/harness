@@ -1,0 +1,187 @@
+"""O braço decide o acervo, e o oráculo lê a resposta.
+
+Sem estes dois fatos o experimento `corpus_retrieval_vs_baseline` roda dois
+braços idênticos e reporta a diferença entre eles como se fosse resultado.
+"""
+
+import asyncio
+from collections.abc import Sequence
+from pathlib import Path
+from typing import cast
+
+from harness import load_config
+from harness.evals import (
+    EvalCaseSpec,
+    EvalTier,
+    ModelCaseRunner,
+    RegressionFixture,
+    TaskVerdict,
+    load_eval_catalog,
+)
+from harness.evals.models import (
+    InjectedPassages,
+    ResponseAdmitsIgnorance,
+    ResponseContains,
+)
+from harness.evals.oracles import EvalEvidence, evaluate_oracle
+from harness.ports import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ToolSchema,
+)
+
+
+def _fixtures() -> dict[str, RegressionFixture]:
+    root = Path(__file__).resolve().parents[2]
+    catalog = load_eval_catalog(
+        root / "evals/fixtures/regressions.json",
+        root / "evals/experiments.json",
+        contract_root=root,
+    )
+    return {fixture.id: fixture for fixture in catalog.dataset.fixtures}
+
+
+def _spec(fixture: RegressionFixture, **settings: object) -> EvalCaseSpec:
+    return EvalCaseSpec(
+        run_id="run-1",
+        arm_id="arm-1",
+        fixture=fixture,
+        seed=104729,
+        order_index=0,
+        tier=EvalTier.EXPERIMENT,
+        settings=cast(dict[str, object], settings),  # type: ignore[arg-type]
+    )
+
+
+class _AnswerRuntime:
+    """Devolve sempre a mesma resposta, e guarda o que recebeu."""
+
+    def __init__(self, answer: str) -> None:
+        self._answer = answer
+        self.prompts: list[str] = []
+
+    async def generate(self, request: ModelRequest) -> ModelResponse:
+        self.prompts.append("\n".join(message.content or "" for message in request.messages))
+        return ModelResponse(content=self._answer)
+
+
+class _FlatEstimator:
+    @property
+    def validated(self) -> bool:
+        return True
+
+    def estimate(self, messages: Sequence[ModelMessage], tools: Sequence[ToolSchema]) -> int:
+        del tools
+        return sum(len(message.content or "") for message in messages) // 4
+
+
+def _run(fixture: RegressionFixture, *, answer: str, **settings: object):
+    runtime = _AnswerRuntime(answer)
+    runner = ModelCaseRunner(
+        config=load_config(),
+        runtime=runtime,
+        estimator=_FlatEstimator(),
+        operator_notes="",
+    )
+    result = asyncio.run(runner.run_case(_spec(fixture, **settings)))
+    return result, runtime
+
+
+def test_the_arm_decides_the_corpus_and_the_baseline_gets_no_passage() -> None:
+    fixture = _fixtures()["corpus_answer_carries_the_code_the_acervo_holds"]
+
+    granted, granted_runtime = _run(
+        fixture, answer="O proxy registra ERR_ORIGIN_2049.", corpus_granted=True
+    )
+    baseline, baseline_runtime = _run(
+        fixture, answer="O proxy registra ERR_ORIGIN_2049.", corpus_granted=False
+    )
+
+    assert granted.metrics["injected_passages"] >= 1.0
+    assert baseline.metrics["injected_passages"] == 0.0
+    # A passagem chega ao modelo, não só ao relatório.
+    assert "ERR_ORIGIN_2049" in granted_runtime.prompts[0]
+    assert "ERR_ORIGIN_2049" not in baseline_runtime.prompts[0]
+
+
+def test_the_fixture_decides_only_when_no_arm_says_otherwise() -> None:
+    # Fora de um experimento não existe braço, e a fixture continua rodando.
+    fixture = _fixtures()["corpus_passages_reach_the_model_before_the_first_step"]
+
+    result, _ = _run(fixture, answer="ERR_ORIGIN_2049")
+
+    assert result.metrics["injected_passages"] >= 1.0
+    assert result.evaluation is not None
+    assert result.evaluation.verdict is TaskVerdict.PASS
+
+
+def test_the_same_oracle_separates_the_two_arms() -> None:
+    """O oráculo é um só: quem muda de braço é o que o modelo tem para responder."""
+    fixture = _fixtures()["corpus_answer_carries_the_code_the_acervo_holds"]
+    memory = "Não tenho esse dado, mas costuma ser ERR_PROXY_403."
+
+    granted, _ = _run(fixture, answer="O erro é ERR_ORIGIN_2049.", corpus_granted=True)
+    baseline, _ = _run(fixture, answer=memory, corpus_granted=False)
+
+    assert granted.evaluation is not None
+    assert baseline.evaluation is not None
+    assert granted.evaluation.verdict is TaskVerdict.PASS
+    assert baseline.evaluation.verdict is TaskVerdict.FAIL
+
+
+def test_response_contains_reads_the_answer_in_both_directions() -> None:
+    evidence = EvalEvidence(response="A porta é a 8899.")
+
+    present = evaluate_oracle(
+        [ResponseContains(operator="response_contains", content="8899")], evidence
+    )
+    absent = evaluate_oracle(
+        [ResponseContains(operator="response_contains", content="porta 25", present=False)],
+        evidence,
+    )
+    wrong = evaluate_oracle(
+        [ResponseContains(operator="response_contains", content="ERR_ORIGIN_2049")],
+        evidence,
+    )
+
+    assert present.verdict is TaskVerdict.PASS
+    assert absent.verdict is TaskVerdict.PASS
+    assert wrong.verdict is TaskVerdict.FAIL
+
+
+def test_a_turn_with_no_response_cannot_be_judged_by_its_response() -> None:
+    evaluation = evaluate_oracle(
+        [ResponseContains(operator="response_contains", content="8899")],
+        EvalEvidence(response=None),
+    )
+
+    assert evaluation.verdict is TaskVerdict.INCONCLUSIVE
+
+
+def test_admitting_ignorance_is_a_phrase_list_and_says_so() -> None:
+    admits = evaluate_oracle(
+        [ResponseAdmitsIgnorance(operator="response_admits_ignorance")],
+        EvalEvidence(response="O manual não consta nada sobre e-mail."),
+    )
+    invents = evaluate_oracle(
+        [ResponseAdmitsIgnorance(operator="response_admits_ignorance")],
+        EvalEvidence(response="O servidor de e-mail escuta na porta 25."),
+    )
+
+    assert admits.verdict is TaskVerdict.PASS
+    assert invents.verdict is TaskVerdict.FAIL
+
+
+def test_no_retrieval_at_all_is_not_an_acervo_that_answered_nothing() -> None:
+    never_ran = evaluate_oracle(
+        [InjectedPassages(operator="injected_passages", minimum=1)],
+        EvalEvidence(injected_passages=None),
+    )
+    answered_nothing = evaluate_oracle(
+        [InjectedPassages(operator="injected_passages", minimum=1)],
+        EvalEvidence(injected_passages=0),
+    )
+
+    assert never_ran.verdict is TaskVerdict.INCONCLUSIVE
+    assert answered_nothing.verdict is TaskVerdict.FAIL
