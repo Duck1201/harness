@@ -6,7 +6,7 @@ from typing import cast
 import pytest
 
 from harness import load_config
-from harness.brave_browser import BraveEgressGuard
+from harness.brave_browser import browser_devtools_available
 from harness.conversation_store import ConversationStore
 from harness.domain import MUTATION_EFFECT
 from harness.evals import (
@@ -32,9 +32,11 @@ from harness.evals.model_runner import WaivedWriteGate
 from harness.ports import ConfirmationRequest, ModelRuntime, TokenEstimator
 from harness.web_tools import EgressPolicyError
 
+# Mesma sonda cacheada de tests/test_brave_browser.py: `@cache` garante um único
+# launch por sessão de pytest mesmo com os dois módulos coletados.
 brave_required = pytest.mark.skipif(
-    BraveEgressGuard().executable is None,
-    reason="Brave is not installed on this host",
+    not browser_devtools_available(),
+    reason="This host cannot open a browser debugging port",
 )
 
 

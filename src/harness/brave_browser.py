@@ -27,6 +27,7 @@ import signal
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 from typing import Any, cast
 
@@ -134,6 +135,42 @@ def find_brave_executable(candidates: Sequence[str] = CANDIDATE_EXECUTABLES) -> 
         if resolved is not None:
             return resolved
     return None
+
+
+@cache
+def browser_devtools_available() -> bool:
+    """Este host consegue mesmo abrir uma porta de depuração?
+
+    Perguntar só se o binário existe não basta, e o CI provou: o runner do
+    GitHub tem um Chromium no PATH, mas dentro do container ele morre no launch
+    sem `--no-sandbox`. Binário presente, launch impossível — e quatro testes de
+    navegador ficaram vermelhos quando deveriam ter sido pulados. `--version`
+    também não responde a pergunta certa: ele funciona num host onde o launch
+    falha.
+
+    A sonda sobe o navegador de verdade pelo mesmo caminho de launch da
+    capability, então roda **uma vez por processo** (`@cache`). Nunca a chame de
+    `readiness()` nem de import de módulo: quem paga o launch é quem precisa da
+    resposta, e em produção ninguém precisa.
+    """
+    executable = find_brave_executable()
+    if executable is None:
+        return False
+
+    async def probe() -> bool:
+        try:
+            async with _BraveProcess(
+                executable=executable,
+                # A sonda não navega para lugar nenhum: nada resolve.
+                resolver_rules="MAP * ~NOTFOUND",
+                startup_timeout_seconds=20.0,
+            ):
+                return True
+        except OSError:
+            # BraveBrowserError é OSError; o resto é falha de exec do host.
+            return False
+
+    return asyncio.run(probe())
 
 
 class BraveEgressGuard:

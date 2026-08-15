@@ -10,6 +10,7 @@ from harness.brave_browser import (
     BraveBrowserError,
     BraveBrowserVerifier,
     BraveEgressGuard,
+    browser_devtools_available,
     host_resolver_rules,
 )
 from harness.page_verification import (
@@ -33,9 +34,11 @@ PAGE = (
 
 BROKEN_PAGE = b"<!doctype html><html><body><script>null.crash()</script></body></html>"
 
+# A sonda sobe um navegador e cacheia o resultado por processo; ela roda no
+# import deste módulo, ou seja, só quando algum destes testes é coletado.
 brave_required = pytest.mark.skipif(
-    BraveEgressGuard().executable is None,
-    reason="Brave is not installed on this host",
+    not browser_devtools_available(),
+    reason="This host cannot open a browser debugging port",
 )
 
 
