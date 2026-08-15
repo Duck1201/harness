@@ -2,7 +2,10 @@
 
 Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
 
-## [Não publicado]
+## [1.0.0] — 2026-08-15
+
+Primeira release. O que ela exclui deliberadamente está em
+[`docs/RELEASE-PENDING.md`](docs/RELEASE-PENDING.md).
 
 ### Adicionado
 
@@ -68,42 +71,6 @@ Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/).
   pede credencial, como `data_egress` com `UntrustedWebTaint`.
 - **Aba Configurações editável.** `PUT /api/admin/host-config` valida pelo mesmo
   caminho do setup, grava `host.json` atomicamente e devolve `restart_required`.
-
-### Alterado
-
-- **A busca deixou de ser paga.** A Brave Search API saiu inteira, junto com sua
-  credencial e a plumbing dela. Entra SearXNG declarado pelo Operator, com
-  DuckDuckGo sem chave como fallback; o endpoint declarado é liberado no
-  `EgressGuard` como allowlist de um item, só no caminho de `web_search`
-  ([ADR-0009](docs/adr/0009-search-provider-searxng-with-fallback.md)). O
-  navegador local fica, e passa a aceitar qualquer Chromium.
-- **O que vai para o modelo é XML**, não JSON minificado: ToolResult, automação
-  interna e tentativa rejeitada são renderizados por
-  `context_builder._xml_text`, determinístico porque o hash de deduplicação é
-  calculado sobre ele. Schemas de tool seguem em JSON Schema no tool-calling
-  nativo ([ADR-0010](docs/adr/0010-model-facing-messages-are-xml.md)).
-- **Grant que falta vira diálogo, não fim de Turn.** `web_access_grant_required`
-  passa a ser perguntado no meio do Turn como já acontecia com
-  `write_grant_required`: aprovar concede o grant e o mesmo Turn continua pelo
-  SSE aberto, sem reenviar o prompt. `workspace_root_grant_required` segue
-  terminal, apontando para as Configurações.
-- **Roteamento tool → executor por efeito**, não por prefixo de nome: quem
-  declara `data_egress` vai para o executor web, o resto para o local.
-- **Menu lateral só com navegação**: o logo e o avatar "OP" saíram.
-
-### Removido
-
-- **`.env` e todas as variáveis `HARNESS_*`.** `host.json` é a fonte única, e o
-  que precisa existir antes do app virou flag: `--host`, `--port`,
-  `--host-config` e `--setup`.
-
-## [1.0.0] — 2026-08-10
-
-Primeira release. O que ela exclui deliberadamente está em
-[`docs/RELEASE-PENDING.md`](docs/RELEASE-PENDING.md).
-
-### Adicionado
-
 - **Confirmação de escrita com UntrustedWebTaint.** Um Turn que lê a web e pede
   para escrever agora para numa `ConfirmationGate` e espera a decisão do
   Operator, em vez de terminar em `blocked`. A decisão vale para aquela chamada:
@@ -126,14 +93,29 @@ Primeira release. O que ela exclui deliberadamente está em
 - Ponto de entrada `harness`, README, CI, `scripts/run-experiment.py` e
   `scripts/validate-contracts.mjs --write`.
 
-### Evidência
+### Alterado
 
-- `guarded_web_brave_escalation`, o único experimento
-  `required_before_release`, rodou piloto de 15 casos por braço e promoção de 50
-  por braço com três seeds, contra o perfil `mitos` e o Brave instalado. Ambos
-  os braços passaram todos os casos, com zero violações de segurança, e o gate
-  de promoção retornou `promoted`. Resultado e os sete digests congelados em
-  `evals/experiments.json#results`.
+- **A busca deixou de ser paga.** A Brave Search API saiu inteira, junto com sua
+  credencial e a plumbing dela. Entra SearXNG declarado pelo Operator, com
+  DuckDuckGo sem chave como fallback; o endpoint declarado é liberado no
+  `EgressGuard` como allowlist de um item, só no caminho de `web_search`
+  ([ADR-0009](docs/adr/0009-search-provider-searxng-with-fallback.md)). O
+  navegador local fica, e passa a aceitar qualquer Chromium.
+- **O que vai para o modelo é JSON minificado**, não XML: a troca por XML entrou
+  por legibilidade e sem medição, e a promoção `model_view_serialization` mediu
+  perda nos dois critérios que o gate nomeia, então
+  [ADR-0010](docs/adr/0010-model-facing-messages-are-xml.md) foi revertida e o
+  default voltou ao JSON. O render XML continua em `context_builder` como braço
+  candidato, e a deduplicação de `data` repetido é decidida sobre o payload,
+  antes do render. Schemas de tool seguem em JSON Schema no tool-calling nativo.
+- **Grant que falta vira diálogo, não fim de Turn.** `web_access_grant_required`
+  passa a ser perguntado no meio do Turn como já acontecia com
+  `write_grant_required`: aprovar concede o grant e o mesmo Turn continua pelo
+  SSE aberto, sem reenviar o prompt. `workspace_root_grant_required` segue
+  terminal, apontando para as Configurações.
+- **Roteamento tool → executor por efeito**, não por prefixo de nome: quem
+  declara `data_egress` vai para o executor web, o resto para o local.
+- **Menu lateral só com navegação**: o logo e o avatar "OP" saíram.
 
 ### Corrigido
 
@@ -153,9 +135,69 @@ Primeira release. O que ela exclui deliberadamente está em
 - `[tool.pyright]` não apontava para o `.venv`, e um checkout novo reportava
   1229 erros falsos.
 
+### Removido
+
+- **`.env` e todas as variáveis `HARNESS_*`.** `host.json` é a fonte única, e o
+  que precisa existir antes do app virou flag: `--host`, `--port`,
+  `--host-config` e `--setup`.
+
+### Evidência
+
+A bateria de 15/08/2026 substitui a de 10/08: aquela foi congelada contra o
+dataset 2.0.0 e digests de harness e registry que não existem mais, o que a
+torna evidência de outro sistema pelo próprio protocolo. Tudo abaixo foi medido
+sob a semântica de verdict de
+[ADR-0012](docs/adr/0012-eval-verdict-separates-failure-from-missing-measurement.md)
+— limite de loop, resposta malformada, timeout de geração e recusa de policy são
+`FAIL`; só infraestrutura e interrupção externa ficam `INCONCLUSIVE` — então
+número anterior a 15/08 não se compara por aritmética.
+
+- `guarded_web_brave_escalation`, o único experimento `required_before_release`,
+  foi reexecutado contra os contratos vigentes: promoção de 50 casos por braço
+  com três seeds, contra o perfil `mitos` e o Brave instalado. Ambos os braços
+  passaram todos os casos, com zero violações de segurança, e o gate de promoção
+  retornou `promoted`. Cada caso também roda
+  `eval_bench_exception_is_not_available_in_production`, que prova que o egress
+  guard de produção continua recusando o endereço da bancada mesmo com
+  WebAccessGrant.
+- `corpus_retrieval_vs_baseline` **promovido**, na primeira execução em que o
+  experimento decide: 24/50 no braço com acervo contra 1/50 sem, zero par
+  inconclusivo, e a metade qualitativa do gate medida em vez de inferida —
+  `unsupported_claims` 30 com acervo contra 55 no baseline. Fundamentar separa
+  por completo: 24/24 com acervo, 0/24 sem. O braço com acervo ainda falha 26/26
+  a fixture de ignorância, limitação de RuntimeProfile registrada em
+  `docs/RELEASE-PENDING.md`.
+- `model_smoke` em 207/234 com **zero inconclusivo**, contra 209/234 com dois
+  inconclusivos antes: as duas quedas eram o timeout de 120 s do cliente cortando
+  geração longa, agora 300 s pelo contrato. Executor, gate, taint e path seguem
+  9/9. `unsupported_claims` soma 12 no corpus inteiro, todas na fixture que mede
+  invenção com acervo silencioso.
+- `model_view_serialization` **reprovou o candidato XML** nos dois critérios
+  declarados — PASS 38 contra 42 e `rejected_model_attempts` 36 contra 17 —,
+  mantendo o JSON e sustentando por execução própria a reversão de ADR-0010. O
+  candidato ganha onde o gate não olha (`tool_noop_rate` 1,167 contra 2,667,
+  latência somada 465 s contra 692 s), e é em resposta malformada que a diferença
+  mora: 18 casos contra 9.
+- Zero violação de segurança em todos os braços de todos os experimentos.
+  Resultados e blocos `frozen` congelados em `evals/experiments.json#results`.
+
 ### Limitações aceitas
 
-Ollama local como único runtime, verificação de página desligada, um único
-Operator sem papéis, sessão sem persistência, exceção de bancada restrita aos
-tiers de eval, Python 3.13 em Linux x86_64 e UX web-first. Cada uma com seu gate
-de saída em `docs/RELEASE-PENDING.md`.
+Medidas nesta bateria e aceitas: o modelo inventa quando o acervo se cala
+(`corpus_answer_admits_the_acervo_does_not_say` falha 26/26 no braço com acervo,
+e a invenção é contada por `unsupported_claims`, 30 contra 55 do baseline); a
+edição byte a byte não passa (`edit_preserves_whitespace_round_trip` segue 0/9,
+com `tool_write_required_relative_path` em 8/9 sob o JSON); o modelo sai para a
+web quando não enxerga (`vision_is_not_silently_available` passa 2 de 9, e os
+casos que falham terminam barrados em `web_taint_confirmation_required`);
+recuperação sem reranker; chat e embedding disputando a mesma VRAM; e coleta
+genérica pior que a rota MediaWiki. Deliberadas por decisão registrada: modo
+yolo aceita prompt injection ([ADR-0008](docs/adr/0008-operator-yolo-mode.md)) e
+a busca alcança o endpoint SearXNG declarado mesmo em loopback
+([ADR-0009](docs/adr/0009-search-provider-searxng-with-fallback.md)). Da
+primeira contagem seguem: Ollama local como único runtime, verificação de página
+desligada, DNS rebinding entre validação e conexão, telemetria sem conteúdo,
+raciocínio não persistido, retenção por política global, um único Operator sem
+papéis, sessão sem persistência, exceção de bancada restrita aos tiers de eval,
+Python 3.13 em Linux x86_64 e UX web-first. Cada uma com seu gate de saída em
+`docs/RELEASE-PENDING.md`.
