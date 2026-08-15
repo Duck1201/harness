@@ -57,10 +57,11 @@ from ..web_tools import WebToolExecutor
 from .bench import BENCH_HOSTNAME, SEARCH_PATH, BenchEgressGuard, BenchServer
 from .language import PortugueseDetector
 from .models import RegressionFixture
-from .oracles import EvalEvidence, evaluate_oracle
+from .oracles import EvalEvidence, evaluate_oracle, unsupported_claims
 from .runner import (
     CaseRunner,
     CaseRunResult,
+    ContractCaseRunner,
     EvalCaseSpec,
     EvalCorpus,
     build_eval_corpus,
@@ -525,6 +526,9 @@ class ModelCaseRunner:
                     "rejected_model_attempts": float(
                         sum(entry.kind.value == "rejected_model_attempt" for entry in history)
                     ),
+                    # A metade qualitativa do gate de acervo, contada: quantas
+                    # alegações o caso fez que o material não sustenta.
+                    "unsupported_claims": float(unsupported_claims(evaluation)),
                     # O oráculo é o mesmo nos dois braços — tem que ser, ou a
                     # comparação não compara nada. Quem mostra que os braços
                     # rodaram experimentos diferentes é esta métrica.
@@ -605,6 +609,29 @@ class ModelCaseRunner:
         if "data_egress" in effects:
             return web
         return local
+
+
+def build_live_runner(
+    config: HarnessConfig,
+    model_runner: ModelCaseRunner,
+    *,
+    browser_guard: BraveEgressGuard | None = None,
+) -> CompositeCaseRunner:
+    """A composição de runners que cobre todo o corpus, montada num lugar só.
+
+    Escrita duas vezes — no script de campanha e no teste que verifica se todo
+    `type` do dataset tem runner — ela ficou meses quebrada no script:
+    `ContractCaseRunner` trocou `registry=` por `config=` e só o teste
+    acompanhou. Com uma função só, o teste monta o mesmo caminho do script com
+    colaboradores de mentira e a deriva de assinatura aparece sem GPU.
+    """
+    return CompositeCaseRunner(
+        (
+            ContractCaseRunner(config=config),
+            BrowserBenchCaseRunner(registry=config.tool_registry, browser_guard=browser_guard),
+            model_runner,
+        )
+    )
 
 
 def _corpus_granted(spec: EvalCaseSpec) -> bool:
@@ -697,4 +724,5 @@ __all__ = [
     "BrowserBenchCaseRunner",
     "CompositeCaseRunner",
     "ModelCaseRunner",
+    "build_live_runner",
 ]

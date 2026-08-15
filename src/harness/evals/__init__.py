@@ -17,6 +17,7 @@ from .model_runner import (
     BrowserBenchCaseRunner,
     CompositeCaseRunner,
     ModelCaseRunner,
+    build_live_runner,
 )
 from .models import (
     EvalCatalog,
@@ -49,6 +50,7 @@ from .oracles import (
     LanguageDetector,
     OracleEvaluation,
     evaluate_oracle,
+    unsupported_claims,
 )
 from .runner import (
     CaseRunner,
@@ -131,6 +133,7 @@ __all__ = [
     "ToolCalled",
     "ToolNotCalled",
     "TypedAssertion",
+    "build_live_runner",
     "canonical_digest",
     "evaluate_oracle",
     "evaluate_promotion_gate",
@@ -138,5 +141,6 @@ __all__ = [
     "load_experiment_manifest",
     "load_regression_dataset",
     "paired_bootstrap_difference",
+    "unsupported_claims",
     "wilson_interval",
 ]

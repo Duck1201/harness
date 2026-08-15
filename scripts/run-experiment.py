@@ -39,11 +39,9 @@ from harness import (  # noqa: E402
 )
 from harness.brave_browser import BraveEgressGuard  # noqa: E402
 from harness.evals import (  # noqa: E402
-    BrowserBenchCaseRunner,
-    CompositeCaseRunner,
-    ContractCaseRunner,
     EvalService,
     ModelCaseRunner,
+    build_live_runner,
     load_eval_catalog,
 )
 from harness.system_prompt import load_operator_notes  # noqa: E402
@@ -103,7 +101,6 @@ async def run(
         expected_sha256=hashlib.sha256(tokenizer.read_bytes()).hexdigest(),
     )
     guard = BraveEgressGuard()
-    registry = config.tool_registry
     # O acervo das fixtures é indexado pelo mesmo embedding da produção, então o
     # que chega ao modelo é a passagem que o piso do contrato deixaria passar —
     # inclusive nenhuma. Com o embedder determinístico, uma pergunta fora do
@@ -129,13 +126,7 @@ async def run(
         browser_guard=guard,
         embedder=embedder,
     )
-    live = CompositeCaseRunner(
-        (
-            ContractCaseRunner(config=config),
-            BrowserBenchCaseRunner(registry=registry, browser_guard=guard),
-            model_runner,
-        )
-    )
+    live = build_live_runner(config, model_runner, browser_guard=guard)
     service = EvalService(
         store=EvalStore(database),
         catalog=catalog,

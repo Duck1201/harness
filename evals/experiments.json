@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "manifest_version": "2.0.0",
-  "manifest_digest_sha256": "3433329e09d84df02d3225a20982ec4cbff59bdcfd61ced817015e375ab1a14a",
+  "manifest_digest_sha256": "7dd4ad0dda12477dc3ebb52bc9f431a77b368fe26562663fc5cbf2838e691419",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -57,6 +57,7 @@
     "parse_valid_rate",
     "rejected_model_attempts",
     "injected_passages",
+    "unsupported_claims",
     "extra_tool_calls",
     "steps_to_terminal",
     "prompt_tokens",
@@ -1581,8 +1582,8 @@
         "steps_to_terminal",
         "latency_ms"
       ],
-      "question": "ADR-0010 trocou o conteudo das mensagens do modelo de JSON minificado para XML por argumento de legibilidade, sem medicao. Este experimento decide se o default fica.",
-      "promotion_gate": "O XML fica se nao perder verdict PASS contra o controle e nao aumentar rejected_model_attempts; empate mantem o default por ja estar em vigor. Perda em qualquer um dos dois reverte ADR-0010. Cumprido em 15/08/2026: perdeu nos dois (36/50 contra 41/50; 30 contra 22) e a ADR foi revertida, com o JSON de volta como default e o XML como braco candidato."
+      "question": "ADR-0010 trocou o conteúdo das mensagens do modelo de JSON minificado para XML por argumento de legibilidade, sem medição. A promoção de 15/08/2026 mediu e a ADR foi revertida: o JSON voltou a ser o formato do harness e o XML passou a ser o desafiante. Este experimento decide se o XML volta.",
+      "promotion_gate": "O XML volta se ganhar em verdict PASS contra o controle e não aumentar rejected_model_attempts; empate mantém o JSON, por já estar em vigor. Executado em 15/08/2026, quando era o XML que estava em vigor: perdeu nos dois (36/50 contra 41/50 em PASS; 30 contra 22 em tentativa rejeitada) e ADR-0010 foi revertida. Os ids dos braços não mudaram porque descrevem os papéis certos: o controle é o formato em vigor, o candidato é o desafiante."
     },
     {
       "id": "guarded_web_brave_escalation",
@@ -1643,7 +1644,7 @@
       "measures": [
         "answers_grounded_in_a_cited_passage",
         "answers_that_say_it_does_not_know_when_the_acervo_cannot_answer",
-        "claims_not_supported_by_any_returned_passage"
+        "unsupported_claims"
       ],
       "promotion_gate": "The granted arm answers more questions correctly with a citation and does not invent more than the baseline when the acervo has nothing; zero taint or grant violations.",
       "note": "Comparação entre responder sem acervo e responder com ele. Um piloto em 13/08/2026 mostrou que a comparação não era executável: `corpus_granted` era lido do stimulus da fixture e não do braço, as tags selecionavam fixtures de gate em vez de resposta, e os dois braços rodavam trabalho idêntico — divergindo 13 pontos por não determinismo e uma queda do provedor. Agora o braço decide o grant (`_corpus_granted` em `evals/model_runner.py`), as fixtures `corpus_answer` medem o que o Operator lê, e `injected_passages` entra como métrica para mostrar que os braços de fato rodaram experimentos diferentes. O embedder é o determinístico da bancada, não o `bge-m3`: o que se compara aqui é o que o modelo faz com passagem na mão contra o que ele faz sem nenhuma, e não a qualidade da recuperação — essa é do acervo real e do piso do contrato. Os braços indexam com o `bge-m3` e o piso do contrato desde 15/08/2026. Antes usavam o embedder de hash com piso 0.3, e isso media outro sistema: a pergunta sobre a porta do servidor de e-mail trazia a passagem do proxy, que o modelo esticava até responder 8899 em 8 de 8 casos. Com o embedder real, a mesma pergunta volta sem passagem (a similaridade fica abaixo de 0.53, contra 0.76 na pergunta que a passagem responde), e o que resta de invenção vem da memória do modelo, não de material que o harness entregou. Sem perna lexical: a reescrita autônoma da produção custaria uma chamada de modelo por caso, e a configuração é a mesma que a produção usa quando essa reescrita falha."

@@ -59,6 +59,11 @@ class AssertionEvaluation:
     operator: str
     verdict: TaskVerdict
     explanation: str
+    # A asserção afirma a ausência do que nomeia (`present: false`). Só o operador
+    # não distingue as duas falhas de `response_contains`, e elas dizem o oposto
+    # uma da outra: com `present: true` a resposta não trouxe o que devia; com
+    # `present: false` ela disse em voz alta o que nenhuma passagem sustenta.
+    negated: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +125,20 @@ def _missing_response_verdict(evidence: EvalEvidence) -> TaskVerdict:
     return TaskVerdict.FAIL
 
 
+def unsupported_claims(evaluation: OracleEvaluation) -> int:
+    """Quantas alegações o caso disse em voz alta sem material que as sustente.
+
+    Metade do gate de `corpus_retrieval_vs_baseline` é "não inventa mais que o
+    baseline quando o acervo não tem a resposta", e lê-la pelo verdict soma quem
+    inventou com quem nunca respondeu. Cada `response_contains` com
+    `present: false` que falha é uma invenção contada, não inferida.
+    """
+    return sum(
+        item.operator == "response_contains" and item.negated and item.verdict is TaskVerdict.FAIL
+        for item in evaluation.assertions
+    )
+
+
 def evaluate_oracle(
     assertions: Sequence[TypedAssertion | Mapping[str, object]],
     evidence: EvalEvidence,
@@ -165,6 +184,8 @@ def _evaluate(
     # Como fica um `passed is None` desta asserção: só as que dependem da resposta
     # trocam este valor, para a regra não alcançar fixture que nada afirma sobre ela.
     unjudged = TaskVerdict.INCONCLUSIVE
+    # Só as asserções que têm `present` trocam este valor.
+    negated = False
     if isinstance(assertion, ToolCalled):
         passed = any(call.name == assertion.tool for call in evidence.tool_calls)
         detail = f"tool {assertion.tool} was called"
@@ -229,6 +250,7 @@ def _evaluate(
         detail = f"result producer is {assertion.producer}"
     elif isinstance(assertion, ResultTaintIs):
         results = _selected_results(evidence, assertion.tool_call_id)
+        negated = not assertion.present
         passed = bool(results) and all(
             (assertion.taint in _taints(result)) is assertion.present for result in results
         )
@@ -259,6 +281,7 @@ def _evaluate(
             )
         detail = f"path remains within workspace: {assertion.path}"
     elif isinstance(assertion, ResponseContains):
+        negated = not assertion.present
         if evidence.response is None:
             passed = None
             unjudged = _missing_response_verdict(evidence)
@@ -306,6 +329,7 @@ def _evaluate(
         operator=assertion.operator,
         verdict=(unjudged if passed is None else TaskVerdict.PASS if passed else TaskVerdict.FAIL),
         explanation=detail,
+        negated=negated,
     )
 
 

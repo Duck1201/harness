@@ -18,6 +18,7 @@ from harness.evals import (
     ModelCaseRunner,
     RegressionFixture,
     TaskVerdict,
+    build_live_runner,
     load_eval_catalog,
 )
 from harness.evals.bench import (
@@ -156,20 +157,19 @@ def test_every_fixture_type_in_the_dataset_has_a_runner() -> None:
 
     Such a fixture never runs, never fails and protects nothing, which is how
     three of them survived a release. supports() reads no collaborator, so the
-    model runner can be built with placeholders for this check alone.
+    model runner can be built with placeholders for this check alone — and the
+    composition is the script's own, so a signature that drifts breaks here
+    instead of on the bench.
     """
     config = load_config()
-    composite = CompositeCaseRunner(
-        (
-            ContractCaseRunner(config=config),
-            BrowserBenchCaseRunner(registry=config.tool_registry),
-            ModelCaseRunner(
-                config=config,
-                runtime=cast(ModelRuntime, None),
-                estimator=cast(TokenEstimator, None),
-                operator_notes="",
-            ),
-        )
+    composite = build_live_runner(
+        config,
+        ModelCaseRunner(
+            config=config,
+            runtime=cast(ModelRuntime, None),
+            estimator=cast(TokenEstimator, None),
+            operator_notes="",
+        ),
     )
 
     unsupported = sorted(

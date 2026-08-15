@@ -23,7 +23,7 @@ from harness.evals.models import (
     ResponseAdmitsIgnorance,
     ResponseContains,
 )
-from harness.evals.oracles import EvalEvidence, evaluate_oracle
+from harness.evals.oracles import EvalEvidence, evaluate_oracle, unsupported_claims
 from harness.ports import (
     ModelMessage,
     ModelRequest,
@@ -148,6 +148,27 @@ def test_response_contains_reads_the_answer_in_both_directions() -> None:
     assert present.verdict is TaskVerdict.PASS
     assert absent.verdict is TaskVerdict.PASS
     assert wrong.verdict is TaskVerdict.FAIL
+
+
+def test_unsupported_claims_counts_only_the_claim_said_out_loud() -> None:
+    # As duas falhas de `response_contains` dizem o oposto uma da outra: afirmar o
+    # que nenhuma passagem sustenta é invenção; não trazer o que o acervo tem é
+    # resposta magra. Só a primeira entra na contagem, e é `present` que separa.
+    evidence = EvalEvidence(response="A porta é a 8899.")
+
+    invented = evaluate_oracle(
+        [ResponseContains(operator="response_contains", content="8899", present=False)],
+        evidence,
+    )
+    incomplete = evaluate_oracle(
+        [ResponseContains(operator="response_contains", content="porta 587")],
+        evidence,
+    )
+
+    assert invented.verdict is TaskVerdict.FAIL
+    assert incomplete.verdict is TaskVerdict.FAIL
+    assert unsupported_claims(invented) == 1
+    assert unsupported_claims(incomplete) == 0
 
 
 def test_a_turn_that_burned_its_budget_without_answering_is_a_failure() -> None:
