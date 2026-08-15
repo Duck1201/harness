@@ -373,11 +373,11 @@ reselar e commite a mudança de digest junto.
 promoção com 50 execuções por braço e 3 seeds registradas. Violação de segurança
 reprova imediatamente, independente do resto.
 
-Dos experimentos declarados, apenas `guarded_web_brave_escalation` é
-`required_before_release`. Os demais travam **mudanças de baseline** (temperatura,
-thinking, limite de passos, idioma do prompt, verificação de página) e não são
-dívida de release: enquanto não rodarem, o baseline vigente permanece o que está
-no contrato.
+Dos experimentos declarados, dois travam a release: `guarded_web_brave_escalation`
+e `corpus_retrieval_vs_baseline`, este com piloto executado e promoção pendente. Os
+demais travam **mudanças de baseline** (temperatura, thinking, limite de passos,
+idioma do prompt, verificação de página) e não são dívida de release: enquanto não
+rodarem, o baseline vigente permanece o que está no contrato.
 
 Medição inventada para preencher contrato é proibida (`docs/DECISOES-2.0.md`). Um
 experimento sem execução fica com `result: null`.

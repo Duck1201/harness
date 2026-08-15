@@ -39,10 +39,16 @@ dois braços de `corpus_retrieval_vs_baseline` — tem que ser o mesmo, ou não 
 comparação — e quem decide se existe acervo é o braço, não o estímulo. Que os
 dois braços rodaram experimentos diferentes é a métrica `injected_passages` que
 mostra, e o operador de mesmo nome existe para a fixture que prova a injeção
-antes do primeiro AgentStep. Nenhuma delas mede qualidade de recuperação: o
-embedder continua sendo o da bancada, e o que se compara é responder com passagem
-na mão contra responder sem nenhuma. Qualidade de recuperação é do `bge-m3` com
-acervo real, e a calibragem do piso vive no CHANGELOG.
+antes do primeiro AgentStep.
+
+Elas indexam com o `bge-m3` e o piso do contrato, não com o embedder da bancada.
+Foi medido o motivo: com o embedder determinístico, a pergunta sobre a porta do
+servidor de e-mail traz a passagem do proxy, e o modelo a estica até responder
+`8899`; com o `bge-m3` e o piso 0.53, essa mesma pergunta volta sem passagem
+nenhuma, enquanto a pergunta que a passagem responde volta com 0.76. Medir o
+modelo diante de uma passagem que a produção jamais entregaria é medir outro
+sistema. O embedder determinístico continua sendo o das fixtures `corpus_contract`,
+que só provam o gate e precisam rodar sem GPU.
 
 A verificação de página segue a mesma regra: enquanto a automação não estiver no
 caminho de escrita, nenhuma fixture consegue observá-la, e a cobertura vive em

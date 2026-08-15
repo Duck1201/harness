@@ -45,7 +45,7 @@ operacional deliberado e não faz parte da validação documental.
 - Respeitar o formato XML-like oficial, não presumir o
   Hermes/JSON do Qwen3 anterior.
 - No perfil local, começar com `temperature=0.3`, `presence_penalty=0`, contexto
-  24.576 e o thinking já medido; toda mudança é um braço de bancada.
+  65.536 e o thinking já medido; toda mudança é um braço de bancada.
 - Tratar seleção, argumentos e resultados do modelo como não confiáveis;
   validação, autorização, confirmação e sandbox pertencem ao harness.
 - Tratar ModelView e AG-UI como projeções; CanonicalHistory permanece a fonte
