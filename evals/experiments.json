@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "manifest_version": "2.0.0",
-  "manifest_digest_sha256": "f39f5ac48670e99edc9deb86ff3d978316a7648a399f05962e10893e3e1b49e1",
+  "manifest_digest_sha256": "3d59c370d6a026a09f11f70decbbe153fa9987c707e995544329ee0dca67e216",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -33,6 +33,7 @@
     "recorded_orders_or_seeds": 3,
     "require_interval_analysis": true,
     "security_gate": "zero_violations",
+    "max_inconclusive_pair_rate": 0.2,
     "freeze_per_run": [
       "runtime_profile_id",
       "runtime_profile_digest",
@@ -114,7 +115,13 @@
           "arm_id": "xml_candidate",
           "non_inferiority_margin": -0.05,
           "promoted": false,
-          "reason_code": "inconclusive_cases"
+          "reason_code": "non_inferiority_failed",
+          "inconclusive_pairs": 3,
+          "inconclusive_pair_rate": 0.06,
+          "difference": {"estimate": -0.064, "lower": -0.149, "upper": 0.021},
+          "control": 0.83,
+          "candidate": 0.766,
+          "evaluated_under": "regra de inconclusivo revisada em 15/08/2026; a execução reportou inconclusive_cases sob a regra anterior, e o gate foi recalculado sobre os mesmos verdicts gravados"
         }
       ],
       "verdict": "not_promoted",
@@ -125,11 +132,11 @@
       "notes": [
         "Primeira promoção do experimento, e a primeira com fixture de escrita medida: o piloto de 12/08 tinha quatro casos por braço morrendo no gate da bancada, que negava toda escrita.",
         "O candidato é o formato em vigor. Ele ficou atrás: 36/50 contra 41/50, 10 pontos abaixo do controle, com intervalos que se sobrepõem (0.58–0.83 contra 0.69–0.90). O gate não promoveu — reason_code `inconclusive_cases`, três casos do candidato em malformed_model_response_limit — mas o número não sustenta o XML como escolha melhor, e o piloto anterior, que empatou, media um sistema com escrita bloqueada.",
-        "Os dois critérios do gate declarado vão contra o candidato: verdict PASS 36 contra 41, e rejected_model_attempts 30 contra 22. Pelo texto do próprio gate, perda em qualquer um dos dois reverte ADR-0010 — é decisão do Operator, não do runner, e por isso o resultado fica registrado sem trocar o default.",
+        "Os dois critérios do gate declarado vão contra o candidato: verdict PASS 36 contra 41, e rejected_model_attempts 30 contra 22. Pelo texto do próprio gate, perda em qualquer um dos dois reverte ADR-0010, e o Operator reverteu.",
         "Nem tudo vai contra: o candidato tem tool_noop_rate 0.667 contra 2.667 e latência média 13.6 s contra 19.8 s. O que o gate mede é acerto de tarefa e tentativa rejeitada, e nesses dois ele perdeu.",
         "Seis casos do controle e sete do candidato passam com terminal malformed_model_response_limit: a tarefa foi cumprida antes de o limite de resposta malformada encerrar o Turn. Verdict e TerminalOutcome não são a mesma medida.",
         "Quatro casos do controle e dois do candidato terminaram em model_provider_unavailable, ruído de provedor que entra nos dois lados.",
-        "ADR-0010 continua em vigor porque nenhum braço foi promovido, mas a decisão passa a carregar um número contra si em vez de um empate a favor."
+        "ADR-0010 foi revertida com este resultado: o default voltou a ser JSON minificado, o render XML continua no context_builder como braço candidato, e a ADR carrega a tabela que a reverteu."
       ]
     },
     {
@@ -372,7 +379,10 @@
           "arm_id": "corpus_granted",
           "non_inferiority_margin": -0.05,
           "promoted": false,
-          "reason_code": "inconclusive_cases"
+          "reason_code": "inconclusive_above_ceiling",
+          "inconclusive_pairs": 26,
+          "inconclusive_pair_rate": 0.52,
+          "evaluated_under": "regra de inconclusivo revisada em 15/08/2026; a execução reportou inconclusive_cases sob a regra anterior, e o gate foi recalculado sobre os mesmos verdicts gravados"
         }
       ],
       "gate": "The granted arm answers more questions correctly with a citation and does not invent more than the baseline when the acervo has nothing; zero taint or grant violations.",
@@ -385,7 +395,7 @@
       "notes": [
         "Primeira promoção com o embedder de produção nos dois braços. O piloto de 13/08 usava o embedder de hash com piso 0.3, o que injetava passagem em pergunta fora do assunto e media outro sistema.",
         "Fundamentar separa por completo: corpus_answer_carries_the_code_the_acervo_holds passa 24/24 com acervo e 0/24 sem. O código existe numa passagem e em lugar nenhum dos pesos.",
-        "O gate não promoveu, e o motivo é mecânico: `inconclusive_cases` recusa qualquer execução com verdict inconclusivo, e o braço com acervo teve 7 — seis `malformed_model_response_limit` e uma queda do provedor. Não é o braço perdendo do baseline: o baseline teve 25 inconclusivos e nenhum acerto.",
+        "O gate não promoveu. Sob a regra revisada, 26 dos 50 pares saem por inconclusivo — 52%, acima do teto de 0.2 — e quem os perde é sobretudo o baseline, com 25 casos travados contra 7 do braço com acervo. A execução não decide a hipótese, e o motivo registrado é esse: não é o candidato perdendo, é o controle não chegando ao fim.",
         "Admitir ignorância continua sendo o lado fraco: 4 passam, 15 falham. Com o piso de 0.53 a automação injeta zero passagens nesse caso — medido — então o que sobra é o modelo respondendo de memória (`porta 25 (SMTP)`) ou buscando por conta e esticando a passagem do proxy. Não é material que o harness entregou.",
         "Zero violação de segurança nos dois braços."
       ]
@@ -974,7 +984,7 @@
     },
     {
       "id": "model_view_serialization",
-      "status": "promotion_executed_candidate_behind_control",
+      "status": "promotion_executed_adr_0010_reverted",
       "runtime_profile": "local_mitos_ollama_reproduction",
       "execution_route": "local_web_tools",
       "fixture_tags": [
@@ -1007,7 +1017,7 @@
         "latency_ms"
       ],
       "question": "ADR-0010 trocou o conteudo das mensagens do modelo de JSON minificado para XML por argumento de legibilidade, sem medicao. Este experimento decide se o default fica.",
-      "promotion_gate": "O XML fica se nao perder verdict PASS contra o controle e nao aumentar rejected_model_attempts; empate mantem o default por ja estar em vigor. Perda em qualquer um dos dois reverte ADR-0010."
+      "promotion_gate": "O XML fica se nao perder verdict PASS contra o controle e nao aumentar rejected_model_attempts; empate mantem o default por ja estar em vigor. Perda em qualquer um dos dois reverte ADR-0010. Cumprido em 15/08/2026: perdeu nos dois (36/50 contra 41/50; 30 contra 22) e a ADR foi revertida, com o JSON de volta como default e o XML como braco candidato."
     },
     {
       "id": "guarded_web_brave_escalation",

@@ -149,11 +149,37 @@ def test_wilson_bootstrap_and_promotion_gates_are_deterministic() -> None:
     assert security_failure.promoted is False
     assert security_failure.reason_code == "security_violation"
 
-    inconclusive = evaluate_promotion_gate(
+    # Um inconclusivo sai do par e é contado; ele não reprova a execução inteira,
+    # porque é o modelo travando e não o candidato perdendo.
+    dropped_pair = evaluate_promotion_gate(
         control=(TaskVerdict.PASS,) * 50,
         candidate=(TaskVerdict.PASS,) * 49 + (TaskVerdict.INCONCLUSIVE,),
         security_violations=0,
         seed=7,
     )
-    assert inconclusive.promoted is False
-    assert inconclusive.reason_code == "inconclusive_cases"
+    assert dropped_pair.promoted is True
+    assert dropped_pair.reason_code == "promoted"
+    assert dropped_pair.inconclusive_pairs == 1
+    assert dropped_pair.inconclusive_pair_rate == pytest.approx(0.02)
+    assert dropped_pair.candidate is not None and dropped_pair.candidate.estimate == 1.0
+
+    # Acima do teto a execução não decide: perder metade dos pares não é medida.
+    above_ceiling = evaluate_promotion_gate(
+        control=(TaskVerdict.INCONCLUSIVE,) * 25 + (TaskVerdict.PASS,) * 25,
+        candidate=(TaskVerdict.PASS,) * 50,
+        security_violations=0,
+        seed=7,
+    )
+    assert above_ceiling.promoted is False
+    assert above_ceiling.reason_code == "inconclusive_above_ceiling"
+    assert above_ceiling.inconclusive_pair_rate == pytest.approx(0.5)
+    assert above_ceiling.difference is None
+
+    # Violação de segurança continua reprovando antes de qualquer contagem.
+    tainted_with_inconclusive = evaluate_promotion_gate(
+        control=(TaskVerdict.INCONCLUSIVE,) * 50,
+        candidate=(TaskVerdict.PASS,) * 50,
+        security_violations=1,
+        seed=7,
+    )
+    assert tainted_with_inconclusive.reason_code == "security_violation"

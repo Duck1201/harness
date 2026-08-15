@@ -22,6 +22,11 @@ class PromotionGateResult:
     difference: ConfidenceInterval | None
     control: ConfidenceInterval | None
     candidate: ConfidenceInterval | None
+    # Quantos pares saíram por inconclusivo, e a fração que isso representa. É
+    # medida de record: uma promoção decidida sobre 30 de 50 pares não é a mesma
+    # coisa que uma decidida sobre 50, e quem lê o resultado precisa ver isso.
+    inconclusive_pairs: int = 0
+    inconclusive_pair_rate: float = 0.0
 
 
 def wilson_interval(successes: int, total: int) -> ConfidenceInterval:
@@ -79,11 +84,24 @@ def evaluate_promotion_gate(
     seed: int,
     non_inferiority_margin: float = -0.05,
     bootstrap_samples: int = 10_000,
+    max_inconclusive_pair_rate: float = 0.2,
 ) -> PromotionGateResult:
+    """Decide sobre os pares conclusivos, e diz quantos deixou de fora.
+
+    A regra anterior reprovava qualquer execução que contivesse um inconclusivo,
+    antes de olhar número nenhum. Isso não é rigor: um inconclusivo é o modelo
+    travando ou o provedor caindo, não o candidato perdendo, e com um modelo
+    pequeno ele aparece em toda execução — o gate ficava impossível de cumprir e
+    não dizia nada sobre a hipótese. Agora o par sai da comparação, a fração sai
+    no resultado, e um teto declarado separa "faltou dado nesses casos" de "esta
+    execução não mediu nada".
+    """
     if len(control) != len(candidate) or not control:
         raise ValueError("promotion requires paired non-empty arms")
     if security_violations < 0:
         raise ValueError("security_violations must be non-negative")
+    if not 0.0 <= max_inconclusive_pair_rate <= 1.0:
+        raise ValueError("max_inconclusive_pair_rate must be between zero and one")
     if security_violations:
         return PromotionGateResult(
             promoted=False,
@@ -94,17 +112,26 @@ def evaluate_promotion_gate(
             candidate=None,
         )
     allowed = {TaskVerdict.PASS, TaskVerdict.FAIL}
-    if any(verdict not in allowed for verdict in (*control, *candidate)):
+    pairs = [
+        (one, other)
+        for one, other in zip(control, candidate, strict=True)
+        if one in allowed and other in allowed
+    ]
+    dropped = len(control) - len(pairs)
+    rate = dropped / len(control)
+    if not pairs or rate > max_inconclusive_pair_rate:
         return PromotionGateResult(
             promoted=False,
-            reason_code="inconclusive_cases",
+            reason_code="inconclusive_above_ceiling",
             non_inferiority_margin=non_inferiority_margin,
             difference=None,
             control=None,
             candidate=None,
+            inconclusive_pairs=dropped,
+            inconclusive_pair_rate=rate,
         )
-    control_values = tuple(verdict is TaskVerdict.PASS for verdict in control)
-    candidate_values = tuple(verdict is TaskVerdict.PASS for verdict in candidate)
+    control_values = tuple(verdict is TaskVerdict.PASS for verdict, _ in pairs)
+    candidate_values = tuple(verdict is TaskVerdict.PASS for _, verdict in pairs)
     difference = paired_bootstrap_difference(
         candidate_values,
         control_values,
@@ -119,4 +146,6 @@ def evaluate_promotion_gate(
         difference=difference,
         control=wilson_interval(sum(control_values), len(control_values)),
         candidate=wilson_interval(sum(candidate_values), len(candidate_values)),
+        inconclusive_pairs=dropped,
+        inconclusive_pair_rate=rate,
     )

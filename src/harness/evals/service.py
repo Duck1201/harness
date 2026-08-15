@@ -303,6 +303,9 @@ class EvalService:
                     candidate=cases_by_arm[candidate_arm.id],
                     security_violations=security_violations,
                     seed=run.seeds[0],
+                    max_inconclusive_pair_rate=(
+                        self.catalog.manifest.promotion_protocol.max_inconclusive_pair_rate
+                    ),
                 )
                 gate_results.append(
                     {
@@ -310,6 +313,8 @@ class EvalService:
                         "promoted": gate.promoted,
                         "reason_code": gate.reason_code,
                         "non_inferiority_margin": gate.non_inferiority_margin,
+                        "inconclusive_pairs": gate.inconclusive_pairs,
+                        "inconclusive_pair_rate": gate.inconclusive_pair_rate,
                     }
                 )
             gate_payload = gate_results

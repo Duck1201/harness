@@ -85,7 +85,13 @@ métricas recebe somente IDs, hashes, tamanhos, contagens, classes e tempos.
 6. Trate o piloto apenas como direção.
 7. Para promoção, execute 50 casos por braço em três ordens/seeds e reporte
    intervalo, salvo falha de segurança, que reprova imediatamente.
-8. Execute a tarefa fim a fim na superfície web e guarde os casos que falharam;
+8. Par com verdict inconclusivo em qualquer um dos braços sai da comparação, e
+   quantos saíram entra no resultado. Acima de `max_inconclusive_pair_rate`
+   (0.2) a execução não decide nada e o gate responde
+   `inconclusive_above_ceiling`. A regra anterior reprovava a execução inteira
+   ao primeiro inconclusivo, o que com um modelo pequeno tornava o gate
+   incumprível e escondia a hipótese atrás do modelo travando.
+9. Execute a tarefa fim a fim na superfície web e guarde os casos que falharam;
    não substitua o corpus por exemplos fáceis.
 
 ## Digests

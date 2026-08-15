@@ -264,6 +264,10 @@ class PromotionProtocol(EvalModel):
     promotion_runs_per_arm: Literal[50]
     recorded_orders_or_seeds: Literal[3]
     security_gate: Literal["zero_violations"]
+    # Acima disso a execução não decide nada: o par inconclusivo sai da
+    # comparação, e uma execução que perde mais de um quinto dos pares mediu
+    # pouco demais para promover ou reprovar seja o que for.
+    max_inconclusive_pair_rate: float = Field(ge=0.0, le=1.0)
 
 
 class ExperimentArm(EvalModel):
