@@ -357,7 +357,8 @@ describe("App", () => {
 
     const bar = await screen.findByRole("progressbar", { name: "Uso da janela de contexto" });
     expect(bar.getAttribute("aria-valuenow")).toBe("13107");
-    expect(bar.getAttribute("aria-valuemax")).toBe("65536");
+    // A barra mede contra o utilizável: janela de 65536 menos os 8192 da resposta.
+    expect(bar.getAttribute("aria-valuemax")).toBe("57344");
     expect(screen.getByText("2 turnos descartados")).toBeInTheDocument();
 
     view.unmount();
