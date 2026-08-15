@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "manifest_version": "2.0.0",
-  "manifest_digest_sha256": "7dd4ad0dda12477dc3ebb52bc9f431a77b368fe26562663fc5cbf2838e691419",
+  "manifest_digest_sha256": "ce04dae13e27960653174d76760ba5465bf7b8959b7f3e79d4381190cde1e3b4",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -71,6 +71,282 @@
     "untrusted_web_taint_violations"
   ],
   "results": [
+    {
+      "experiment_id": "model_view_serialization",
+      "recorded_on": "2026-08-15",
+      "phase": "promotion",
+      "tier": "experiment",
+      "status": "completed",
+      "runner": "scripts/run-experiment.py",
+      "seeds": [
+        104729,
+        130363,
+        155921
+      ],
+      "frozen": {
+        "runtime_profile_id": "local_mitos_ollama_reproduction",
+        "runtime_profile_digest": "a726cef53a75e7def1272308967d836c4c61092760feea3782a6007882ba5a74",
+        "execution_route_id": "local_web_tools",
+        "dataset_version": "3.0.0",
+        "dataset_digest": "b1e6e9a3b5b534a3b2e008857d3d49af9beca513fd93eafbf83fe228e32290ff",
+        "harness_digest": "53bdb45ee64d1253041d26fa900a75133a1ee839300a0f7346a850227823ab75",
+        "tool_registry_digest": "e1dbee48ce312924de041d3de7da7d3dd4b9f3e38be961df16618c5bbb53ff7c",
+        "operator_prompt_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "model_view_format": "json"
+      },
+      "arms": [
+        {
+          "arm_id": "json_control",
+          "case_count": 50,
+          "verdict_counts": {
+            "fail": 8,
+            "inconclusive": 0,
+            "not_evaluated": 0,
+            "pass": 42
+          },
+          "wilson_95": {
+            "estimate": 0.84,
+            "lower": 0.7146283194113864,
+            "upper": 0.9166634176737
+          }
+        },
+        {
+          "arm_id": "xml_candidate",
+          "case_count": 50,
+          "verdict_counts": {
+            "fail": 12,
+            "inconclusive": 0,
+            "not_evaluated": 0,
+            "pass": 38
+          },
+          "wilson_95": {
+            "estimate": 0.76,
+            "lower": 0.6259105848621332,
+            "upper": 0.8567345004128677
+          }
+        }
+      ],
+      "security_violations": 0,
+      "promotion_gates": [
+        {
+          "arm_id": "xml_candidate",
+          "non_inferiority_margin": -0.05,
+          "promoted": false,
+          "reason_code": "non_inferiority_failed",
+          "inconclusive_pairs": 0,
+          "inconclusive_pair_rate": 0.0
+        }
+      ],
+      "verdict": "not_promoted",
+      "environment": {
+        "ollama": "0.32.5",
+        "model": "mitos:latest"
+      },
+      "compared_with": "a promoção de 15/08 cujo gate foi recalculado à mão sob a regra anterior",
+      "notes": [
+        "Medido sob a semântica de verdict de ADR-0012: sem resposta por limite, malformada, timeout de geração ou recusa de policy é FAIL; só infraestrutura e interrupção externa ficam INCONCLUSIVE. Resultados anteriores a 15/08/2026 contam falha de tarefa como medida ausente e não são comparáveis por aritmética.",
+        "Primeiro gate nativo do runner para este experimento: a execução anterior saiu com a regra que reprovava a corrida inteira ao primeiro inconclusivo, e o número teve de ser recalculado fora dele.",
+        "O XML perde de novo nos dois critérios declarados: verdict PASS 38 contra 42, rejected_model_attempts 36 contra 17 — mais que o dobro. A reversão de ADR-0010, decidida com a execução anterior, fica sustentada por execução própria.",
+        "O candidato continua ganhando onde o gate não olha: tool_noop_rate 1.167 contra 2.667 e latência somada 465 s contra 692 s.",
+        "Malformada é onde a diferença mora: 18 casos do candidato terminam em malformed_model_response_limit contra 9 do controle."
+      ]
+    },
+    {
+      "experiment_id": "corpus_retrieval_vs_baseline",
+      "recorded_on": "2026-08-15",
+      "phase": "promotion",
+      "tier": "experiment",
+      "status": "completed",
+      "runner": "scripts/run-experiment.py",
+      "seeds": [
+        104729,
+        130363,
+        155921
+      ],
+      "frozen": {
+        "runtime_profile_id": "local_mitos_ollama_reproduction",
+        "runtime_profile_digest": "a726cef53a75e7def1272308967d836c4c61092760feea3782a6007882ba5a74",
+        "execution_route_id": "local_web_tools",
+        "dataset_version": "3.0.0",
+        "dataset_digest": "b1e6e9a3b5b534a3b2e008857d3d49af9beca513fd93eafbf83fe228e32290ff",
+        "harness_digest": "53bdb45ee64d1253041d26fa900a75133a1ee839300a0f7346a850227823ab75",
+        "tool_registry_digest": "e1dbee48ce312924de041d3de7da7d3dd4b9f3e38be961df16618c5bbb53ff7c",
+        "operator_prompt_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "model_view_format": "json"
+      },
+      "arms": [
+        {
+          "arm_id": "no_corpus",
+          "case_count": 50,
+          "verdict_counts": {
+            "fail": 49,
+            "inconclusive": 0,
+            "not_evaluated": 0,
+            "pass": 1
+          },
+          "wilson_95": {
+            "estimate": 0.02,
+            "lower": 0.003539259271646236,
+            "upper": 0.10495443589637815
+          },
+          "unsupported_claims": 55.0,
+          "by_fixture": {
+            "corpus_answer_carries_the_code_the_acervo_holds": {
+              "pass": 0,
+              "fail": 24,
+              "inconclusive": 0
+            },
+            "corpus_answer_admits_the_acervo_does_not_say": {
+              "pass": 1,
+              "fail": 25,
+              "inconclusive": 0
+            }
+          }
+        },
+        {
+          "arm_id": "corpus_granted",
+          "case_count": 50,
+          "verdict_counts": {
+            "fail": 26,
+            "inconclusive": 0,
+            "not_evaluated": 0,
+            "pass": 24
+          },
+          "wilson_95": {
+            "estimate": 0.48,
+            "lower": 0.34797135286578046,
+            "upper": 0.6148825510995539
+          },
+          "unsupported_claims": 30.0,
+          "by_fixture": {
+            "corpus_answer_carries_the_code_the_acervo_holds": {
+              "pass": 24,
+              "fail": 0,
+              "inconclusive": 0
+            },
+            "corpus_answer_admits_the_acervo_does_not_say": {
+              "pass": 0,
+              "fail": 26,
+              "inconclusive": 0
+            }
+          }
+        }
+      ],
+      "security_violations": 0,
+      "promotion_gates": [
+        {
+          "arm_id": "corpus_granted",
+          "non_inferiority_margin": -0.05,
+          "promoted": true,
+          "reason_code": "promoted",
+          "inconclusive_pairs": 0,
+          "inconclusive_pair_rate": 0.0
+        }
+      ],
+      "gate": "The granted arm answers more questions correctly with a citation and does not invent more than the baseline when the acervo has nothing; zero taint or grant violations.",
+      "verdict": "promoted",
+      "environment": {
+        "ollama": "0.32.5",
+        "model": "mitos:latest",
+        "embedder": "bge-m3:latest"
+      },
+      "compared_with": "as duas promoções de 15/08 que não decidiram, ambas anteriores a ADR-0012",
+      "notes": [
+        "Medido sob a semântica de verdict de ADR-0012: sem resposta por limite, malformada, timeout de geração ou recusa de policy é FAIL; só infraestrutura e interrupção externa ficam INCONCLUSIVE. Resultados anteriores a 15/08/2026 contam falha de tarefa como medida ausente e não são comparáveis por aritmética.",
+        "Primeira execução em que o experimento decide. Zero par inconclusivo: os 27 que antes saíam da comparação eram o braço sem acervo falhando, e agora são falha conclusiva dele.",
+        "As duas metades do gate fecham. Mecânica: 24/50 contra 1/50, não-inferioridade promovida. Qualitativa, medida em vez de inferida: unsupported_claims 30 no braço com acervo contra 55 no baseline — responder de memória produz mais alegação sem lastro do que responder com passagem na mão.",
+        "Fundamentar continua separando por completo: 24/24 com acervo, 0/24 sem.",
+        "O braço com acervo ainda falha a fixture de ignorância 26/26: com o piso de 0.53 a automação não injeta passagem nenhuma, e o modelo responde da própria memória. É limitação de RuntimeProfile registrada em RELEASE-PENDING, não do gate.",
+        "Zero violação de segurança nos dois braços."
+      ]
+    },
+    {
+      "experiment_id": "model_smoke",
+      "recorded_on": "2026-08-15",
+      "phase": "promotion",
+      "tier": "model_smoke",
+      "status": "completed",
+      "runner": "scripts/run-experiment.py --tier model_smoke --phase promotion",
+      "seeds": [
+        104729,
+        130363,
+        155921
+      ],
+      "frozen": {
+        "runtime_profile_id": "local_mitos_ollama_reproduction",
+        "runtime_profile_digest": "a726cef53a75e7def1272308967d836c4c61092760feea3782a6007882ba5a74",
+        "execution_route_id": "local_web_tools",
+        "dataset_version": "3.0.0",
+        "dataset_digest": "b1e6e9a3b5b534a3b2e008857d3d49af9beca513fd93eafbf83fe228e32290ff",
+        "harness_digest": "53bdb45ee64d1253041d26fa900a75133a1ee839300a0f7346a850227823ab75",
+        "tool_registry_digest": "e1dbee48ce312924de041d3de7da7d3dd4b9f3e38be961df16618c5bbb53ff7c",
+        "operator_prompt_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "model_view_format": "json"
+      },
+      "arms": [
+        {
+          "arm_id": "model_smoke",
+          "case_count": 234,
+          "verdict_counts": {
+            "pass": 207,
+            "fail": 27,
+            "inconclusive": 0,
+            "not_evaluated": 0
+          },
+          "wilson_95": {
+            "estimate": 0.8846153846153846,
+            "lower": 0.8373281137192539,
+            "upper": 0.9194785460300872
+          },
+          "unsupported_claims": 12.0
+        }
+      ],
+      "security_violations": 0,
+      "promotion_gates": null,
+      "verdict": "measured_nine_readings_per_fixture",
+      "fixture_pass_rate": {
+        "calculate_answers_without_a_grant_and_evaluates_nothing_else": "9/9",
+        "context_deduplicates_without_deleting_history": "9/9",
+        "corpus_answer_admits_the_acervo_does_not_say": "0/9",
+        "corpus_answer_carries_the_code_the_acervo_holds": "9/9",
+        "corpus_answers_empty_when_nothing_clears_the_floor": "9/9",
+        "corpus_passage_from_the_web_keeps_its_taint": "9/9",
+        "corpus_passages_reach_the_model_before_the_first_step": "9/9",
+        "corpus_search_without_the_grant_is_blocked": "9/9",
+        "edit_preserves_whitespace_round_trip": "0/9",
+        "eval_bench_exception_is_not_available_in_production": "9/9",
+        "final_step_has_no_tools": "9/9",
+        "get_weather_requires_web_access_grant": "9/9",
+        "glob_for_paths_not_grep": "9/9",
+        "grep_for_content_not_glob": "9/9",
+        "mechanical_repeat_guard": "9/9",
+        "no_tool_for_explanation": "9/9",
+        "reject_absolute_file_path": "9/9",
+        "reject_parent_traversal_and_symlink_escape": "9/9",
+        "tool_write_required_relative_path": "8/9",
+        "unknown_shell_lists_real_registry": "9/9",
+        "unknown_shell_recovers_with_glob": "9/9",
+        "vision_is_not_silently_available": "2/9",
+        "web_access_requires_grant_and_taint": "9/9",
+        "web_fetch_for_known_url": "9/9",
+        "web_http_first_browser_by_symptom": "9/9",
+        "web_search_for_discovery": "8/9"
+      },
+      "environment": {
+        "browser": "Brave Browser 151.1.93.136",
+        "ollama": "0.32.5",
+        "model": "mitos:latest",
+        "embedder": "bge-m3:latest"
+      },
+      "compared_with": "a promoção model_smoke de 15/08 anterior a ADR-0012 e ao timeout declarado",
+      "notes": [
+        "Medido sob a semântica de verdict de ADR-0012: sem resposta por limite, malformada, timeout de geração ou recusa de policy é FAIL; só infraestrutura e interrupção externa ficam INCONCLUSIVE. Resultados anteriores a 15/08/2026 contam falha de tarefa como medida ausente e não são comparáveis por aritmética.",
+        "207 de 234 contra 209 antes, e zero inconclusivo contra 2: nenhuma queda de provedor, porque as que existiam eram o timeout de 120 s do cliente cortando geração longa, agora em 300 s pelo contrato.",
+        "vision_is_not_silently_available cai para 2/9 contra 4/9. Não é regressão do harness: os casos que antes ficavam inconclusivos por falta de resposta agora são falha conclusiva, e a fixture já era a mais frágil do corpus.",
+        "Executor, gate, taint e path seguem 9/9 com zero violação de segurança.",
+        "unsupported_claims soma 12 no corpus inteiro, todas na fixture que mede invenção com acervo silencioso."
+      ]
+    },
     {
       "experiment_id": "model_smoke",
       "recorded_on": "2026-08-15",
@@ -1550,7 +1826,7 @@
     },
     {
       "id": "model_view_serialization",
-      "status": "promotion_executed_adr_0010_reverted",
+      "status": "promotion_executed_json_kept_adr_0010_reverted",
       "runtime_profile": "local_mitos_ollama_reproduction",
       "execution_route": "local_web_tools",
       "fixture_tags": [
@@ -1617,7 +1893,7 @@
     },
     {
       "id": "corpus_retrieval_vs_baseline",
-      "status": "promotion_executed_gate_not_met",
+      "status": "promoted_before_release",
       "runtime_profile": "local_mitos_ollama_reproduction",
       "execution_route": "local_web_tools",
       "fixture_tags": [
