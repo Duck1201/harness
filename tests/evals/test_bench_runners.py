@@ -7,6 +7,8 @@ import pytest
 
 from harness import load_config
 from harness.brave_browser import BraveEgressGuard
+from harness.conversation_store import ConversationStore
+from harness.domain import MUTATION_EFFECT
 from harness.evals import (
     BrowserBenchCaseRunner,
     CompositeCaseRunner,
@@ -25,7 +27,8 @@ from harness.evals.bench import (
     BenchEgressGuard,
     BenchServer,
 )
-from harness.ports import ModelRuntime, TokenEstimator
+from harness.evals.model_runner import WaivedWriteGate
+from harness.ports import ConfirmationRequest, ModelRuntime, TokenEstimator
 from harness.web_tools import EgressPolicyError
 
 brave_required = pytest.mark.skipif(
@@ -174,6 +177,70 @@ def test_every_fixture_type_in_the_dataset_has_a_runner() -> None:
     )
 
     assert unsupported == []
+
+
+async def _gate_decision(
+    store_path: Path,
+    *,
+    waived: bool,
+    reason_code: str,
+) -> tuple[bool, str, bool]:
+    store = ConversationStore(store_path)
+    await store.initialize()
+    revision = await store.create_workspace(str(store_path.parent))
+    conversation = await store.create_conversation(revision.workspace_id)
+    if waived:
+        await store.waive_confirmation(conversation.id, MUTATION_EFFECT)
+    gate = WaivedWriteGate(store)
+    request = ConfirmationRequest(
+        id="confirmation-1",
+        conversation_id=conversation.id,
+        turn_id="turn-1",
+        request_id="request-1",
+        step_sequence=1,
+        reason_code=reason_code,
+        tool_calls=(),
+    )
+    decision = await gate.confirm(request)
+    return decision.approved, decision.reason_code, await gate.will_announce(request)
+
+
+def test_the_bench_gate_answers_a_write_from_the_waiver_the_runner_wrote(tmp_path: Path) -> None:
+    # A dispensa gravada no store é a resposta, e a decisão tomada sem perguntar
+    # entra na history como "waived" — a mesma palavra que a produção usa.
+    approved, reason_code, announced = asyncio.run(
+        _gate_decision(
+            tmp_path / "c.sqlite3", waived=True, reason_code="write_confirmation_required"
+        )
+    )
+
+    assert approved
+    assert reason_code == "write_confirmation_waived"
+    assert not announced
+
+
+def test_the_bench_gate_denies_a_write_nobody_waived(tmp_path: Path) -> None:
+    approved, reason_code, _ = asyncio.run(
+        _gate_decision(
+            tmp_path / "c.sqlite3", waived=False, reason_code="write_confirmation_required"
+        )
+    )
+
+    assert not approved
+    assert reason_code == "write_confirmation_required"
+
+
+def test_the_bench_gate_still_denies_a_tainted_write_under_the_same_waiver(tmp_path: Path) -> None:
+    # Escrita derivada de conteúdo da web é outra pergunta, e a dispensa nunca a
+    # respondeu (ADR 0008). Ligar o gate da bancada não pode ter afrouxado isso.
+    approved, reason_code, _ = asyncio.run(
+        _gate_decision(
+            tmp_path / "c.sqlite3", waived=True, reason_code="web_taint_confirmation_required"
+        )
+    )
+
+    assert not approved
+    assert reason_code == "web_taint_confirmation_required"
 
 
 def test_an_empty_operator_block_freezes_the_digest_of_the_empty_string() -> None:

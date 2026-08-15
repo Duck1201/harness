@@ -37,6 +37,28 @@ def grant_reason_code(grant: str) -> str:
     return _GRANT_REASON_CODES.get(grant, "grant_required")
 
 
+# Reasons whose question is "may the model write here": the Operator can answer
+# them once for the whole Conversation. A tainted write is never one of them.
+# They live here, and not with the gate that reads them, because more than one
+# gate does: the Operator's and the bench's have to agree on what a waiver covers
+# or the corpus measures a different system than production runs.
+WAIVABLE_CONFIRMATION_REASONS = frozenset({"write_confirmation_required", "write_grant_required"})
+
+# Yolo answers every question the gate can ask, including the tainted write. The
+# Operator turns it on knowing that a page the model read can now drive a write
+# without being announced — see docs/adr/0008-operator-yolo-mode.md. Each such
+# call is still recorded, as "waived" and never as "approved".
+YOLO_CONFIRMATION_REASONS = WAIVABLE_CONFIRMATION_REASONS | {
+    "web_taint_confirmation_required",
+    "web_access_grant_required",
+}
+
+
+def waived_reason_code(requested: str) -> str:
+    """Answers in the words of the question: …_required becomes …_waived."""
+    return f"{requested.removesuffix('_required')}_waived"
+
+
 class RequestStatus(StrEnum):
     QUEUED = "queued"
     CANCELED = "canceled"

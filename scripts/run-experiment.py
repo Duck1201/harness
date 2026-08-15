@@ -33,6 +33,7 @@ from harness import (  # noqa: E402
     ModelMessage,
     ModelRequest,
     ModelRole,
+    OllamaEmbeddingRuntime,
     OllamaRuntime,
     load_config,
 )
@@ -102,6 +103,22 @@ async def run(
     )
     guard = BraveEgressGuard()
     registry = config.tool_registry
+    # O acervo das fixtures é indexado pelo mesmo embedding da produção, então o
+    # que chega ao modelo é a passagem que o piso do contrato deixaria passar —
+    # inclusive nenhuma. Com o embedder determinístico, uma pergunta fora do
+    # assunto ainda traz passagem, e o experimento mediria o modelo diante de
+    # material que a produção nunca entregaria.
+    embedding = config.runtime_profile.embedding
+    embedder = (
+        OllamaEmbeddingRuntime(
+            base_url="http://127.0.0.1:11434",
+            model=embedding.id,
+            expected_digest=embedding.digest_sha256,
+            dimensions=embedding.dimensions,
+        )
+        if embedding is not None
+        else None
+    )
     model_runner = ModelCaseRunner(
         config=config,
         runtime=runtime,
@@ -109,10 +126,11 @@ async def run(
         operator_notes=load_operator_notes(ROOT / "SYSTEM-PROMPT.md"),
         runtime_readiness=EngineReadiness(ready=True),
         browser_guard=guard,
+        embedder=embedder,
     )
     live = CompositeCaseRunner(
         (
-            ContractCaseRunner(registry=registry),
+            ContractCaseRunner(config=config),
             BrowserBenchCaseRunner(registry=registry, browser_guard=guard),
             model_runner,
         )
@@ -157,6 +175,8 @@ async def run(
     finally:
         await service.shutdown()
         await runtime.aclose()
+        if embedder is not None:
+            await embedder.aclose()
 
 
 def main() -> int:

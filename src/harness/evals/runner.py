@@ -27,11 +27,13 @@ from ..domain import (
 from ..local_tools import RegistryToolExecutor
 from ..ports import (
     ConfirmationPreview,
+    EmbeddingRuntime,
     EngineReadiness,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     NullEventSink,
+    TextTokenCounter,
     ToolBatchPreflight,
     ToolSchema,
 )
@@ -179,23 +181,39 @@ class EvalCorpus:
     config: CorpusConfig
 
 
-async def build_eval_corpus(fixture: RegressionFixture, directory: Path) -> EvalCorpus:
+async def build_eval_corpus(
+    fixture: RegressionFixture,
+    directory: Path,
+    *,
+    embedder: EmbeddingRuntime | None = None,
+    counter: TextTokenCounter | None = None,
+) -> EvalCorpus:
     """Monta o Corpus que a fixture descreve, para quem quiser consultá-lo.
 
-    O embedder é determinístico e não mede semântica nenhuma: ele existe para o
-    CI rodar sem GPU e sem Ollama. Duas fixtures diferentes o usam por motivos
-    diferentes — a de contrato prova o gate, e a de resposta prova o que o modelo
-    faz com passagem na mão contra o que ele faz sem nenhuma. Nenhuma das duas
-    mede qualidade de recuperação; isso é do `bge-m3` e do acervo de verdade.
+    Sem embedder, usa o determinístico: vetor por palavra, piso rebaixado e
+    chunks curtos, para o CI rodar sem GPU e sem Ollama. Ele não mede semântica
+    e não finge medir, então as fixtures de contrato — que só provam o gate — são
+    suas.
+
+    Com o embedder de verdade, monta o mesmo acervo que a produção montaria:
+    `bge-m3`, chunks do contrato e o piso do contrato. É o que as fixtures
+    `corpus_answer` precisam, porque nelas a pergunta é se a passagem que chega
+    ao modelo é a que a produção teria entregado. Medido: com o embedder de hash,
+    uma pergunta sobre servidor de e-mail traz a passagem do proxy, que o piso de
+    0.53 no `bge-m3` recusa (similaridade abaixo do piso, contra 0.76 na pergunta
+    que a passagem responde). Sem essa distinção, o experimento mediria o modelo
+    diante de uma passagem que ele nunca veria.
     """
+    embedder = embedder or _HashingEmbedder()
+    counter = counter or _WordCounter()
+    real = not isinstance(embedder, _HashingEmbedder)
+    config = load_config().corpus if real else _corpus_eval_config()
     library = CorpusLibrary(
         directory,
-        embedding_model="eval_hashing_embedder",
-        embedding_dimensions=_EVAL_EMBEDDING_DIMENSIONS,
+        embedding_model=embedder.model,
+        embedding_dimensions=embedder.dimensions,
     )
     corpus = await library.create(name=str(fixture.stimulus.get("corpus_name", "Corpus")))
-    embedder = _HashingEmbedder()
-    counter = _WordCounter()
     documents = fixture.stimulus.get("corpus_documents")
     if isinstance(documents, Sequence) and not isinstance(documents, str):
         for item in documents:
@@ -211,13 +229,12 @@ async def build_eval_corpus(fixture: RegressionFixture, directory: Path) -> Eval
                 origin_ref=str(entry.get("origin_ref", filename)),
                 source_digest=source_digest(data),
                 counter=counter,
-                chunk_tokens=64,
-                overlap_tokens=8,
+                chunk_tokens=config.ingestion.chunk_target_tokens if real else 64,
+                overlap_tokens=config.ingestion.chunk_overlap_tokens if real else 8,
             )
             await library.store(corpus.id).add_document(
                 draft, await embedder.embed(embeddable_texts(draft))
             )
-    config = _corpus_eval_config()
     return EvalCorpus(
         corpus_id=corpus.id,
         retriever=CorpusRetriever(

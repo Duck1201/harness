@@ -25,6 +25,8 @@ from .domain import (
     CORPUS_EFFECT,
     CORPUS_GRANT,
     MUTATION_EFFECT,
+    WAIVABLE_CONFIRMATION_REASONS,
+    YOLO_CONFIRMATION_REASONS,
     CanonicalHistoryEntry,
     CanonicalHistoryEntryKind,
     Conversation,
@@ -37,6 +39,7 @@ from .domain import (
     ToolCall,
     ToolResult,
     TurnStatus,
+    waived_reason_code,
 )
 from .evals import (
     BenchmarkLease,
@@ -1071,11 +1074,11 @@ class OperatorConfirmationGate:
         return not await self._waived(request)
 
     async def _waived(self, request: ConfirmationRequest) -> bool:
-        if request.reason_code in _YOLO_REASONS and await self._store.yolo_active(
+        if request.reason_code in YOLO_CONFIRMATION_REASONS and await self._store.yolo_active(
             request.conversation_id
         ):
             return True
-        return request.reason_code in _WAIVABLE_REASONS and MUTATION_EFFECT in (
+        return request.reason_code in WAIVABLE_CONFIRMATION_REASONS and MUTATION_EFFECT in (
             await self._store.waived_confirmations(request.conversation_id)
         )
 
@@ -1089,7 +1092,7 @@ class OperatorConfirmationGate:
             await self._record_grant(request)
             return ConfirmationDecision(
                 approved=True,
-                reason_code=f"{request.reason_code.removesuffix('_required')}_waived",
+                reason_code=waived_reason_code(request.reason_code),
             )
         future: asyncio.Future[ConfirmationDecision] = asyncio.get_running_loop().create_future()
         self._pending[request.conversation_id] = (request, future)
@@ -1147,7 +1150,7 @@ class OperatorConfirmationGate:
         request, future = entry
         if future.done():
             return
-        if waive and approved and request.reason_code in _WAIVABLE_REASONS:
+        if waive and approved and request.reason_code in WAIVABLE_CONFIRMATION_REASONS:
             # Waiving is its own act, not a side effect of approving: the Operator
             # ticked a box that says so, and it is recorded where it can be revoked.
             await self._store.waive_confirmation(conversation_id, MUTATION_EFFECT)
@@ -1181,19 +1184,6 @@ class OperatorConfirmationGate:
         permission, scope = granted
         await self._store.grant(request.conversation_id, permission, scope)
 
-
-# Reasons whose question is "may the model write here": the Operator can answer
-# them once for the whole Conversation. A tainted write is never one of them.
-_WAIVABLE_REASONS = frozenset({"write_confirmation_required", "write_grant_required"})
-
-# Yolo answers every question the gate can ask, including the tainted write. The
-# Operator turns it on knowing that a page the model read can now drive a write
-# without being announced — see docs/adr/0008-operator-yolo-mode.md. Each such
-# call is still recorded, as "waived" and never as "approved".
-_YOLO_REASONS = _WAIVABLE_REASONS | {
-    "web_taint_confirmation_required",
-    "web_access_grant_required",
-}
 
 # The grant each dialog reason gives when approved, with the scope the public
 # grant API uses for the same permission.

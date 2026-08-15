@@ -30,18 +30,24 @@ from ..corpus_tools import CorpusToolExecutor
 from ..domain import (
     CORPUS_EFFECT,
     MUTATION_EFFECT,
+    WAIVABLE_CONFIRMATION_REASONS,
     Grant,
     JsonValue,
     SessionPolicy,
     ToolCall,
     ToolResult,
     ToolResultStatus,
+    waived_reason_code,
 )
 from ..local_tools import RegistryToolExecutor
 from ..ports import (
+    ConfirmationDecision,
+    ConfirmationRequest,
+    EmbeddingRuntime,
     EngineReadiness,
     ModelRuntime,
     NullEventSink,
+    TextTokenCounter,
     TokenEstimator,
     ToolExecutor,
     ToolSchema,
@@ -306,6 +312,38 @@ class _CorpusArmRetrieval:
         }
 
 
+class WaivedWriteGate:
+    """Reads the waiver the bench already wrote, and denies everything else.
+
+    Sem Operator na bancada, alguém tem que responder a confirmação. O gate padrão
+    nega, e toda fixture de escrita terminava em ``write_confirmation_required`` —
+    recusa do gate medida como falha de tarefa. Este lê a mesma dispensa que o
+    Operator concede, com a mesma lista de razões que a produção usa, então o que
+    ele aprova é o que ela aprovaria. O resto continua negado: escrita sob taint não
+    é dispensável (ADR 0008), e um gate que espera resposta prenderia o Turn até o
+    timeout de duração.
+    """
+
+    def __init__(self, store: ConversationStore) -> None:
+        self._store = store
+
+    async def _waived(self, request: ConfirmationRequest) -> bool:
+        return request.reason_code in WAIVABLE_CONFIRMATION_REASONS and MUTATION_EFFECT in (
+            await self._store.waived_confirmations(request.conversation_id)
+        )
+
+    async def will_announce(self, request: ConfirmationRequest) -> bool:
+        return not await self._waived(request)
+
+    async def confirm(self, request: ConfirmationRequest) -> ConfirmationDecision:
+        if await self._waived(request):
+            return ConfirmationDecision(
+                approved=True,
+                reason_code=waived_reason_code(request.reason_code),
+            )
+        return ConfirmationDecision(approved=False, reason_code=request.reason_code)
+
+
 class ModelCaseRunner:
     """Runs a fixture's user request through the real AgentEngine and RuntimeProfile."""
 
@@ -322,10 +360,15 @@ class ModelCaseRunner:
         operator_notes: str,
         runtime_readiness: EngineReadiness | None = None,
         browser_guard: BraveEgressGuard | None = None,
+        embedder: EmbeddingRuntime | None = None,
     ) -> None:
         self._config = config
         self._runtime = runtime
         self._estimator = estimator
+        # Sem embedder, o acervo da fixture é montado pelo determinístico da
+        # bancada, e o que chega ao modelo é a passagem que o hash sorteou. Com
+        # ele, é a passagem que a produção entregaria — inclusive nenhuma.
+        self._embedder = embedder
         self._operator_notes = operator_notes
         # Congelado por run ao lado dos digests de contrato: bloco vazio recebe o
         # digest da string vazia, porque "sem texto do Operator" é fato medido e
@@ -351,7 +394,14 @@ class ModelCaseRunner:
             _seed_workspace(workspace, spec.fixture)
 
             corpus = (
-                await build_eval_corpus(spec.fixture, base / "corpora")
+                await build_eval_corpus(
+                    spec.fixture,
+                    base / "corpora",
+                    embedder=self._embedder,
+                    counter=(
+                        self._estimator if isinstance(self._estimator, TextTokenCounter) else None
+                    ),
+                )
                 if "corpus_documents" in spec.fixture.stimulus
                 else None
             )
@@ -399,6 +449,7 @@ class ModelCaseRunner:
                         model_view_format=_model_view_format(spec.settings),
                     ),
                     event_sink=NullEventSink(),
+                    confirmation_gate=WaivedWriteGate(store),
                     system_prompt=build_system_prompt(
                         self._config,
                         today=BENCH_DATE,
