@@ -95,6 +95,31 @@ _IGNORANCE_PHRASES = (
 )
 
 
+# A fronteira entre os dois veredictos quando não existe resposta para julgar:
+# INCONCLUSIVE é "não deu para julgar", FAIL é "o modelo teve orçamento e não
+# entregou". Só as razões abaixo — infraestrutura, provedor ou decisão de fora do
+# modelo — deixam a medição faltando. Estourar um limite do loop, devolver
+# resposta malformada ou terminar bloqueado é a tarefa falhando, e um par de
+# braços comparado como "inconclusivo" nesse caso esconde exatamente o efeito que
+# o experimento mede.
+_INFRASTRUCTURE_TERMINAL_REASONS = frozenset(
+    {
+        "model_provider_unavailable",
+        "model_provider_error",
+        "engine_error",
+        "context_budget_exceeded",
+        "operator_stop",
+        "engine_cancelled",
+    }
+)
+
+
+def _missing_response_verdict(evidence: EvalEvidence) -> TaskVerdict:
+    if evidence.terminal_outcome_reason in _INFRASTRUCTURE_TERMINAL_REASONS:
+        return TaskVerdict.INCONCLUSIVE
+    return TaskVerdict.FAIL
+
+
 def evaluate_oracle(
     assertions: Sequence[TypedAssertion | Mapping[str, object]],
     evidence: EvalEvidence,
@@ -137,6 +162,9 @@ def _evaluate(
 ) -> AssertionEvaluation:
     passed: bool | None
     detail: str
+    # Como fica um `passed is None` desta asserção: só as que dependem da resposta
+    # trocam este valor, para a regra não alcançar fixture que nada afirma sobre ela.
+    unjudged = TaskVerdict.INCONCLUSIVE
     if isinstance(assertion, ToolCalled):
         passed = any(call.name == assertion.tool for call in evidence.tool_calls)
         detail = f"tool {assertion.tool} was called"
@@ -233,6 +261,7 @@ def _evaluate(
     elif isinstance(assertion, ResponseContains):
         if evidence.response is None:
             passed = None
+            unjudged = _missing_response_verdict(evidence)
         else:
             passed = (assertion.content.lower() in evidence.response.lower()) is assertion.present
         detail = (
@@ -243,6 +272,7 @@ def _evaluate(
     elif isinstance(assertion, ResponseAdmitsIgnorance):
         if evidence.response is None:
             passed = None
+            unjudged = _missing_response_verdict(evidence)
         else:
             lowered = evidence.response.lower()
             passed = any(phrase in lowered for phrase in _IGNORANCE_PHRASES)
@@ -262,20 +292,19 @@ def _evaluate(
             )
     else:
         assert isinstance(assertion, ResponseLanguagePt)
-        if detector is None or not detector.deterministic or evidence.response is None:
+        if detector is None or not detector.deterministic:
+            # Detector indisponível ou não determinístico é julgamento impossível,
+            # qualquer que tenha sido a razão terminal.
             passed = None
+        elif evidence.response is None:
+            passed = None
+            unjudged = _missing_response_verdict(evidence)
         else:
             passed = detector.is_portuguese(evidence.response)
         detail = "response language is Portuguese"
     return AssertionEvaluation(
         operator=assertion.operator,
-        verdict=(
-            TaskVerdict.INCONCLUSIVE
-            if passed is None
-            else TaskVerdict.PASS
-            if passed
-            else TaskVerdict.FAIL
-        ),
+        verdict=(unjudged if passed is None else TaskVerdict.PASS if passed else TaskVerdict.FAIL),
         explanation=detail,
     )
 

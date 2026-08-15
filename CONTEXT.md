@@ -59,7 +59,7 @@ A categoria mecânica e imutável pela qual um Turn terminou, acompanhada de um 
 _Avoid_: Task result, score, verdict
 
 **TaskVerdict**:
-O julgamento de uma avaliação sobre se o comportamento observado satisfez o oráculo da tarefa.
+O julgamento de uma avaliação sobre se o comportamento observado satisfez o oráculo da tarefa. Inconclusivo significa que não deu para julgar — infraestrutura caiu, interrupção veio de fora — e nunca que o modelo teve orçamento e não entregou, o que é falha.
 _Avoid_: TerminalOutcome, status, exit reason
 
 **WriteGrant**:

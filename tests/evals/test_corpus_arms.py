@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
-from harness import load_config
+from harness import TerminalOutcomeKind, ToolCall, ToolResult, ToolResultStatus, load_config
 from harness.evals import (
     EvalCaseSpec,
     EvalTier,
@@ -150,13 +150,54 @@ def test_response_contains_reads_the_answer_in_both_directions() -> None:
     assert wrong.verdict is TaskVerdict.FAIL
 
 
-def test_a_turn_with_no_response_cannot_be_judged_by_its_response() -> None:
+def test_a_turn_that_burned_its_budget_without_answering_is_a_failure() -> None:
+    # Braço sem acervo que gasta o orçamento inteiro e não entrega é a hipótese
+    # sendo confirmada, não medição faltando: 27 de 50 pares saíram da comparação
+    # como "inconclusivo" enquanto o gate recusava decidir sobre o que os dados
+    # já respondiam.
     evaluation = evaluate_oracle(
         [ResponseContains(operator="response_contains", content="8899")],
-        EvalEvidence(response=None),
+        EvalEvidence(response=None, terminal_outcome_reason="malformed_model_response_limit"),
+    )
+
+    assert evaluation.verdict is TaskVerdict.FAIL
+
+
+def test_a_turn_the_provider_never_answered_stays_inconclusive() -> None:
+    # Ollama fora do ar não é o modelo falhando a tarefa, e contar como FAIL
+    # colocaria queda de infraestrutura dentro da medida do experimento.
+    evaluation = evaluate_oracle(
+        [ResponseContains(operator="response_contains", content="8899")],
+        EvalEvidence(response=None, terminal_outcome_reason="model_provider_unavailable"),
     )
 
     assert evaluation.verdict is TaskVerdict.INCONCLUSIVE
+
+
+def test_a_fixture_that_never_claims_anything_about_the_response_still_passes() -> None:
+    # A armadilha da regra: o desempate vale por asserção e só quando falta
+    # resposta. Uma fixture de gate termina bloqueada de propósito, não afirma
+    # nada sobre a resposta e não pode virar falha por causa disso.
+    fixture = _fixtures()["corpus_search_without_the_grant_is_blocked"]
+    blocked = ToolResult(
+        tool_call_id="eval-0",
+        status=ToolResultStatus.BLOCKED,
+        retryable=False,
+        data=None,
+        error={"class": "corpus_grant_required"},
+        meta={"producer": "harness", "truncated": False, "taints": []},
+    )
+    evidence = EvalEvidence(
+        tool_calls=(ToolCall(id="eval-0", name="corpus_search", arguments={"query": "porta"}),),
+        tool_results=(blocked,),
+        terminal_outcome_kind=TerminalOutcomeKind.BLOCKED,
+        terminal_outcome_reason="corpus_grant_required",
+        response=None,
+    )
+
+    evaluation = evaluate_oracle(fixture.oracle.typed_assertions, evidence)
+
+    assert evaluation.verdict is TaskVerdict.PASS
 
 
 def test_admitting_ignorance_is_a_phrase_list_and_says_so() -> None:
