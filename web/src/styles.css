@@ -3253,3 +3253,58 @@ details[open] > summary .summary-chevron {
 .citation-marker:hover {
   text-decoration: underline;
 }
+
+.context-gauge {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--purple-soft);
+  border-radius: var(--radius-sm);
+  background: var(--wash-purple);
+  font-size: 12px;
+}
+
+.context-gauge-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.context-gauge-percent {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.context-gauge-track {
+  height: 6px;
+  margin: 7px 0 5px;
+  border-radius: 999px;
+  background: var(--purple-soft);
+  overflow: hidden;
+}
+
+.context-gauge-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--green);
+  transition: width 200ms ease;
+}
+
+.context-gauge-warning .context-gauge-fill {
+  background: var(--amber);
+}
+
+.context-gauge-critical .context-gauge-fill {
+  background: var(--red);
+}
+
+.context-gauge-foot {
+  display: flex;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.context-gauge-dropped {
+  margin-left: auto;
+  color: var(--red);
+}

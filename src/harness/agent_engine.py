@@ -253,6 +253,7 @@ class AgentEngine:
                 return await self._finish_time_limit(turn)
             offered_tools = () if step_sequence == self._max_model_invocations else effective_tools
             context = await self._build_context(turn, offered_tools)
+            await self._emit_context_built(turn, step_sequence, context)
             if _deadline_reached(deadline):
                 return await self._finish_time_limit(turn)
             request = ModelRequest(
@@ -603,6 +604,7 @@ class AgentEngine:
         except ContextBudgetExceeded:
             await self._emit_step_finished(turn, step_sequence)
             return await self._finish(turn, TerminalOutcomeKind.BLOCKED, reason_code, detail=detail)
+        await self._emit_context_built(turn, step_sequence, context)
         if _deadline_reached(deadline):
             await self._emit_step_finished(turn, step_sequence)
             return await self._finish(turn, TerminalOutcomeKind.BLOCKED, reason_code, detail=detail)
@@ -787,6 +789,30 @@ class AgentEngine:
             tool_schemas=offered_tools,
             completed_turns=completed,
             current_turn=current,
+        )
+
+    async def _emit_context_built(
+        self, turn: Turn, step_sequence: int, context: ModelContext
+    ) -> None:
+        """Publica o que a janela custou neste passo.
+
+        Só números e IDs: é o mesmo evento que alimenta a barra do painel e a
+        telemetria, e o store de telemetria recusa conteúdo por construção.
+        """
+        await self._emit(
+            AgentEvent(
+                kind=AgentEventKind.CONTEXT_BUILT,
+                turn_id=turn.id,
+                step_sequence=step_sequence,
+                payload={
+                    "estimated_input_tokens": context.estimated_input_tokens,
+                    "context_window": context.context_window,
+                    "output_budget": context.output_budget,
+                    "dropped_turn_ids": list(context.dropped_turn_ids),
+                },
+                conversation_id=turn.conversation_id,
+                request_id=turn.request_id,
+            )
         )
 
     async def _append_final_response(self, turn: Turn, step_sequence: int, content: str) -> None:

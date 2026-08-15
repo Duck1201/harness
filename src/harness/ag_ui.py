@@ -12,6 +12,22 @@ def project_agent_event(event: AgentEvent, *, run_id: str) -> list[dict[str, Jso
         return [{"type": "STEP_STARTED", "stepName": step_name}]
     if event.kind is AgentEventKind.STEP_FINISHED:
         return [{"type": "STEP_FINISHED", "stepName": step_name}]
+    if event.kind is AgentEventKind.CONTEXT_BUILT:
+        dropped = event.payload.get("dropped_turn_ids")
+        return [
+            {
+                "type": "CUSTOM",
+                "name": "harness.context_usage",
+                "value": {
+                    "estimated_input_tokens": _integer(event, "estimated_input_tokens"),
+                    "context_window": _integer(event, "context_window"),
+                    "output_budget": _integer(event, "output_budget"),
+                    # O painel mostra quantos turnos caíram, não quais: o ID
+                    # sozinho não diz nada na tela e a lista já está na telemetria.
+                    "dropped_turns": len(dropped) if isinstance(dropped, list) else 0,
+                },
+            }
+        ]
     if event.kind is AgentEventKind.REASONING:
         content = _string(event, "content")
         message_id = f"{event.turn_id}-reasoning-{event.step_sequence}"
@@ -175,4 +191,12 @@ def _string(event: AgentEvent, key: str) -> str:
     value = event.payload.get(key)
     if not isinstance(value, str):
         raise ValueError(f"agent event field must be a string: {key}")
+    return value
+
+
+def _integer(event: AgentEvent, key: str) -> int:
+    value = event.payload.get(key)
+    # bool é int em Python e um booleano aqui seria um campo trocado, não um número.
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"agent event field must be an integer: {key}")
     return value

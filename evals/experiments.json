@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "manifest_version": "2.0.0",
-  "manifest_digest_sha256": "110f5975da30cabb2c92a3277a6cbfd60ef1a3c6926eb9d04893dfbfc4cf6912",
+  "manifest_digest_sha256": "788da2966c608ac32b41359de775bd3639933bfa20dfbb6779bf9671d61bf546",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -21,8 +21,8 @@
     "dataset_digest_sha256": "b1e6e9a3b5b534a3b2e008857d3d49af9beca513fd93eafbf83fe228e32290ff"
   },
   "contract_digests": {
-    "model_profiles_sha256": "b66848bc30a9c990fb0ebc9b2086dbf6f971fe9e73d11637e103265ffcc19278",
-    "harness_sha256": "5e8e22a6ab92d10b4b7c03acceaa24ebb8ce40b1b3bd341797a9da6867d9d477",
+    "model_profiles_sha256": "e5e3e7ba28622469e5df05abd26df76a1f8032ccee0e5c70860013502aa3eff2",
+    "harness_sha256": "bc1176e45e2ad018955c0d22806616d1639feef092d34b07ea003e69f04adabe",
     "tool_registry_sha256": "57abdc52e1b858ecceaf538ff623462b5bb4d8f3f6e782fadfcd8ac13e3eb953"
   },
   "primary_surface": "web",
@@ -82,7 +82,7 @@
       ],
       "frozen": {
         "runtime_profile_id": "local_mitos_ollama_reproduction",
-        "runtime_profile_digest": "79d1056f6cb28d32c470a2206e76c83985dacabcac6bc141d088c15d344817f4",
+        "runtime_profile_digest": "a726cef53a75e7def1272308967d836c4c61092760feea3782a6007882ba5a74",
         "execution_route_id": "local_web_tools",
         "dataset_version": "3.0.0",
         "dataset_digest": "71cfa19d172d17b363a942265a56b0ca28a4831f39cd4de237aa0b87dc5fd6fd",
@@ -218,7 +218,7 @@
       "seeds": [104729, 130363, 155921],
       "frozen": {
         "runtime_profile_id": "local_mitos_ollama_reproduction",
-        "runtime_profile_digest": "79d1056f6cb28d32c470a2206e76c83985dacabcac6bc141d088c15d344817f4",
+        "runtime_profile_digest": "a726cef53a75e7def1272308967d836c4c61092760feea3782a6007882ba5a74",
         "execution_route_id": "local_web_tools",
         "dataset_version": "3.0.0",
         "dataset_digest": "b1e6e9a3b5b534a3b2e008857d3d49af9beca513fd93eafbf83fe228e32290ff",

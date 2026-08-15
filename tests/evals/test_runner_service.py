@@ -51,7 +51,7 @@ def test_contract_runner_uses_real_executor_for_deterministic_fixture() -> None:
         fixture = next(
             item for item in _catalog().dataset.fixtures if item.id == "reject_absolute_file_path"
         )
-        runner = ContractCaseRunner(registry=load_config().tool_registry)
+        runner = ContractCaseRunner(config=load_config())
 
         result = await runner.run_case(
             EvalCaseSpec(
@@ -75,7 +75,7 @@ def test_contract_runner_uses_real_executor_for_deterministic_fixture() -> None:
 
 def test_contract_runner_executes_all_required_deterministic_fixture_types() -> None:
     async def scenario() -> None:
-        runner = ContractCaseRunner(registry=load_config().tool_registry)
+        runner = ContractCaseRunner(config=load_config())
         required_types = {
             "executor_contract",
             "state_machine",
@@ -115,7 +115,7 @@ def test_missing_model_runner_blocks_without_simulated_cases(tmp_path: Path) -> 
             store=EvalStore(tmp_path / "evals.sqlite3"),
             catalog=_catalog(),
             lease=BenchmarkLease(),
-            runners={EvalTier.CONTRACT: ContractCaseRunner(registry=load_config().tool_registry)},
+            runners={EvalTier.CONTRACT: ContractCaseRunner(config=load_config())},
         )
         await service.initialize()
         run = await service.create_run(

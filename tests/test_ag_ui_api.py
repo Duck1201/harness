@@ -1,6 +1,7 @@
 import json
 from collections.abc import Sequence
 from pathlib import Path
+from typing import cast
 from uuid import UUID
 
 import pytest
@@ -178,6 +179,9 @@ def test_agent_sse_accepts_run_agent_input_and_projects_documented_events(
     assert [event["type"] for event in events] == [
         "RUN_STARTED",
         "STEP_STARTED",
+        # O consumo da janela sai logo depois do contexto ser montado, uma vez
+        # por passo, antes de qualquer token do modelo.
+        "CUSTOM",
         "REASONING_START",
         "REASONING_MESSAGE_START",
         "REASONING_MESSAGE_CONTENT",
@@ -189,6 +193,7 @@ def test_agent_sse_accepts_run_agent_input_and_projects_documented_events(
         "TOOL_CALL_RESULT",
         "STEP_FINISHED",
         "STEP_STARTED",
+        "CUSTOM",
         "TEXT_MESSAGE_START",
         "TEXT_MESSAGE_CONTENT",
         "TEXT_MESSAGE_END",
@@ -212,13 +217,23 @@ def test_agent_sse_accepts_run_agent_input_and_projects_documented_events(
         "runId": "client-run-1",
     }
     assert sum(event["type"] in {"RUN_FINISHED", "RUN_ERROR"} for event in events) == 1
-    assert events[3]["role"] == "reasoning"
-    assert {events[index]["messageId"] for index in (3, 4, 5)} == {events[3]["messageId"]}
-    assert {events[index]["toolCallId"] for index in (7, 8, 9, 10)} == {"call-1"}
-    assert events[8]["delta"] == '{"file_path":"note.txt"}'
-    assert json.loads(str(events[10]["content"]))["status"] == "success"
-    assert {events[index]["messageId"] for index in (13, 14, 15)} == {events[13]["messageId"]}
-    assert events[14]["delta"] == "The note says hello."
+    assert events[4]["role"] == "reasoning"
+    assert {events[index]["messageId"] for index in (4, 5, 6)} == {events[4]["messageId"]}
+    assert {events[index]["toolCallId"] for index in (8, 9, 10, 11)} == {"call-1"}
+    assert events[9]["delta"] == '{"file_path":"note.txt"}'
+    assert json.loads(str(events[11]["content"]))["status"] == "success"
+    assert {events[index]["messageId"] for index in (15, 16, 17)} == {events[15]["messageId"]}
+    assert events[16]["delta"] == "The note says hello."
+    # A janela é a do contrato e o consumo cabe nela; o estimador do teste é
+    # falso, então o número exato não diz nada — a relação diz.
+    window = load_config().context.initial_budget_tokens
+    for index in (2, 14):
+        usage = events[index]
+        assert usage["name"] == "harness.context_usage"
+        value = cast(dict[str, int], usage["value"])
+        assert value["context_window"] == window
+        assert 0 < value["estimated_input_tokens"] < window
+        assert value["dropped_turns"] == 0
     assert events[-2] == {
         "type": "CUSTOM",
         "name": "harness.turn_outcome",

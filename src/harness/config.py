@@ -38,6 +38,12 @@ class LoopConfig(ConfigModel):
 
 class ContextConfig(ConfigModel):
     initial_budget_tokens: int
+    # Teto de uma página de resultado, não de um arquivo: `read_file` e
+    # `grep_search` paginam por `next_offset`. O valor vive aqui porque quem o
+    # limita é o orçamento — `max_tool_calls_per_step` resultados no teto têm de
+    # caber na janela, e `tests/test_config.py` falha se pararem de caber.
+    max_tool_read_bytes: int
+    max_tool_search_bytes: int
 
 
 class CorpusIngestionConfig(ConfigModel):

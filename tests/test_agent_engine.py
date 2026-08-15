@@ -35,6 +35,8 @@ from harness import (
     load_config,
 )
 
+_CONTEXT = load_config().context
+
 
 class FakeEstimator:
     validated = True
@@ -184,6 +186,23 @@ def test_direct_response_completes_and_reasoning_is_only_emitted(tmp_path: Path)
         assert all("reasoning" not in item.payload for item in history)
         reasoning = [event for event in sink.events if event.kind is AgentEventKind.REASONING]
         assert reasoning[0].payload == {"content": "private chain"}
+        # Um evento de contexto por passo, com números e IDs apenas: é o mesmo
+        # que alimenta a barra do painel e a telemetria.
+        built = [event for event in sink.events if event.kind is AgentEventKind.CONTEXT_BUILT]
+        assert len(built) == 1
+        assert built[0].step_sequence == 1
+        payload = built[0].payload
+        assert set(payload) == {
+            "estimated_input_tokens",
+            "context_window",
+            "output_budget",
+            "dropped_turn_ids",
+        }
+        assert payload["context_window"] == 32768
+        assert payload["output_budget"] == 8192
+        assert payload["dropped_turn_ids"] == []
+        assert isinstance(payload["estimated_input_tokens"], int)
+        assert payload["estimated_input_tokens"] > 0
 
     asyncio.run(scenario())
 
@@ -681,6 +700,8 @@ def test_registry_preflight_of_full_batch_prevents_earlier_write(tmp_path: Path)
         executor = RegistryToolExecutor(
             registry=load_config().tool_registry,
             workspace_root=workspace_root,
+            max_read_bytes=_CONTEXT.max_tool_read_bytes,
+            max_search_bytes=_CONTEXT.max_tool_search_bytes,
             session_policy=SessionPolicy(
                 conversation_id=conversation_id,
                 grants=(
@@ -746,6 +767,8 @@ def test_a_second_invalid_batch_ends_the_turn(tmp_path: Path) -> None:
         executor = RegistryToolExecutor(
             registry=load_config().tool_registry,
             workspace_root=workspace_root,
+            max_read_bytes=_CONTEXT.max_tool_read_bytes,
+            max_search_bytes=_CONTEXT.max_tool_search_bytes,
             session_policy=SessionPolicy(
                 conversation_id=conversation_id,
                 grants=(

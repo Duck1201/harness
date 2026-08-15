@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Protocol, cast
 
 from ..agent_engine import AgentEngine
-from ..config import CorpusConfig, ToolRegistryConfig, load_config
+from ..config import CorpusConfig, HarnessConfig, ToolRegistryConfig, load_config
 from ..context_builder import ContextBuilder, ContextTurn
 from ..conversation_store import ConversationStore
 from ..corpus_ingestion import build_document, embeddable_texts, extract, source_digest
@@ -81,8 +81,12 @@ class ContractCaseRunner:
         }
     )
 
-    def __init__(self, *, registry: ToolRegistryConfig) -> None:
-        self._registry = registry
+    def __init__(self, *, config: HarnessConfig) -> None:
+        # Recebe o contrato inteiro, não só o registry: o executor de fixture
+        # precisa dos mesmos tetos de bytes que produção, e dois argumentos
+        # soltos em cada chamador seriam duas chances de divergir.
+        self._registry = config.tool_registry
+        self._context = config.context
 
     def supports(self, fixture_type: str) -> bool:
         return fixture_type in self._SUPPORTED_TYPES
@@ -143,6 +147,8 @@ class ContractCaseRunner:
                     registry=self._registry,
                     workspace_root=workspace,
                     session_policy=_contract_policy(),
+                    max_read_bytes=self._context.max_tool_read_bytes,
+                    max_search_bytes=self._context.max_tool_search_bytes,
                 )
                 results = tuple([await executor.execute(call) for call in calls])
                 evidence = _evidence(

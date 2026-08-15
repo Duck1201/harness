@@ -227,6 +227,8 @@ class ApplicationService:
             workspace_root=self.workspace_root,
             coordinator=self._workspace_coordinator,
             search_endpoint=normalized_search_endpoint,
+            max_read_bytes=config.context.max_tool_read_bytes,
+            max_search_bytes=config.context.max_tool_search_bytes,
             browser_capability=browser_capability,
             browser_egress_guard=browser_egress_guard,
             corpus_retriever=self._corpus_retriever,
@@ -770,7 +772,7 @@ def _default_eval_service(
     if conversation_database.name == ":memory:":
         raise ValueError("ConversationStore must use a file when evals are enabled")
     eval_database = conversation_database.with_name("evals.sqlite3")
-    contract = ContractCaseRunner(registry=registry)
+    contract = ContractCaseRunner(config=config)
     browser_guard = BraveEgressGuard()
     model = ModelCaseRunner(
         config=config,
@@ -815,6 +817,8 @@ class _ConversationToolExecutorFactory:
         workspace_root: Callable[[str], Path],
         coordinator: WorkspaceCoordinator,
         search_endpoint: str | None,
+        max_read_bytes: int,
+        max_search_bytes: int,
         browser_capability: BrowserCapability | None = None,
         browser_egress_guard: BrowserEgressGuard | None = None,
         corpus_retriever: CorpusRetriever | None = None,
@@ -824,6 +828,8 @@ class _ConversationToolExecutorFactory:
         self._workspace_root = workspace_root
         self._coordinator = coordinator
         self._search_endpoint = search_endpoint
+        self._max_read_bytes = max_read_bytes
+        self._max_search_bytes = max_search_bytes
         self._browser_capability = browser_capability
         self._browser_egress_guard = browser_egress_guard
         self._corpus_retriever = corpus_retriever
@@ -861,6 +867,8 @@ class _ConversationToolExecutorFactory:
             registry=registry,
             workspace_root=root,
             session_policy=policy,
+            max_read_bytes=self._max_read_bytes,
+            max_search_bytes=self._max_search_bytes,
         )
         local: ToolExecutor = _CoordinatedToolExecutor(
             executor=local_executor,
@@ -1245,10 +1253,22 @@ class _ServiceEventSink:
             "retryable",
             "outcome_kind",
             "reason_code",
+            "estimated_input_tokens",
+            "context_window",
+            "output_budget",
+            "dropped_turn_ids",
         ):
             value = event.payload.get(key)
             if value is not None:
                 payload[key] = value
+        # `meta` inteiro não pode ser copiado: ele carrega `final_url`, que é
+        # conteúdo. O corte de um resultado é a única coisa dali que responde se
+        # os tetos das tools estão apertando, então só ele sobe.
+        meta = event.payload.get("meta")
+        if isinstance(meta, Mapping):
+            truncated = meta.get("truncated")
+            if isinstance(truncated, bool):
+                payload["truncated"] = truncated
         await self._observability_store.record(
             event_type=f"agent.{event.kind.value}",
             payload=payload,

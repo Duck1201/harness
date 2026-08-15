@@ -171,6 +171,10 @@ def test_tool_result_xml_escapes_markup_and_stays_compact() -> None:
     assert "&lt;script&gt;alert('x' &amp; 'y')&lt;/script&gt;" in rendered
     # A framing that indented or repeated the payload would blow the input budget on one fetch.
     assert context.dropped_turn_ids == ()
+    # O denominador do consumo viaja no próprio contexto: quem projeta a barra do
+    # painel ou grava telemetria não tem outro caminho até a janela.
+    assert context.context_window == 32768
+    assert context.estimated_input_tokens < context.context_window
     assert len(rendered) < len(body) + 400
 
 

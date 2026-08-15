@@ -35,7 +35,7 @@
       "id": "local_mitos_ollama_reproduction",
       "status": "functional",
       "release_eligible": true,
-      "profile_digest_sha256": "79d1056f6cb28d32c470a2206e76c83985dacabcac6bc141d088c15d344817f4",
+      "profile_digest_sha256": "a726cef53a75e7def1272308967d836c4c61092760feea3782a6007882ba5a74",
       "model": {
         "id": "mitos:latest",
         "base_model": "huihui_ai/qwen3.5-abliterated:4b",
@@ -65,14 +65,14 @@
         "observed_on": "2026-08-12"
       },
       "installation": {
-        "observed_on": "2026-08-11",
+        "observed_on": "2026-08-15",
         "installed_tag": "mitos:latest",
-        "installed_profile_digest_sha256": "79d1056f6cb28d32c470a2206e76c83985dacabcac6bc141d088c15d344817f4",
+        "installed_profile_digest_sha256": "a726cef53a75e7def1272308967d836c4c61092760feea3782a6007882ba5a74",
         "repository_modelfile": "Modelfile",
-        "repository_modelfile_sha256": "28c7a488622488c54f70aaed7fa4c42410abe17fb2f3395b76ca2f760141056e",
+        "repository_modelfile_sha256": "8f7f9e8e9b6d16539242c3e52ef37adfc3f0d0e00b7ac8a9a533c3c5f4deec7b",
         "matches_repository_modelfile": true,
         "parameters": {
-          "num_ctx": "32768",
+          "num_ctx": "65536",
           "temperature": "0.3",
           "presence_penalty": "0",
           "top_k": "20",
@@ -93,7 +93,7 @@
           "evidence": {
             "kind": "digest_sha256",
             "subject": "Modelfile",
-            "sha256": "28c7a488622488c54f70aaed7fa4c42410abe17fb2f3395b76ca2f760141056e"
+            "sha256": "8f7f9e8e9b6d16539242c3e52ef37adfc3f0d0e00b7ac8a9a533c3c5f4deec7b"
           }
         },
         {
@@ -101,7 +101,7 @@
           "evidence": {
             "kind": "embedded_in_profile",
             "subject": "tokenizer",
-            "profile_digest_sha256": "79d1056f6cb28d32c470a2206e76c83985dacabcac6bc141d088c15d344817f4",
+            "profile_digest_sha256": "a726cef53a75e7def1272308967d836c4c61092760feea3782a6007882ba5a74",
             "observed_via": "ollama_show"
           }
         },
@@ -130,7 +130,7 @@
           "evidence": {
             "kind": "embedded_in_profile",
             "subject": "chat_template",
-            "profile_digest_sha256": "79d1056f6cb28d32c470a2206e76c83985dacabcac6bc141d088c15d344817f4",
+            "profile_digest_sha256": "a726cef53a75e7def1272308967d836c4c61092760feea3782a6007882ba5a74",
             "observed_via": "ollama_show"
           }
         }

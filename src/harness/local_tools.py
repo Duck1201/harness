@@ -54,8 +54,8 @@ class RegistryToolExecutor:
         workspace_root: str | Path,
         session_policy: SessionPolicy,
         host_denied_paths: Sequence[str] = (),
-        max_read_bytes: int = 64 * 1024,
-        max_search_bytes: int = 64 * 1024,
+        max_read_bytes: int,
+        max_search_bytes: int,
     ) -> None:
         root = Path(workspace_root).resolve(strict=True)
         if not root.is_dir():

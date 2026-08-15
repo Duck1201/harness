@@ -44,6 +44,7 @@ import remarkGfm from "remark-gfm";
 import { harnessClient, type HarnessClient } from "./client";
 import { ConfirmationDialog } from "./components/ConfirmationDialog";
 import { PendingQueue } from "./components/PendingQueue";
+import { ContextGauge } from "./components/ContextGauge";
 import { RetrievalCard, passageAnchor } from "./components/RetrievalCard";
 import { ToolCallCard } from "./components/ToolCallCard";
 import type {
@@ -51,6 +52,7 @@ import type {
   AppArea,
   ChatMessage,
   ChatSnapshot,
+  ContextUsage,
   CorporaSnapshot,
   CorpusDocument,
   IngestionJob,
@@ -87,6 +89,7 @@ interface LiveRun {
   tools: ToolCall[];
   toolArguments: Record<string, string>;
   steps: number;
+  contextUsage?: ContextUsage;
   outcome?: { kind: string; reasonCode: string };
   error?: string;
 }
@@ -768,7 +771,11 @@ function ChatArea({
   };
 
   const liveMessages = Object.values(liveRuns)
-    .filter((run) => run.content || run.reasoning || run.tools.length || run.error)
+    // O consumo da janela também segura a mensagem ao vivo: ele chega antes do
+    // primeiro token, que é justamente quando saber quanto sobrou tem valor.
+    .filter(
+      (run) => run.content || run.reasoning || run.tools.length || run.error || run.contextUsage,
+    )
     .map(liveRunMessage);
   const isRunning =
     snapshot.activeTurn !== null ||
@@ -1279,6 +1286,7 @@ function TimelineMessage({
             <p>{message.reasoning.content}</p>
           </details>
         )}
+        {message.contextUsage && <ContextGauge usage={message.contextUsage} />}
         {message.retrieval && <RetrievalCard retrieval={message.retrieval} />}
         {message.tools && message.tools.length > 0 && (
           <div className="tool-stack" aria-label="Chamadas de tools">
@@ -2576,7 +2584,12 @@ function reduceLiveRun(run: LiveRun, event: AgUiEvent): LiveRun {
     case "TEXT_MESSAGE_CONTENT":
       return { ...run, content: run.content + event.delta };
     case "CUSTOM": {
-      if (event.name !== "harness.turn_outcome" || !isRecord(event.value)) return run;
+      if (!isRecord(event.value)) return run;
+      if (event.name === "harness.context_usage") {
+        const usage = readContextUsage(event.value);
+        return usage ? { ...run, contextUsage: usage } : run;
+      }
+      if (event.name !== "harness.turn_outcome") return run;
       const kind = event.value.outcome_kind;
       const reasonCode = event.value.reason_code;
       return typeof kind === "string" && typeof reasonCode === "string"
@@ -2610,8 +2623,28 @@ function liveRunMessage(run: LiveRun): ChatMessage {
         }
       : {}),
     ...(run.tools.length ? { tools: run.tools } : {}),
+    ...(run.contextUsage ? { contextUsage: run.contextUsage } : {}),
     ...(run.outcome ? { liveOutcome: run.outcome } : {}),
   };
+}
+
+// A janela é o denominador e vem no próprio evento; sem ela não há barra que
+// signifique alguma coisa, então um payload incompleto não vira meia leitura.
+function readContextUsage(value: Record<string, unknown>): ContextUsage | undefined {
+  const inputTokens = value.estimated_input_tokens;
+  const contextWindow = value.context_window;
+  const outputBudget = value.output_budget;
+  const droppedTurns = value.dropped_turns;
+  if (
+    typeof inputTokens !== "number" ||
+    typeof contextWindow !== "number" ||
+    typeof outputBudget !== "number" ||
+    typeof droppedTurns !== "number" ||
+    contextWindow <= 0
+  ) {
+    return undefined;
+  }
+  return { inputTokens, contextWindow, outputBudget, droppedTurns };
 }
 
 function applyLiveToolResult(tool: ToolCall, content: string): ToolCall {

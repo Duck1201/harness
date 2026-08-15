@@ -72,7 +72,7 @@ OPERATOR_MARKER = "<!-- OPERATOR -->"
 
 # ponytail: teto em caracteres, não em tokens — o estimator exige o tokenizer
 # carregado, que o composition root ainda não tem quando isto roda. São ~1k tokens
-# num orçamento de 32768 (config/harness.json#context.initial_budget_tokens).
+# num orçamento de 65536 (config/harness.json#context.initial_budget_tokens).
 # Trocar por contagem real de tokens se o teto errar na prática.
 _OPERATOR_NOTES_LIMIT = 4000
 

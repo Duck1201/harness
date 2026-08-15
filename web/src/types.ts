@@ -247,6 +247,19 @@ export interface TimelineEvent {
   payload: Record<string, JsonValue>;
 }
 
+/**
+ * O que a janela de contexto custou no passo mais recente do turno.
+ *
+ * Chega por `CUSTOM`/`harness.context_usage`, um evento por passo, e é
+ * transitório como o raciocínio: descreve a execução ao vivo, não o histórico.
+ */
+export interface ContextUsage {
+  inputTokens: number;
+  contextWindow: number;
+  outputBudget: number;
+  droppedTurns: number;
+}
+
 export interface ChatMessage {
   id: string;
   turnId: string;
@@ -256,6 +269,7 @@ export interface ChatMessage {
   reasoning?: ReasoningTrace;
   tools?: ToolCall[];
   retrieval?: Retrieval;
+  contextUsage?: ContextUsage;
   events?: TimelineEvent[];
   metrics?: Record<string, string | number>;
   terminalOutcome?: TerminalOutcome;

@@ -107,6 +107,8 @@ def test_mixed_batch_preflights_all_children_and_has_no_effect_when_web_is_denie
                 registry=config.tool_registry,
                 workspace_root=tmp_path,
                 session_policy=policy("WorkspaceRootGrant", "WriteGrant"),
+                max_read_bytes=config.context.max_tool_read_bytes,
+                max_search_bytes=config.context.max_tool_search_bytes,
             )
         )
         web_transport = NoEffectHttpTransport()

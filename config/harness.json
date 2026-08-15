@@ -136,7 +136,9 @@
     }
   },
   "context": {
-    "initial_budget_tokens": 32768,
+    "initial_budget_tokens": 65536,
+    "max_tool_read_bytes": 32768,
+    "max_tool_search_bytes": 32768,
     "budget_includes": [
       "system",
       "tool_schemas",

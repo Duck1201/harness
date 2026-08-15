@@ -131,8 +131,9 @@ def test_browser_escalation_happens_only_for_the_page_that_needs_it() -> None:
 
 
 def test_composite_routes_each_fixture_type_to_a_runner_that_supports_it() -> None:
-    registry = load_config().tool_registry
-    contract = ContractCaseRunner(registry=registry)
+    config = load_config()
+    registry = config.tool_registry
+    contract = ContractCaseRunner(config=config)
     bench = BrowserBenchCaseRunner(registry=registry)
     composite = CompositeCaseRunner((contract, bench))
 
@@ -157,7 +158,7 @@ def test_every_fixture_type_in_the_dataset_has_a_runner() -> None:
     config = load_config()
     composite = CompositeCaseRunner(
         (
-            ContractCaseRunner(registry=config.tool_registry),
+            ContractCaseRunner(config=config),
             BrowserBenchCaseRunner(registry=config.tool_registry),
             ModelCaseRunner(
                 config=config,

@@ -325,4 +325,41 @@ describe("App", () => {
     view.unmount();
     expect(streamSignal?.aborted).toBe(true);
   });
+
+  it("mostra o consumo da janela de contexto enquanto o turno roda", async () => {
+    const user = userEvent.setup();
+    const client = new MockHarnessClient();
+    vi.spyOn(client, "streamAgent").mockImplementation(async (input, onEvent, signal) => {
+      onEvent({ type: "RUN_STARTED", threadId: input.threadId, runId: input.runId! });
+      onEvent({ type: "STEP_STARTED", stepName: "step-1" });
+      onEvent({
+        type: "CUSTOM",
+        name: "harness.context_usage",
+        value: {
+          estimated_input_tokens: 13107,
+          context_window: 65536,
+          output_budget: 8192,
+          dropped_turns: 2,
+        },
+      });
+      // O stream fica aberto: a barra descreve a execução ao vivo, e um turno já
+      // encerrado não tem janela para mostrar.
+      await new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+      });
+      return { type: "RUN_FINISHED", threadId: input.threadId, runId: input.runId! };
+    });
+    const view = render(<App client={client} />);
+
+    await screen.findByRole("heading", { name: "Refinar retenção por conversa" });
+    await user.type(screen.getByLabelText("Solicitação para o Harness"), "Nova solicitação");
+    await user.click(screen.getByRole("button", { name: "Enviar solicitação" }));
+
+    const bar = await screen.findByRole("progressbar", { name: "Uso da janela de contexto" });
+    expect(bar.getAttribute("aria-valuenow")).toBe("13107");
+    expect(bar.getAttribute("aria-valuemax")).toBe("65536");
+    expect(screen.getByText("2 turnos descartados")).toBeInTheDocument();
+
+    view.unmount();
+  });
 });

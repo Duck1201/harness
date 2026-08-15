@@ -14,9 +14,11 @@ def test_config_loader_reads_harness_profiles_and_tool_registry() -> None:
     assert config.runtime_profile.model.id == "mitos:latest"
     assert (
         config.runtime_profile.profile_digest_sha256
-        == "79d1056f6cb28d32c470a2206e76c83985dacabcac6bc141d088c15d344817f4"
+        == "a726cef53a75e7def1272308967d836c4c61092760feea3782a6007882ba5a74"
     )
-    assert config.context.initial_budget_tokens == 32768
+    assert config.context.initial_budget_tokens == 65536
+    assert config.context.max_tool_read_bytes == 32768
+    assert config.context.max_tool_search_bytes == 32768
     assert [tool.name for tool in config.tool_registry.model_tools] == [
         "read_file",
         "write_file",
@@ -35,3 +37,30 @@ def test_config_loader_reads_harness_profiles_and_tool_registry() -> None:
         config.tool_registry.model_tools[0].replay_policy
         is ReplayPolicy.NEVER_CACHE_WORKSPACE_READS
     )
+
+
+# Piso conservador: 64 KiB de código Python medido pelo tokenizer do perfil deram
+# 15.395 tokens, ou 4,36 bytes por token. Usar 3,5 deixa margem para conteúdo mais
+# caro que código sem depender de qual arquivo o modelo resolveu ler.
+_BYTES_PER_TOKEN_FLOOR = 3.5
+
+# Medido no mesmo lugar: system prompt (239) mais os schemas das 11 tools (1.663).
+_FIXED_FLOOR_TOKENS = 1902
+
+
+def test_a_full_batch_of_reads_at_the_cap_still_fits_the_context_budget() -> None:
+    """O pior passo tem de caber na janela, senão o Turn morre sem recurso.
+
+    `ContextBuilder` descarta turnos antigos para caber no orçamento, mas quando o
+    turno corrente sozinho estoura não sobra o que descartar: ele levanta
+    `ContextBudgetExceeded` e o Turn termina em `context_budget_exceeded`. Subir o
+    teto de leitura, subir o fan-out por passo ou baixar o orçamento sem refazer
+    esta conta reabre exatamente esse caminho.
+    """
+    config = load_config(Path("config/harness.json"))
+
+    worst_case_bytes = config.loop.max_tool_calls_per_step * config.context.max_tool_read_bytes
+    worst_case_tokens = worst_case_bytes / _BYTES_PER_TOKEN_FLOOR
+    available = config.context.initial_budget_tokens - config.loop.max_output_tokens
+
+    assert worst_case_tokens + _FIXED_FLOOR_TOKENS <= available

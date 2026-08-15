@@ -86,7 +86,7 @@ no setup.
 
 ### Tokenizer
 
-O orçamento de contexto (32768 tokens) depende de uma contagem real de tokens, não
+O orçamento de contexto (65536 tokens) depende de uma contagem real de tokens, não
 de estimativa por caractere. O harness carrega um `tokenizer.json` no formato
 HuggingFace: sem o arquivo, a aplicação sobe com
 `EngineReadiness(ready=False, reason_code="tokenizer_file_missing")` e recusa

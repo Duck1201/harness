@@ -48,6 +48,9 @@ class ModelContext:
     tool_schemas: tuple[ToolSchema, ...]
     estimated_input_tokens: int
     output_budget: int
+    # O denominador viaja junto com o numerador: quem mostra ou grava o consumo
+    # da janela não precisa buscar a configuração por um caminho paralelo.
+    context_window: int
     dropped_turn_ids: tuple[str, ...]
     taints: frozenset[str]
 
@@ -103,6 +106,7 @@ class ContextBuilder:
                     tool_schemas=schemas,
                     estimated_input_tokens=estimated,
                     output_budget=self._output_budget,
+                    context_window=self._context_window,
                     dropped_turn_ids=tuple(dropped),
                     taints=_tool_result_taints(included_turns),
                 )

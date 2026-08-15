@@ -544,3 +544,76 @@ def test_benchmark_lease_waits_for_active_turn_and_keeps_new_chat_queued(
             await service.shutdown()
 
     asyncio.run(scenario())
+
+
+def test_telemetry_records_context_usage_and_truncation_without_any_content(
+    tmp_path: Path,
+) -> None:
+    """A telemetria passa a responder "isso está sendo cortado?" com número.
+
+    `meta.truncated` já existia em todo ToolResult e morria no caminho; sem ele
+    não há como saber se os tetos das tools apertam, e mexer num teto viraria
+    palpite. O que sobe é só o booleano: `meta` inteiro carrega `final_url`, que
+    é conteúdo, e o store de telemetria existe para não guardar conteúdo.
+    """
+
+    class ReadingRuntime(CapturingRuntime):
+        async def generate(self, request: ModelRequest) -> ModelResponse:
+            self.requests.append(request)
+            if len(self.requests) == 1:
+                return ModelResponse(
+                    tool_calls=(
+                        ToolCall(
+                            id="call-1",
+                            name="read_file",
+                            arguments={"file_path": "notes.txt", "limit": 1},
+                        ),
+                    )
+                )
+            return ModelResponse(content="li a primeira linha")
+
+    async def scenario() -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "notes.txt").write_text("uma\nduas\ntres\n", encoding="utf-8")
+        service = ApplicationService(
+            store=ConversationStore(tmp_path / "conversations.sqlite3"),
+            observability_store=ObservabilityStore(tmp_path / "observability.sqlite3"),
+            config=load_config(),
+            runtime=ReadingRuntime(),
+            estimator=FakeEstimator(),
+            allowed_workspace_roots=(workspace,),
+        )
+        await service.initialize()
+        try:
+            conversation = await service.create_conversation(str(workspace))
+            await service.enqueue_request(conversation.id, "leia a nota")
+            await _wait_until_idle(service, conversation.id)
+
+            events = await service.observability_store.list_events()
+            context_events = [
+                event for event in events if event.event_type == "agent.context_built"
+            ]
+            window = load_config().context.initial_budget_tokens
+            assert len(context_events) == len(
+                [event for event in events if event.event_type == "agent.step_started"]
+            )
+            for event in context_events:
+                assert event.payload["context_window"] == window
+                assert event.payload["output_budget"] == 8192
+                assert event.payload["dropped_turn_ids"] == []
+                assert cast(int, event.payload["estimated_input_tokens"]) > 0
+
+            results = [event for event in events if event.event_type == "agent.tool_result"]
+            assert [event.payload["truncated"] for event in results] == [True]
+
+            # Nada de conteúdo: nem a linha lida, nem o caminho, nem o final_url
+            # que `meta` carrega nos resultados de web.
+            payloads = json.dumps([event.payload for event in events])
+            assert "uma" not in payloads
+            assert "notes.txt" not in payloads
+            assert "final_url" not in payloads
+        finally:
+            await service.shutdown()
+
+    asyncio.run(scenario())

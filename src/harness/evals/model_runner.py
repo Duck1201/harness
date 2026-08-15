@@ -507,6 +507,8 @@ class ModelCaseRunner:
             registry=registry,
             workspace_root=workspace,
             session_policy=policy,
+            max_read_bytes=self._config.context.max_tool_read_bytes,
+            max_search_bytes=self._config.context.max_tool_search_bytes,
         )
         guard = BenchEgressGuard(bench.port)
         web: ToolExecutor = WebToolExecutor(

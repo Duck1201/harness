@@ -12,13 +12,17 @@ from harness import (
     load_config,
 )
 
+# Os tetos de bytes vêm do contrato, não de um número solto aqui: um teste que
+# lê um teto diferente do de produção mede outro executor.
+_CONTEXT = load_config().context
+
 
 def executor_for(
     workspace_root: Path,
     *permissions: str,
     host_denied_paths: tuple[str, ...] = (),
-    max_read_bytes: int = 64 * 1024,
-    max_search_bytes: int = 64 * 1024,
+    max_read_bytes: int = _CONTEXT.max_tool_read_bytes,
+    max_search_bytes: int = _CONTEXT.max_tool_search_bytes,
 ) -> RegistryToolExecutor:
     now = datetime.now(UTC)
     policy = SessionPolicy(
@@ -802,6 +806,8 @@ def test_expired_session_grants_are_not_effective(tmp_path: Path) -> None:
             registry=load_config().tool_registry,
             workspace_root=tmp_path,
             session_policy=policy,
+            max_read_bytes=_CONTEXT.max_tool_read_bytes,
+            max_search_bytes=_CONTEXT.max_tool_search_bytes,
         )
 
         result = await executor.preflight(
