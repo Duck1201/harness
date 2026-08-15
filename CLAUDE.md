@@ -64,9 +64,11 @@ exige alterar o documento, os contratos e as fixtures no mesmo commit.
 - **CanonicalHistory é a fonte autoritativa**; ModelView e AG-UI são projeções
   reconstruídas. Reasoning transita ao vivo para a UI mas **nunca** é persistido
   em estado canônico, telemetria ou replay.
-- **O conteúdo das mensagens do modelo é XML**, montado só em
-  `context_builder._xml_text`; schemas de tool seguem em JSON Schema no
-  tool-calling nativo do Ollama (ADR 0010).
+- **O conteúdo das mensagens do modelo é JSON minificado**, montado só em
+  `context_builder._json_document`; schemas de tool seguem em JSON Schema no
+  tool-calling nativo do Ollama. O XML entrou por ADR 0010 sem medição e saiu
+  com ela na promoção de `model_view_serialization`; o render XML continua no
+  módulo porque agora é o braço candidato do experimento.
 - **`host.json` é a única fonte de configuração do host**: não há variável de
   ambiente equivalente, e a aba Configurações grava o mesmo arquivo do setup.
 - **Dois stores separados**: estado conversacional e telemetria. A telemetria

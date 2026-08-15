@@ -82,7 +82,9 @@ def test_context_deduplicates_only_result_data_and_preserves_provenance() -> Non
         ),
     )
 
-    context = ContextBuilder(FakeEstimator(), context_window=32768).build(
+    context = ContextBuilder(
+        FakeEstimator(), context_window=32768, model_view_format="xml"
+    ).build(
         system="system",
         tool_schemas=(ToolSchema("read_file", "read", {"type": "object"}),),
         completed_turns=(previous,),
@@ -105,6 +107,52 @@ def test_context_deduplicates_only_result_data_and_preserves_provenance() -> Non
     assert context.output_budget == 8192
     assert context.tool_schemas[0].name == "read_file"
     assert context.taints == frozenset({"UntrustedWebTaint"})
+
+
+def test_the_default_render_is_json_and_still_deduplicates() -> None:
+    """O default voltou a ser JSON, e a deduplicação não é do render.
+
+    A troca por XML entrou sem medição (ADR-0010) e saiu com ela: na promoção de
+    15/08/2026 o XML perdeu em verdict PASS e subiu rejected_model_attempts. O
+    `$ref` é decidido antes de renderizar, então o teste que segura isso não pode
+    depender de qual dos dois formatos está em vigor.
+    """
+    result: Mapping[str, JsonValue] = {
+        "tool_call_id": "call-1",
+        "status": "success",
+        "retryable": False,
+        "data": {"content": "same payload"},
+        "error": None,
+        "meta": {"producer": "first", "taints": []},
+    }
+    previous = ContextTurn(
+        turn_id="turn-1",
+        entries=(entry(1, "turn-1", CanonicalHistoryEntryKind.TOOL_RESULT, result),),
+    )
+    current = ContextTurn(
+        turn_id="turn-2",
+        entries=(
+            entry(
+                2,
+                "turn-2",
+                CanonicalHistoryEntryKind.TOOL_RESULT,
+                {**result, "tool_call_id": "call-2"},
+            ),
+        ),
+    )
+
+    context = ContextBuilder(FakeEstimator(), context_window=32768).build(
+        system="system",
+        tool_schemas=(),
+        completed_turns=(previous,),
+        current_turn=current,
+    )
+
+    tool_messages = [message for message in context.messages if message.role is ModelRole.TOOL]
+    first, duplicate = tool_messages[0].content, tool_messages[1].content
+    assert first.startswith("{") and '"content":"same payload"' in first
+    assert duplicate.startswith("{") and '"$ref"' in duplicate
+    assert '"tool_call_id":"call-2"' in duplicate
 
 
 def test_context_cuts_oldest_complete_turn_and_keeps_current_turn() -> None:
@@ -160,7 +208,9 @@ def test_tool_result_xml_escapes_markup_and_stays_compact() -> None:
         ),
     )
 
-    context = ContextBuilder(FakeEstimator(), context_window=32768).build(
+    context = ContextBuilder(
+        FakeEstimator(), context_window=32768, model_view_format="xml"
+    ).build(
         system="system",
         tool_schemas=(),
         completed_turns=(),
@@ -246,7 +296,9 @@ def test_every_rendered_envelope_root_is_declared() -> None:
         ),
     )
 
-    context = ContextBuilder(FakeEstimator(), context_window=32768).build(
+    context = ContextBuilder(
+        FakeEstimator(), context_window=32768, model_view_format="xml"
+    ).build(
         system="system",
         tool_schemas=(),
         completed_turns=(),

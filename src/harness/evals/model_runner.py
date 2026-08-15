@@ -90,10 +90,10 @@ _URL_PATTERN = re.compile(r"https?://\S+")
 def _model_view_format(settings: Mapping[str, JsonValue]) -> ModelViewFormat:
     """Qual render de ModelView o braço pede. Fora do experimento, o do contrato."""
     declared = settings.get("model_view_format")
-    if declared == "json":
-        return "json"
-    if declared in (None, "xml"):
+    if declared == "xml":
         return "xml"
+    if declared in (None, "json"):
+        return "json"
     raise ValueError(f"unknown model_view_format in arm settings: {declared!r}")
 
 

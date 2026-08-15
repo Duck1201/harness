@@ -75,16 +75,19 @@ class ContextBuilder:
         *,
         context_window: int,
         output_budget: int = 8192,
-        model_view_format: ModelViewFormat = "xml",
+        model_view_format: ModelViewFormat = "json",
     ) -> None:
         if context_window <= output_budget:
             raise ValueError("context window must exceed output budget")
         self._estimator = estimator
         self._context_window = context_window
         self._output_budget = output_budget
-        # XML é o formato do harness (ADR-0010). JSON continua construível porque
-        # é o controle do experimento que mede a troca: um braço que não pode ser
-        # executado não é controle, é lembrança.
+        # JSON é o formato do harness. O XML entrou por ADR-0010 sem medição e
+        # saiu com ela: na promoção de 15/08/2026 perdeu 36/50 contra 41/50 em
+        # verdict PASS e subiu rejected_model_attempts de 22 para 30, e o gate
+        # declarado do experimento manda reverter quando perde em qualquer um dos
+        # dois. O render XML continua construível porque agora é ele o braço
+        # candidato: um braço que não pode ser executado não é braço, é lembrança.
         self._render_payload = _xml_document if model_view_format == "xml" else _json_document
 
     @property
