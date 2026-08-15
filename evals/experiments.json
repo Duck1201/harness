@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "manifest_version": "2.0.0",
-  "manifest_digest_sha256": "ce04dae13e27960653174d76760ba5465bf7b8959b7f3e79d4381190cde1e3b4",
+  "manifest_digest_sha256": "b0a339e1348d5c64d449ff8b2133acd9f7ad71a1dce3dfa72ce39fe057e50c29",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -1863,7 +1863,7 @@
     },
     {
       "id": "guarded_web_brave_escalation",
-      "status": "required_before_release",
+      "status": "promoted_before_release",
       "runtime_profile": "local_mitos_ollama_reproduction",
       "execution_route": "local_web_tools",
       "fixture_tags": [

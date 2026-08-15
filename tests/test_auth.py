@@ -58,6 +58,7 @@ def _app(
     tmp_path: Path,
     sessions: SessionController,
     credential_store: CredentialStore | None = None,
+    static_dir: Path | None = None,
 ):
     workspace = tmp_path / "workspace"
     workspace.mkdir(exist_ok=True)
@@ -71,7 +72,7 @@ def _app(
     )
     return create_app(
         service=service,
-        static_dir=tmp_path / "missing-dist",
+        static_dir=static_dir or (tmp_path / "missing-dist"),
         session_controller=sessions,
         credential_store=credential_store,
     )
@@ -141,6 +142,44 @@ def test_without_a_password_only_loopback_is_served(tmp_path: Path) -> None:
     assert remote_health.status_code == 200
     # A proxy cannot claim to be the local machine.
     assert forwarded.status_code == 401
+
+
+def _spa_dir(tmp_path: Path) -> Path:
+    dist = tmp_path / "dist"
+    dist.mkdir(exist_ok=True)
+    (dist / "index.html").write_text("<!doctype html><title>harness</title>", encoding="utf-8")
+    return dist
+
+
+def test_without_a_password_the_spa_is_loopback_only(tmp_path: Path) -> None:
+    # A interface é servida pela rota catch-all, fora de /api/: sem senha ela
+    # tem de cair no mesmo gate, senão --host 0.0.0.0 publica o app na rede.
+    app = _app(tmp_path, SessionController(password_hash=None), static_dir=_spa_dir(tmp_path))
+
+    with TestClient(app, client=REMOTE) as remote:
+        remote_spa = remote.get("/")
+    with TestClient(app, client=LOOPBACK) as local:
+        local_spa = local.get("/")
+
+    assert remote_spa.status_code == 401
+    assert remote_spa.json()["error"]["code"] == "authentication_required"
+    assert local_spa.status_code == 200
+    assert "harness" in local_spa.text
+
+
+def test_with_a_password_the_spa_loads_before_any_session_exists(tmp_path: Path) -> None:
+    # Armadilha: exigir sessão para a SPA impediria o login remoto de carregar.
+    sessions = SessionController(password_hash=hash_password(PASSWORD, iterations=1_000))
+    app = _app(tmp_path, sessions, static_dir=_spa_dir(tmp_path))
+
+    with TestClient(app, client=REMOTE) as remote:
+        spa = remote.get("/")
+        api = remote.get("/api/workspaces")
+
+    assert spa.status_code == 200
+    assert "harness" in spa.text
+    assert api.status_code == 401
+    assert api.json()["error"]["code"] == "authentication_required"
 
 
 def test_with_a_password_every_api_route_needs_a_session(tmp_path: Path) -> None:

@@ -1262,9 +1262,17 @@ class _OriginAllowlistMiddleware:
 class _OperatorAuthenticationMiddleware:
     """Fail-closed network exposure (ADR-0005).
 
-    With no Operator password configured the server answers only direct loopback
-    connections; with one configured every API route needs a session. The
-    exceptions are the routes that must work before a login exists.
+    Two different rules, and the difference is not an oversight:
+
+    - No password: *every* path — the SPA and its static assets included — is
+      served to direct loopback only. Nothing off this machine gets an answer.
+    - With a password: only `/api/` needs a session; the SPA stays open. That is
+      the login page itself, and a remote client has to load it before it can
+      have a session. Collapsing both branches into one rule ("always require a
+      session") locks every remote Operator out of logging in — do not
+      "simplify" it back.
+
+    `_OPEN_PATHS` are the API routes that must answer before a login exists.
     """
 
     _OPEN_PATHS = frozenset({"/api/health", "/api/session", "/api/setup", "/api/setup/status"})
@@ -1278,24 +1286,26 @@ class _OperatorAuthenticationMiddleware:
             await self._app(scope, receive, send)
             return
         path = str(scope.get("path", ""))
-        if path.startswith("/api/") and path not in self._OPEN_PATHS:
-            request = Request(scope)
-            try:
+        try:
+            if path not in self._OPEN_PATHS:
+                request = Request(scope)
                 if self._sessions.authentication_required:
-                    self._sessions.authorize(request.headers.get("x-harness-session"))
+                    # Só a API exige sessão; a SPA fica aberta de propósito.
+                    if path.startswith("/api/"):
+                        self._sessions.authorize(request.headers.get("x-harness-session"))
                 elif not _is_direct_loopback(request):
                     raise AuthenticationError(
                         "authentication_required",
                         "This host has no Operator password, so only loopback is served.",
                         status_code=401,
                     )
-            except AuthenticationError as error:
-                response = JSONResponse(
-                    status_code=error.status_code,
-                    content={"error": {"code": error.code, "message": str(error)}},
-                )
-                await response(scope, receive, send)
-                return
+        except AuthenticationError as error:
+            response = JSONResponse(
+                status_code=error.status_code,
+                content={"error": {"code": error.code, "message": str(error)}},
+            )
+            await response(scope, receive, send)
+            return
         await self._app(scope, receive, send)
 
 

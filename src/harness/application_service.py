@@ -172,6 +172,7 @@ class ApplicationService:
             runtime=runtime,
             estimator=estimator,
             operator_notes=operator_notes,
+            browser_executable=browser_executable,
         )
         if Path(self.eval_service.store.database).resolve() == Path(store.database).resolve():
             raise ValueError("EvalStore must be separate from ConversationStore")
@@ -765,6 +766,7 @@ def _default_eval_service(
     runtime: ModelRuntime,
     estimator: TokenEstimator,
     operator_notes: str,
+    browser_executable: str | Path | None,
 ) -> EvalService:
     project_root = Path(__file__).resolve().parents[2]
     catalog = load_eval_catalog(
@@ -777,7 +779,9 @@ def _default_eval_service(
         raise ValueError("ConversationStore must use a file when evals are enabled")
     eval_database = conversation_database.with_name("evals.sqlite3")
     contract = ContractCaseRunner(config=config)
-    browser_guard = BraveEgressGuard()
+    # O mesmo executável declarado em host.json: a bancada tem de medir o
+    # navegador que a produção usa, não o primeiro que aparecer no PATH.
+    browser_guard = BraveEgressGuard(executable=browser_executable)
     model = ModelCaseRunner(
         config=config,
         runtime=runtime,
