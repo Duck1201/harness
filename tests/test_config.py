@@ -39,10 +39,11 @@ def test_config_loader_reads_harness_profiles_and_tool_registry() -> None:
     )
 
 
-# Piso conservador: 64 KiB de código Python medido pelo tokenizer do perfil deram
-# 15.395 tokens, ou 4,36 bytes por token. Usar 3,5 deixa margem para conteúdo mais
-# caro que código sem depender de qual arquivo o modelo resolveu ler.
-_BYTES_PER_TOKEN_FLOOR = 3.5
+# Bytes por token varia muito com o conteúdo, e o pior caso não é código: 64 KiB
+# de Python deram 4,36 bytes/token, mas um `read_file` real de markdown em pt-BR
+# com números deu 2,83 (32.768 bytes viraram 11.580 tokens, turno medido em
+# 2026-08-15). O piso é 2,5 porque a conta só protege se errar para o lado caro.
+_BYTES_PER_TOKEN_FLOOR = 2.5
 
 # Medido no mesmo lugar: system prompt (239) mais os schemas das 11 tools (1.663).
 _FIXED_FLOOR_TOKENS = 1902
