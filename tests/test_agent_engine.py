@@ -19,6 +19,7 @@ from harness import (
     ConversationStore,
     Grant,
     MalformedModelResponseError,
+    ModelGenerationTimeout,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -138,6 +139,7 @@ def engine(
     max_model_invocations: int = 15,
     max_tool_calls_per_turn: int = 20,
     max_turn_duration_seconds: float = 900,
+    max_malformed_model_attempts: int = 2,
     confirmation_gate: ConfirmationGate | None = None,
     tool_effects: Mapping[str, Sequence[str]] | None = None,
 ) -> AgentEngine:
@@ -155,6 +157,7 @@ def engine(
         max_model_invocations=max_model_invocations,
         max_tool_calls_per_turn=max_tool_calls_per_turn,
         max_turn_duration_seconds=max_turn_duration_seconds,
+        max_malformed_model_attempts=max_malformed_model_attempts,
         confirmation_gate=confirmation_gate,
     )
 
@@ -490,6 +493,32 @@ def test_a_provider_failure_is_not_reported_as_a_harness_crash(tmp_path: Path) -
     asyncio.run(scenario())
 
 
+def test_a_generation_cut_by_the_harness_is_not_reported_as_a_provider_outage(
+    tmp_path: Path,
+) -> None:
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        # A armadilha é a ordem das cláusulas: ModelGenerationTimeout é subclasse
+        # de ModelRuntimeError e vem com retryable falso, então o except genérico
+        # a rotularia model_provider_error — e o Operator sairia atrás de um
+        # Ollama que nunca caiu.
+        cut = ModelGenerationTimeout(
+            "timed out",
+            error={"code": "ollama_generation_timeout", "message": "timed out"},
+        )
+        finished = await engine(store, FakeRuntime([cut]), FakeToolExecutor(), FakeEventSink()).run(
+            conversation_id, "gera texto longo demais"
+        )
+
+        assert finished.terminal_outcome is not None
+        assert finished.terminal_outcome.kind is TerminalOutcomeKind.FAILED
+        assert finished.terminal_outcome.reason_code == "model_generation_timeout"
+        assert finished.terminal_outcome.detail is not None
+        assert "ollama_generation_timeout" in finished.terminal_outcome.detail
+
+    asyncio.run(scenario())
+
+
 def test_a_refusing_provider_and_a_broken_harness_get_different_codes(
     tmp_path: Path,
 ) -> None:
@@ -548,6 +577,33 @@ def test_two_malformed_model_responses_fail_the_turn(tmp_path: Path) -> None:
             CanonicalHistoryEntryKind.REJECTED_MODEL_ATTEMPT,
             CanonicalHistoryEntryKind.REJECTED_MODEL_ATTEMPT,
         ]
+
+    asyncio.run(scenario())
+
+
+def test_the_malformed_attempt_limit_comes_from_the_contract(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        # Duas malformadas na fila, limite em uma: se o valor ainda estivesse
+        # escrito no engine, a segunda seria gerada e a fila esvaziaria.
+        runtime = FakeRuntime(
+            [
+                MalformedModelResponseError("missing message"),
+                MalformedModelResponseError("invalid tool call"),
+            ]
+        )
+        finished = await engine(
+            store,
+            runtime,
+            FakeToolExecutor(),
+            FakeEventSink(),
+            max_malformed_model_attempts=1,
+        ).run(conversation_id, "malformed once")
+
+        assert len(runtime.requests) == 1
+        assert finished.terminal_outcome is not None
+        assert finished.terminal_outcome.kind is TerminalOutcomeKind.FAILED
+        assert finished.terminal_outcome.reason_code == "malformed_model_response_limit"
 
     asyncio.run(scenario())
 

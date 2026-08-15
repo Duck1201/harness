@@ -32,6 +32,13 @@ class LoopConfig(ConfigModel):
     max_tool_calls_per_turn: int
     max_read_calls_per_turn: int = 40
     max_turn_duration_seconds: float
+    # Teto de uma geração, não do Turn: numa bateria de 828 casos de bancada, 14
+    # morreram entre 120 e 154 s contra uma mediana de 6 a 17 s, sempre nas
+    # fixtures de texto longo — o timeout de 120 s do httpx cortava e o harness
+    # relatava provedor indisponível. Fica acima da pior geração observada e
+    # abaixo de `max_turn_duration_seconds`, que continua sendo quem encerra.
+    model_generation_timeout_seconds: float
+    max_malformed_model_attempts: int
     max_output_tokens: int
     offer_tools_on_final_step: bool
 

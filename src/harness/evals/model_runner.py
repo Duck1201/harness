@@ -473,6 +473,7 @@ class ModelCaseRunner:
                     max_tool_calls_per_step=self._config.loop.max_tool_calls_per_step,
                     max_tool_calls_per_turn=self._config.loop.max_tool_calls_per_turn,
                     max_read_calls_per_turn=self._config.loop.max_read_calls_per_turn,
+                    max_malformed_model_attempts=(self._config.loop.max_malformed_model_attempts),
                     tool_effects=self._config.tool_registry.effects_by_tool,
                     max_turn_duration_seconds=self._config.loop.max_turn_duration_seconds,
                     runtime_readiness=self._runtime_readiness,

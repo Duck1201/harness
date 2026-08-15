@@ -416,6 +416,12 @@ if (profilesDocument && harness && registry && fixturesDocument && experimentsDo
     "limites do loop devem ser 15 steps/4 calls por step/20 por turn/15 min/8192 output",
   );
   check(
+    harness.loop?.model_generation_timeout_seconds > 0 &&
+      harness.loop?.model_generation_timeout_seconds <= harness.loop?.max_turn_duration_seconds &&
+      harness.loop?.max_malformed_model_attempts >= 1,
+    "timeout de geração deve caber no orçamento do Turn e o limite de malformadas ser positivo",
+  );
+  check(
     harness.loop?.stream_tool_calls === false &&
       harness.loop?.parallel_tool_execution === false &&
       harness.loop?.execute_calls_in_emission_order === true &&

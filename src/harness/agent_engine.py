@@ -37,6 +37,7 @@ from .ports import (
     EngineReadiness,
     EventSink,
     MalformedModelResponseError,
+    ModelGenerationTimeout,
     ModelRequest,
     ModelResponse,
     ModelRuntime,
@@ -68,6 +69,7 @@ class AgentEngine:
         max_tool_calls_per_step: int = 4,
         max_tool_calls_per_turn: int = 20,
         max_read_calls_per_turn: int = 40,
+        max_malformed_model_attempts: int = 2,
         tool_effects: Mapping[str, Sequence[str]] | None = None,
         max_turn_duration_seconds: float = 900,
         runtime_readiness: EngineReadiness | None = None,
@@ -81,6 +83,8 @@ class AgentEngine:
             raise ValueError("tool call limits must be positive")
         if max_read_calls_per_turn < 1:
             raise ValueError("tool call limits must be positive")
+        if max_malformed_model_attempts < 1:
+            raise ValueError("max_malformed_model_attempts must be positive")
         if max_turn_duration_seconds <= 0:
             raise ValueError("max_turn_duration_seconds must be positive")
         if seed is not None and (seed < 0 or seed + max_model_invocations - 1 > 2**63 - 1):
@@ -103,6 +107,7 @@ class AgentEngine:
         self._max_tool_calls_per_step = max_tool_calls_per_step
         self._max_tool_calls_per_turn = max_tool_calls_per_turn
         self._max_read_calls_per_turn = max_read_calls_per_turn
+        self._max_malformed_model_attempts = max_malformed_model_attempts
         self._tool_effects = dict(tool_effects or {})
         self._max_turn_duration_seconds = max_turn_duration_seconds
         self._runtime_readiness = runtime_readiness or EngineReadiness(ready=True)
@@ -182,6 +187,17 @@ class AgentEngine:
                 TerminalOutcomeKind.FAILED,
                 "malformed_model_response",
                 detail=str(error),
+            )
+        except ModelGenerationTimeout as error:
+            # Antes da cláusula abaixo de propósito: é subclasse dela, e quem
+            # cortou a geração foi o harness. Chamar isso de provedor
+            # indisponível mandava o Operator reiniciar um Ollama que estava no
+            # ar e ainda gerando.
+            return await self._finish(
+                turn,
+                TerminalOutcomeKind.FAILED,
+                "model_generation_timeout",
+                detail=_provider_detail(error),
             )
         except ModelRuntimeError as error:
             # The provider refused or was unreachable. That is not the harness
@@ -277,7 +293,7 @@ class AgentEngine:
                 )
                 await self._store.append_agent_step(turn.id, seed=step_seed)
                 await self._emit_step_finished(turn, step_sequence)
-                if rejected_count >= 2:
+                if rejected_count >= self._max_malformed_model_attempts:
                     return await self._finish(
                         turn,
                         TerminalOutcomeKind.FAILED,
@@ -309,7 +325,7 @@ class AgentEngine:
                     turn.id, seed=step_seed, tool_calls=response.tool_calls
                 )
                 await self._emit_step_finished(turn, step_sequence)
-                if rejected_count >= 2:
+                if rejected_count >= self._max_malformed_model_attempts:
                     return await self._finish(
                         turn,
                         TerminalOutcomeKind.FAILED,
@@ -439,7 +455,7 @@ class AgentEngine:
                 await self._emit_step_finished(turn, step_sequence)
                 if reason_code in _MODEL_FIXABLE_PREFLIGHT_REASONS:
                     rejected_count += 1
-                    if rejected_count >= 2:
+                    if rejected_count >= self._max_malformed_model_attempts:
                         return await self._finish(
                             turn,
                             TerminalOutcomeKind.FAILED,

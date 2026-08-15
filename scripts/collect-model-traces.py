@@ -186,6 +186,7 @@ async def collect(seeds: Sequence[int], output: Path, tokenizer: Path) -> int:
         base_url="http://127.0.0.1:11434",
         model=config.runtime_profile.model.id,
         expected_digest=config.runtime_profile.profile_digest_sha256,
+        timeout=config.loop.model_generation_timeout_seconds,
     )
     verification = await runtime.verify_profile()
     if not verification.ready:

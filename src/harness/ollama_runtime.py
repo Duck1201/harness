@@ -9,6 +9,7 @@ from .domain import JsonValue, ToolCall
 from .ports import (
     MalformedModelResponseError,
     ModelDurations,
+    ModelGenerationTimeout,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -278,6 +279,14 @@ async def _request(
 ) -> httpx.Response:
     try:
         response = await client.request(method, url, json=json)
+    except httpx.TimeoutException as error:
+        # Quem desligou foi este cliente, com o Ollama ainda gerando do outro
+        # lado. Tratar isso como transporte quebrado fazia o engine dizer que o
+        # provedor estava fora do ar justamente quando ele estava trabalhando.
+        raise ModelGenerationTimeout(
+            str(error),
+            error={"code": "ollama_generation_timeout", "message": str(error)},
+        ) from error
     except httpx.HTTPError as error:
         payload: Mapping[str, JsonValue] = {
             "code": "ollama_transport_error",

@@ -147,6 +147,16 @@ class ModelRuntimeError(Exception):
         self.status_code = status_code
 
 
+class ModelGenerationTimeout(ModelRuntimeError):
+    """O harness desligou a geração; o provedor não caiu.
+
+    São eventos opostos e o reason code não pode ser o mesmo: em
+    `model_provider_unavailable` o Operator vai checar o Ollama, que está no ar e
+    ainda gerando quando o corte acontece. O que ele precisa saber é que o pedido
+    é longo demais para o teto configurado.
+    """
+
+
 class MalformedModelResponseError(ModelRuntimeError):
     def __init__(
         self,

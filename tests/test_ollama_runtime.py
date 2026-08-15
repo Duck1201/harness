@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from harness import (
+    ModelGenerationTimeout,
     ModelMessage,
     ModelRequest,
     ModelRole,
@@ -168,6 +169,40 @@ def test_a_gateway_answering_in_html_is_still_a_provider_failure() -> None:
             "message": "Bad Gateway",
             "status_code": 502,
         }
+
+    asyncio.run(scenario())
+
+
+def test_a_client_timeout_is_the_harness_cutting_the_generation() -> None:
+    async def scenario() -> None:
+        # httpx.TimeoutException é subclasse de HTTPError: sem a cláusula
+        # dedicada vindo antes, o corte do próprio cliente sairia como
+        # ollama_transport_error retryable e o engine anunciaria provedor fora do
+        # ar enquanto o Ollama ainda gerava.
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ReadTimeout("timed out", request=request)
+
+        runtime = OllamaRuntime(
+            base_url="http://ollama.test",
+            model="mitos:latest",
+            expected_digest="abc123",
+            transport=httpx.MockTransport(handler),
+        )
+
+        with pytest.raises(ModelGenerationTimeout) as captured:
+            await runtime.generate(
+                ModelRequest(
+                    messages=(ModelMessage(ModelRole.USER, "escreva bastante"),),
+                    tools=(),
+                    options={},
+                    seed=1,
+                )
+            )
+        await runtime.aclose()
+
+        assert captured.value.retryable is False
+        assert captured.value.error is not None
+        assert captured.value.error["code"] == "ollama_generation_timeout"
 
     asyncio.run(scenario())
 

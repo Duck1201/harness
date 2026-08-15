@@ -82,9 +82,7 @@ def test_context_deduplicates_only_result_data_and_preserves_provenance() -> Non
         ),
     )
 
-    context = ContextBuilder(
-        FakeEstimator(), context_window=32768, model_view_format="xml"
-    ).build(
+    context = ContextBuilder(FakeEstimator(), context_window=32768, model_view_format="xml").build(
         system="system",
         tool_schemas=(ToolSchema("read_file", "read", {"type": "object"}),),
         completed_turns=(previous,),
@@ -208,9 +206,7 @@ def test_tool_result_xml_escapes_markup_and_stays_compact() -> None:
         ),
     )
 
-    context = ContextBuilder(
-        FakeEstimator(), context_window=32768, model_view_format="xml"
-    ).build(
+    context = ContextBuilder(FakeEstimator(), context_window=32768, model_view_format="xml").build(
         system="system",
         tool_schemas=(),
         completed_turns=(),
@@ -296,9 +292,7 @@ def test_every_rendered_envelope_root_is_declared() -> None:
         ),
     )
 
-    context = ContextBuilder(
-        FakeEstimator(), context_window=32768, model_view_format="xml"
-    ).build(
+    context = ContextBuilder(FakeEstimator(), context_window=32768, model_view_format="xml").build(
         system="system",
         tool_schemas=(),
         completed_turns=(),

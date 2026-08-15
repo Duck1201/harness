@@ -915,6 +915,7 @@ def _default_service(
         base_url=(host_config.ollama_url if host_config is not None else DEFAULT_OLLAMA_URL),
         model=config.runtime_profile.model.id,
         expected_digest=config.runtime_profile.profile_digest_sha256,
+        timeout=config.loop.model_generation_timeout_seconds,
     )
     estimator = HuggingFaceTokenEstimator(
         tokenizer_path,

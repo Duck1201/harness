@@ -1146,6 +1146,8 @@ const OUTCOME_HINTS: Record<string, string> = {
   model_provider_unavailable:
     "O Ollama não respondeu. Verifique se o serviço está no ar e reenvie o pedido.",
   model_provider_error: "O Ollama recusou a chamada. O detalhe abaixo traz a resposta dele.",
+  model_generation_timeout:
+    "A geração passou do tempo máximo e o harness a encerrou. O Ollama está no ar; o pedido é que é longo demais.",
   malformed_model_response: "A resposta do modelo não pôde ser lida e o turno parou aqui.",
   engine_error: "Falha interna do harness, não do modelo. O detalhe abaixo identifica onde.",
   model_not_installed: "O modelo do perfil ativo não está instalado no Ollama.",
