@@ -731,7 +731,7 @@ def test_registry_preflight_of_full_batch_prevents_earlier_write(tmp_path: Path)
             ToolCall(
                 id="invalid-read",
                 name="read_file",
-                arguments={"file_path": "other.txt", "limit": 0},
+                arguments={"file_path": "other.txt", "max_lines": 0},
             ),
         )
         runtime = FakeRuntime(
@@ -787,7 +787,7 @@ def test_a_second_invalid_batch_ends_the_turn(tmp_path: Path) -> None:
                 ToolCall(
                     id="invalid-read",
                     name="read_file",
-                    arguments={"file_path": "a.txt", "limit": 0},
+                    arguments={"file_path": "a.txt", "max_lines": 0},
                 ),
             )
         )
@@ -1297,6 +1297,49 @@ def test_a_tool_call_serialized_as_markup_is_rejected_instead_of_answered(
             if item.kind is CanonicalHistoryEntryKind.FINAL_RESPONSE
         ]
         assert finals == ["Encontrei a documentação oficial."]
+
+    asyncio.run(scenario())
+
+
+def test_the_model_view_envelope_echoed_back_is_rejected_instead_of_answered(
+    tmp_path: Path,
+) -> None:
+    """Observado num turno de web_fetch: o modelo devolveu o envelope do harness.
+
+    A ModelView descreve cada tentativa anterior em `<model_attempt>`, então o
+    modelo lê esse formato a cada passo e às vezes o emite de volta. Aceito, ele
+    é persistido como resposta e chega ao Operator como XML cru no lugar da
+    resposta.
+    """
+
+    async def scenario() -> None:
+        store, conversation_id = await conversation_store(tmp_path)
+        leaked = (
+            "<model_attempt><content><null/></content><tool_calls><item><arguments>"
+            "<max_chars>2000</max_chars><url>https://pt.wikipedia.org/wiki/Dom_Casmurro</url>"
+            "</arguments><name>web_fetch</name></item></tool_calls></model_attempt>"
+        )
+        runtime = FakeRuntime(
+            [
+                ModelResponse(content=leaked),
+                ModelResponse(content="Dom Casmurro é de Machado de Assis, de 1900."),
+            ]
+        )
+
+        finished = await engine(store, runtime, FakeToolExecutor(), FakeEventSink()).run(
+            conversation_id, "quem escreveu Dom Casmurro"
+        )
+
+        assert finished.terminal_outcome is not None
+        assert finished.terminal_outcome.kind is TerminalOutcomeKind.COMPLETED
+        history = await store.list_canonical_history(conversation_id)
+        assert CanonicalHistoryEntryKind.REJECTED_MODEL_ATTEMPT in [item.kind for item in history]
+        finals = [
+            item.payload["content"]
+            for item in history
+            if item.kind is CanonicalHistoryEntryKind.FINAL_RESPONSE
+        ]
+        assert finals == ["Dom Casmurro é de Machado de Assis, de 1900."]
 
     asyncio.run(scenario())
 

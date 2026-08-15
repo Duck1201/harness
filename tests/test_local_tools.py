@@ -80,7 +80,7 @@ def test_read_file_returns_exact_line_page_and_content_digest(tmp_path: Path) ->
         call = ToolCall(
             id="read",
             name="read_file",
-            arguments={"file_path": "notes.txt", "offset": 1, "limit": 1},
+            arguments={"file_path": "notes.txt", "offset": 1, "max_lines": 1},
         )
 
         assert (await executor.preflight((call,))).allowed is True
@@ -118,7 +118,7 @@ def test_read_file_byte_limit_keeps_next_line_addressable(tmp_path: Path) -> Non
             ToolCall(
                 id="limited-read",
                 name="read_file",
-                arguments={"file_path": "limited.txt", "limit": 3},
+                arguments={"file_path": "limited.txt", "max_lines": 3},
             )
         )
 
@@ -764,7 +764,7 @@ def test_preflight_validates_full_batch_schema_catalog_and_effect_grants(
         invalid_later_call = ToolCall(
             id="invalid-read",
             name="read_file",
-            arguments={"file_path": "anything.txt", "limit": 0, "extra": True},
+            arguments={"file_path": "anything.txt", "max_lines": 0, "extra": True},
         )
         batch = await executor.preflight((valid_write, invalid_later_call))
 

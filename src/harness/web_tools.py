@@ -455,7 +455,7 @@ class WebToolExecutor:
 
     async def _web_fetch(self, call: ToolCall) -> ToolResult:
         url = cast(str, call.arguments["url"])
-        limit = cast(int, call.arguments.get("limit", 12000))
+        limit = cast(int, call.arguments.get("max_chars", 12000))
         cached = self._fetch_cache.get(url)
         if cached is not None:
             return _fetch_result(call, cached, limit=limit, cache_hit=True)

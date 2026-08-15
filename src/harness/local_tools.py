@@ -266,7 +266,7 @@ class RegistryToolExecutor:
             )
 
         offset = cast(int, call.arguments.get("offset", 0))
-        limit = cast(int, call.arguments.get("limit", 500))
+        limit = cast(int, call.arguments.get("max_lines", 500))
         lines = content_bytes.splitlines(keepends=True)
         selected = lines[offset : offset + limit]
         page_parts: list[bytes] = []

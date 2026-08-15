@@ -566,7 +566,7 @@ def test_telemetry_records_context_usage_and_truncation_without_any_content(
                         ToolCall(
                             id="call-1",
                             name="read_file",
-                            arguments={"file_path": "notes.txt", "limit": 1},
+                            arguments={"file_path": "notes.txt", "max_lines": 1},
                         ),
                     )
                 )

@@ -6,6 +6,7 @@ from contextlib import suppress
 from typing import cast
 
 from .context_builder import (
+    MODEL_VIEW_ROOTS,
     ContextBudgetExceeded,
     ContextBuilder,
     ContextTurn,
@@ -946,6 +947,12 @@ _MODEL_FIXABLE_PREFLIGHT_REASONS = frozenset(
 
 # The runtime also emits tool calls as markup, not only as JSON. A leaked payload
 # starts or ends on one of these tags.
+#
+# The ModelView's own envelope belongs here too. The model reads that markup in
+# every step and does echo it back: asked to fetch a page it once answered with
+# `<model_attempt><content><null/></content><tool_calls>…`, which is the harness
+# describing an attempt, not the model answering. Persisted as a final response,
+# that markup reaches the Operator as the answer.
 _TOOL_CALL_TAGS = (
     "<tool_call>",
     "</tool_call>",
@@ -953,6 +960,8 @@ _TOOL_CALL_TAGS = (
     "</function>",
     "<parameter=",
     "</parameter>",
+    *(f"<{root}>" for root in MODEL_VIEW_ROOTS),
+    *(f"</{root}>" for root in MODEL_VIEW_ROOTS),
 )
 
 # Reasoning is transient by contract and never enters CanonicalHistory. A marker

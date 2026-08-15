@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 import pytest
 
 from harness import (
+    MODEL_VIEW_ROOTS,
     CanonicalHistoryEntry,
     CanonicalHistoryEntryKind,
     ContextBudgetExceeded,
@@ -198,3 +199,58 @@ def test_context_raises_when_current_turn_cannot_fit() -> None:
             completed_turns=(),
             current_turn=current,
         )
+
+
+def test_every_rendered_envelope_root_is_declared() -> None:
+    """`MODEL_VIEW_ROOTS` tem de cobrir o que o builder realmente emite.
+
+    O detector de envelope vazado em `agent_engine` monta as tags a partir dessa
+    tupla. Se o builder passar a envelopar uma entrada numa raiz nova e ninguém
+    declarar, o modelo pode devolver essa raiz como resposta final e ela chega ao
+    Operator como se fosse a resposta.
+    """
+    turn_id = "current"
+    payloads: list[tuple[CanonicalHistoryEntryKind, Mapping[str, JsonValue]]] = [
+        (CanonicalHistoryEntryKind.USER_MESSAGE, {"content": "pergunta"}),
+        (
+            CanonicalHistoryEntryKind.MODEL_ATTEMPT,
+            {"content": None, "tool_calls": []},
+        ),
+        (
+            CanonicalHistoryEntryKind.REJECTED_MODEL_ATTEMPT,
+            {"reason_code": "malformed_model_response"},
+        ),
+        (
+            CanonicalHistoryEntryKind.TOOL_RESULT,
+            {
+                "tool_call_id": "call-1",
+                "status": "success",
+                "retryable": False,
+                "data": {"content": "resultado"},
+                "error": None,
+                "meta": {"producer": "local_filesystem", "taints": []},
+            },
+        ),
+        (CanonicalHistoryEntryKind.FINAL_RESPONSE, {"content": "resposta"}),
+    ]
+    current = ContextTurn(
+        turn_id=turn_id,
+        entries=tuple(
+            entry(index, turn_id, kind, payload)
+            for index, (kind, payload) in enumerate(payloads, start=1)
+        ),
+    )
+
+    context = ContextBuilder(FakeEstimator(), context_window=32768).build(
+        system="system",
+        tool_schemas=(),
+        completed_turns=(),
+        current_turn=current,
+    )
+
+    declared = {f"<{root}>" for root in MODEL_VIEW_ROOTS}
+    envelopes = [message.content for message in context.messages if message.content.startswith("<")]
+    # Há envelope para achar, e todo envelope achado está declarado.
+    assert envelopes
+    for content in envelopes:
+        assert any(content.startswith(tag) for tag in declared), content[:80]

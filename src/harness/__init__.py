@@ -25,6 +25,7 @@ from .config import (
     load_config,
 )
 from .context_builder import (
+    MODEL_VIEW_ROOTS,
     ContextBudgetExceeded,
     ContextBuilder,
     ContextTurn,
@@ -169,6 +170,7 @@ from .workspace_coordinator import WorkspaceCoordinator
 
 __all__ = [
     "ACCEPTED_EXTENSIONS",
+    "MODEL_VIEW_ROOTS",
     "ActiveTurnExistsError",
     "AgentEngine",
     "AgentEvent",

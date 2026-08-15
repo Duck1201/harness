@@ -279,7 +279,7 @@ def test_web_fetch_extracts_html_once_and_discards_raw_markup() -> None:
         call = ToolCall(
             id="fetch",
             name="web_fetch",
-            arguments={"url": "https://example.com/article", "limit": 12000},
+            arguments={"url": "https://example.com/article", "max_chars": 12000},
         )
 
         result = await executor.execute(call)
@@ -488,7 +488,7 @@ def test_web_fetch_enforces_redirect_content_type_and_character_limits() -> None
             ToolCall(
                 id="character-limit",
                 name="web_fetch",
-                arguments={"url": "https://example.com/long", "limit": 100},
+                arguments={"url": "https://example.com/long", "max_chars": 100},
             )
         )
         assert limited.status.value == "success"

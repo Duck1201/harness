@@ -16,6 +16,14 @@ from .ports import EngineReadiness, ModelMessage, ModelRole, TokenEstimator, Too
 
 _XML_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
 
+# Os elementos que envelopam uma entrada da ModelView. Ficam declarados aqui, e
+# não repetidos em quem precisa deles, porque o modelo aprende esse formato lendo
+# o próprio contexto e às vezes devolve o envelope como se fosse resposta: quem
+# detecta isso tem de conhecer exatamente as raízes que este módulo emite, e uma
+# segunda lista envelheceria calada. `tests/test_context_builder.py` falha se o
+# builder passar a emitir uma raiz que não esteja aqui.
+MODEL_VIEW_ROOTS = ("model_attempt", "rejected_model_attempt", "tool_result")
+
 type ModelViewFormat = Literal["xml", "json"]
 type PayloadRenderer = Callable[[str, JsonValue], str]
 

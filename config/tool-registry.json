@@ -55,12 +55,12 @@
             "default": 0,
             "description": "First line to return, zero-based."
           },
-          "limit": {
+          "max_lines": {
             "type": "integer",
             "minimum": 1,
             "maximum": 2000,
             "default": 500,
-            "description": "Maximum number of lines to return."
+            "description": "Maximum number of lines to return. Lines, not items and not characters: limit means a count of items everywhere it appears, and this argument is named apart because it does not measure one."
           }
         },
         "required": ["file_path"]
@@ -303,12 +303,12 @@
             "maxLength": 4096,
             "description": "Public HTTP or HTTPS URL. Private, local, reserved and disallowed redirect targets are rejected."
           },
-          "limit": {
+          "max_chars": {
             "type": "integer",
             "minimum": 100,
             "maximum": 50000,
             "default": 12000,
-            "description": "Maximum number of extracted characters to return. The cut is made from the top of the page, and a page usually opens with navigation, notices and an infobox before any prose, so lowering this drops the article and keeps the noise. Leave it at the default unless the page is known to be short."
+            "description": "Maximum number of extracted characters to return. Characters, not results: a number that suits web_search means nothing here. The cut is made from the top of the page, and a page usually opens with navigation, notices and an infobox before any prose, so lowering this drops the article and keeps the noise. Leave it at the default unless the page is known to be short."
           }
         },
         "required": ["url"]
