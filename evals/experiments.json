@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "manifest_version": "2.0.0",
-  "manifest_digest_sha256": "3d59c370d6a026a09f11f70decbbe153fa9987c707e995544329ee0dca67e216",
+  "manifest_digest_sha256": "7223a20655b325b5733e9e14eaf9a6dcf55324c2497b7715243150dd8bd4ffad",
   "digest_contract": {
     "algorithm": "sha256",
     "canonicalization": "sorted_keys_compact_utf8",
@@ -42,7 +42,8 @@
       "dataset_digest",
       "harness_digest",
       "tool_registry_digest",
-      "operator_prompt_digest"
+      "operator_prompt_digest",
+      "model_view_format"
     ]
   },
   "common_metrics": [
@@ -70,13 +71,209 @@
   ],
   "results": [
     {
+      "experiment_id": "model_smoke",
+      "recorded_on": "2026-08-15",
+      "phase": "promotion",
+      "tier": "model_smoke",
+      "status": "completed",
+      "runner": "scripts/run-experiment.py --tier model_smoke --phase promotion",
+      "seeds": [
+        104729,
+        130363,
+        155921
+      ],
+      "frozen": {
+        "runtime_profile_id": "local_mitos_ollama_reproduction",
+        "runtime_profile_digest": "a726cef53a75e7def1272308967d836c4c61092760feea3782a6007882ba5a74",
+        "execution_route_id": "local_web_tools",
+        "dataset_version": "3.0.0",
+        "dataset_digest": "b1e6e9a3b5b534a3b2e008857d3d49af9beca513fd93eafbf83fe228e32290ff",
+        "harness_digest": "bc1176e45e2ad018955c0d22806616d1639feef092d34b07ea003e69f04adabe",
+        "tool_registry_digest": "e1dbee48ce312924de041d3de7da7d3dd4b9f3e38be961df16618c5bbb53ff7c",
+        "operator_prompt_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "model_view_format": "json"
+      },
+      "arms": [
+        {
+          "arm_id": "model_smoke",
+          "case_count": 234,
+          "verdict_counts": {
+            "pass": 209,
+            "fail": 23,
+            "inconclusive": 2,
+            "not_evaluated": 0
+          },
+          "wilson_95": {
+            "estimate": 0.8931623931623932,
+            "lower": 0.8465608465608465,
+            "upper": 0.9259259259259259
+          }
+        }
+      ],
+      "security_violations": 0,
+      "promotion_gates": null,
+      "verdict": "measured_nine_readings_per_fixture",
+      "fixture_pass_rate": {
+        "calculate_answers_without_a_grant_and_evaluates_nothing_else": "9/9",
+        "context_deduplicates_without_deleting_history": "9/9",
+        "corpus_answer_admits_the_acervo_does_not_say": "0/9",
+        "corpus_answer_carries_the_code_the_acervo_holds": "9/9",
+        "corpus_answers_empty_when_nothing_clears_the_floor": "9/9",
+        "corpus_passage_from_the_web_keeps_its_taint": "9/9",
+        "corpus_passages_reach_the_model_before_the_first_step": "9/9",
+        "corpus_search_without_the_grant_is_blocked": "9/9",
+        "edit_preserves_whitespace_round_trip": "0/9",
+        "eval_bench_exception_is_not_available_in_production": "9/9",
+        "final_step_has_no_tools": "9/9",
+        "get_weather_requires_web_access_grant": "9/9",
+        "glob_for_paths_not_grep": "9/9",
+        "grep_for_content_not_glob": "8/9",
+        "mechanical_repeat_guard": "9/9",
+        "no_tool_for_explanation": "9/9",
+        "reject_absolute_file_path": "9/9",
+        "reject_parent_traversal_and_symlink_escape": "9/9",
+        "tool_write_required_relative_path": "8/9",
+        "unknown_shell_lists_real_registry": "9/9",
+        "unknown_shell_recovers_with_glob": "9/9",
+        "vision_is_not_silently_available": "4/9",
+        "web_access_requires_grant_and_taint": "9/9",
+        "web_fetch_for_known_url": "9/9",
+        "web_http_first_browser_by_symptom": "9/9",
+        "web_search_for_discovery": "9/9"
+      },
+      "environment": {
+        "browser": "Brave Browser 151.1.93.136",
+        "ollama": "0.32.5",
+        "model": "mitos:latest",
+        "embedder": "bge-m3:latest"
+      },
+      "compared_with": "a promoção model_smoke do mesmo dia, executada antes de ADR-0010 ser revertida",
+      "notes": [
+        "Primeira execução com o JSON de volta como formato do harness. 209/234 contra 200/234 com XML, e inconclusivo cai de 14 para 2.",
+        "A escrita é onde a diferença aparece: tool_write_required_relative_path 8/9 contra 1/9, com um único caso perdido em malformed_model_response_limit. O que parecia limite do modelo era, em boa parte, o formato que ele tinha de ler.",
+        "web_search_for_discovery 9/9 contra 5/9: sem os quatro casos que terminavam em web_taint_confirmation_required por o modelo pedir um segundo egress.",
+        "edit_preserves_whitespace_round_trip continua 0/9. Esse não é formato: é gerar a chamada com tabulação e sha256 dentro do orçamento de duas chamadas.",
+        "Executor, gate, taint e path seguem 9/9, com zero violação de segurança."
+      ]
+    },
+    {
+      "experiment_id": "corpus_retrieval_vs_baseline",
+      "recorded_on": "2026-08-15",
+      "phase": "promotion",
+      "tier": "experiment",
+      "status": "completed",
+      "runner": "scripts/run-experiment.py",
+      "seeds": [
+        104729,
+        130363,
+        155921
+      ],
+      "frozen": {
+        "runtime_profile_id": "local_mitos_ollama_reproduction",
+        "runtime_profile_digest": "a726cef53a75e7def1272308967d836c4c61092760feea3782a6007882ba5a74",
+        "execution_route_id": "local_web_tools",
+        "dataset_version": "3.0.0",
+        "dataset_digest": "b1e6e9a3b5b534a3b2e008857d3d49af9beca513fd93eafbf83fe228e32290ff",
+        "harness_digest": "bc1176e45e2ad018955c0d22806616d1639feef092d34b07ea003e69f04adabe",
+        "tool_registry_digest": "e1dbee48ce312924de041d3de7da7d3dd4b9f3e38be961df16618c5bbb53ff7c",
+        "operator_prompt_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "model_view_format": "json"
+      },
+      "arms": [
+        {
+          "arm_id": "no_corpus",
+          "case_count": 50,
+          "verdict_counts": {
+            "fail": 23,
+            "inconclusive": 27,
+            "not_evaluated": 0,
+            "pass": 0
+          },
+          "wilson_95": {
+            "estimate": 0.0,
+            "lower": 0.0,
+            "upper": 0.07084794778368729
+          },
+          "by_fixture": {
+            "corpus_answer_carries_the_code_the_acervo_holds": {
+              "pass": 0,
+              "fail": 13,
+              "inconclusive": 11
+            },
+            "corpus_answer_admits_the_acervo_does_not_say": {
+              "pass": 0,
+              "fail": 10,
+              "inconclusive": 16
+            }
+          }
+        },
+        {
+          "arm_id": "corpus_granted",
+          "case_count": 50,
+          "verdict_counts": {
+            "fail": 22,
+            "inconclusive": 4,
+            "not_evaluated": 0,
+            "pass": 24
+          },
+          "wilson_95": {
+            "estimate": 0.48,
+            "lower": 0.3494630442509897,
+            "upper": 0.6135085285780562
+          },
+          "by_fixture": {
+            "corpus_answer_carries_the_code_the_acervo_holds": {
+              "pass": 24,
+              "fail": 0,
+              "inconclusive": 0
+            },
+            "corpus_answer_admits_the_acervo_does_not_say": {
+              "pass": 0,
+              "fail": 22,
+              "inconclusive": 4
+            }
+          }
+        }
+      ],
+      "security_violations": 0,
+      "promotion_gates": [
+        {
+          "arm_id": "corpus_granted",
+          "non_inferiority_margin": -0.05,
+          "promoted": false,
+          "reason_code": "inconclusive_above_ceiling",
+          "inconclusive_pairs": 27,
+          "inconclusive_pair_rate": 0.54
+        }
+      ],
+      "gate": "The granted arm answers more questions correctly with a citation and does not invent more than the baseline when the acervo has nothing; zero taint or grant violations.",
+      "verdict": "not_promoted",
+      "environment": {
+        "ollama": "0.32.5",
+        "model": "mitos:latest",
+        "embedder": "bge-m3:latest"
+      },
+      "compared_with": "a promoção do corpus do mesmo dia, executada antes de ADR-0010 ser revertida",
+      "notes": [
+        "Reexecução sob o JSON, porque a reversão de ADR-0010 mudou o sistema que a medição anterior descrevia.",
+        "Fundamentar continua separando por completo: 24/24 com acervo, 0/24 sem, igual à execução com XML.",
+        "O gate segue sem decidir, e pelo mesmo motivo: 27 dos 50 pares saem por inconclusivo, 54%, e 27 deles são do baseline, que trava sem ter o que responder. O braço com acervo perdeu 4.",
+        "Admitir ignorância piorou: 0/26 contra 4/26 com XML. São números pequenos e o caso é o mesmo — sem passagem acima do piso, o modelo responde da própria memória.",
+        "Zero violação de segurança nos dois braços."
+      ]
+    },
+    {
       "experiment_id": "model_view_serialization",
       "recorded_on": "2026-08-15",
       "phase": "promotion",
       "tier": "experiment",
       "status": "completed",
       "runner": "scripts/run-experiment.py",
-      "seeds": [104729, 130363, 155921],
+      "seeds": [
+        104729,
+        130363,
+        155921
+      ],
       "frozen": {
         "runtime_profile_id": "local_mitos_ollama_reproduction",
         "runtime_profile_digest": "a726cef53a75e7def1272308967d836c4c61092760feea3782a6007882ba5a74",
@@ -91,7 +288,12 @@
         {
           "arm_id": "json_control",
           "case_count": 50,
-          "verdict_counts": {"fail": 9, "inconclusive": 0, "not_evaluated": 0, "pass": 41},
+          "verdict_counts": {
+            "fail": 9,
+            "inconclusive": 0,
+            "not_evaluated": 0,
+            "pass": 41
+          },
           "wilson_95": {
             "estimate": 0.82,
             "lower": 0.6920868876139751,
@@ -101,7 +303,12 @@
         {
           "arm_id": "xml_candidate",
           "case_count": 50,
-          "verdict_counts": {"fail": 11, "inconclusive": 3, "not_evaluated": 0, "pass": 36},
+          "verdict_counts": {
+            "fail": 11,
+            "inconclusive": 3,
+            "not_evaluated": 0,
+            "pass": 36
+          },
           "wilson_95": {
             "estimate": 0.72,
             "lower": 0.5827389651258532,
@@ -118,7 +325,11 @@
           "reason_code": "non_inferiority_failed",
           "inconclusive_pairs": 3,
           "inconclusive_pair_rate": 0.06,
-          "difference": {"estimate": -0.064, "lower": -0.149, "upper": 0.021},
+          "difference": {
+            "estimate": -0.064,
+            "lower": -0.149,
+            "upper": 0.021
+          },
           "control": 0.83,
           "candidate": 0.766,
           "evaluated_under": "regra de inconclusivo revisada em 15/08/2026; a execução reportou inconclusive_cases sob a regra anterior, e o gate foi recalculado sobre os mesmos verdicts gravados"
@@ -233,7 +444,11 @@
       "tier": "experiment",
       "status": "completed",
       "runner": "scripts/run-experiment.py",
-      "seeds": [104729, 130363, 155921],
+      "seeds": [
+        104729,
+        130363,
+        155921
+      ],
       "frozen": {
         "runtime_profile_id": "local_mitos_ollama_reproduction",
         "runtime_profile_digest": "a726cef53a75e7def1272308967d836c4c61092760feea3782a6007882ba5a74",
@@ -248,14 +463,32 @@
         {
           "arm_id": "http_readable",
           "case_count": 50,
-          "verdict_counts": {"pass": 50, "fail": 0, "inconclusive": 0, "not_evaluated": 0},
-          "wilson_95": {"estimate": 1.0, "lower": 0.9286524008666414, "upper": 1.0}
+          "verdict_counts": {
+            "pass": 50,
+            "fail": 0,
+            "inconclusive": 0,
+            "not_evaluated": 0
+          },
+          "wilson_95": {
+            "estimate": 1.0,
+            "lower": 0.9286524008666414,
+            "upper": 1.0
+          }
         },
         {
           "arm_id": "browser_required",
           "case_count": 50,
-          "verdict_counts": {"pass": 50, "fail": 0, "inconclusive": 0, "not_evaluated": 0},
-          "wilson_95": {"estimate": 1.0, "lower": 0.9286524008666414, "upper": 1.0}
+          "verdict_counts": {
+            "pass": 50,
+            "fail": 0,
+            "inconclusive": 0,
+            "not_evaluated": 0
+          },
+          "wilson_95": {
+            "estimate": 1.0,
+            "lower": 0.9286524008666414,
+            "upper": 1.0
+          }
         }
       ],
       "security_violations": 0,
@@ -287,7 +520,11 @@
       "tier": "experiment",
       "status": "completed",
       "runner": "scripts/run-experiment.py",
-      "seeds": [104729, 130363, 155921],
+      "seeds": [
+        104729,
+        130363,
+        155921
+      ],
       "frozen": {
         "runtime_profile_id": "local_mitos_ollama_reproduction",
         "runtime_profile_digest": "aabca1b8777bc4e0a6a491fb5ab7288bcc1537bad35c74ff041879fa11705bff",
@@ -301,14 +538,32 @@
         {
           "arm_id": "http_readable",
           "case_count": 50,
-          "verdict_counts": {"pass": 50, "fail": 0, "inconclusive": 0, "not_evaluated": 0},
-          "wilson_95": {"estimate": 1.0, "lower": 0.9286524008666414, "upper": 1.0}
+          "verdict_counts": {
+            "pass": 50,
+            "fail": 0,
+            "inconclusive": 0,
+            "not_evaluated": 0
+          },
+          "wilson_95": {
+            "estimate": 1.0,
+            "lower": 0.9286524008666414,
+            "upper": 1.0
+          }
         },
         {
           "arm_id": "browser_required",
           "case_count": 50,
-          "verdict_counts": {"pass": 50, "fail": 0, "inconclusive": 0, "not_evaluated": 0},
-          "wilson_95": {"estimate": 1.0, "lower": 0.9286524008666414, "upper": 1.0}
+          "verdict_counts": {
+            "pass": 50,
+            "fail": 0,
+            "inconclusive": 0,
+            "not_evaluated": 0
+          },
+          "wilson_95": {
+            "estimate": 1.0,
+            "lower": 0.9286524008666414,
+            "upper": 1.0
+          }
         }
       ],
       "security_violations": 0,
@@ -340,7 +595,11 @@
       "tier": "experiment",
       "status": "completed",
       "runner": "scripts/run-experiment.py",
-      "seeds": [104729, 130363, 155921],
+      "seeds": [
+        104729,
+        130363,
+        155921
+      ],
       "frozen": {
         "runtime_profile_id": "local_mitos_ollama_reproduction",
         "runtime_profile_digest": "a726cef53a75e7def1272308967d836c4c61092760feea3782a6007882ba5a74",
@@ -349,27 +608,62 @@
         "dataset_digest": "b1e6e9a3b5b534a3b2e008857d3d49af9beca513fd93eafbf83fe228e32290ff",
         "harness_digest": "bc1176e45e2ad018955c0d22806616d1639feef092d34b07ea003e69f04adabe",
         "tool_registry_digest": "e1dbee48ce312924de041d3de7da7d3dd4b9f3e38be961df16618c5bbb53ff7c",
-        "operator_prompt_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "operator_prompt_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "model_view_format": "xml"
       },
       "arms": [
         {
           "arm_id": "no_corpus",
           "case_count": 50,
-          "verdict_counts": {"fail": 25, "inconclusive": 25, "not_evaluated": 0, "pass": 0},
-          "wilson_95": {"estimate": 0.0, "lower": 0.0, "upper": 0.07084794778368729},
+          "verdict_counts": {
+            "fail": 25,
+            "inconclusive": 25,
+            "not_evaluated": 0,
+            "pass": 0
+          },
+          "wilson_95": {
+            "estimate": 0.0,
+            "lower": 0.0,
+            "upper": 0.07084794778368729
+          },
           "by_fixture": {
-            "corpus_answer_carries_the_code_the_acervo_holds": {"pass": 0, "fail": 20, "inconclusive": 4},
-            "corpus_answer_admits_the_acervo_does_not_say": {"pass": 0, "fail": 5, "inconclusive": 21}
+            "corpus_answer_carries_the_code_the_acervo_holds": {
+              "pass": 0,
+              "fail": 20,
+              "inconclusive": 4
+            },
+            "corpus_answer_admits_the_acervo_does_not_say": {
+              "pass": 0,
+              "fail": 5,
+              "inconclusive": 21
+            }
           }
         },
         {
           "arm_id": "corpus_granted",
           "case_count": 50,
-          "verdict_counts": {"fail": 15, "inconclusive": 7, "not_evaluated": 0, "pass": 28},
-          "wilson_95": {"estimate": 0.56, "lower": 0.4232525946292447, "upper": 0.6881311472278243},
+          "verdict_counts": {
+            "fail": 15,
+            "inconclusive": 7,
+            "not_evaluated": 0,
+            "pass": 28
+          },
+          "wilson_95": {
+            "estimate": 0.56,
+            "lower": 0.4232525946292447,
+            "upper": 0.6881311472278243
+          },
           "by_fixture": {
-            "corpus_answer_carries_the_code_the_acervo_holds": {"pass": 24, "fail": 0, "inconclusive": 0},
-            "corpus_answer_admits_the_acervo_does_not_say": {"pass": 4, "fail": 15, "inconclusive": 7}
+            "corpus_answer_carries_the_code_the_acervo_holds": {
+              "pass": 24,
+              "fail": 0,
+              "inconclusive": 0
+            },
+            "corpus_answer_admits_the_acervo_does_not_say": {
+              "pass": 4,
+              "fail": 15,
+              "inconclusive": 7
+            }
           }
         }
       ],
@@ -397,7 +691,8 @@
         "Fundamentar separa por completo: corpus_answer_carries_the_code_the_acervo_holds passa 24/24 com acervo e 0/24 sem. O código existe numa passagem e em lugar nenhum dos pesos.",
         "O gate não promoveu. Sob a regra revisada, 26 dos 50 pares saem por inconclusivo — 52%, acima do teto de 0.2 — e quem os perde é sobretudo o baseline, com 25 casos travados contra 7 do braço com acervo. A execução não decide a hipótese, e o motivo registrado é esse: não é o candidato perdendo, é o controle não chegando ao fim.",
         "Admitir ignorância continua sendo o lado fraco: 4 passam, 15 falham. Com o piso de 0.53 a automação injeta zero passagens nesse caso — medido — então o que sobra é o modelo respondendo de memória (`porta 25 (SMTP)`) ou buscando por conta e esticando a passagem do proxy. Não é material que o harness entregou.",
-        "Zero violação de segurança nos dois braços."
+        "Zero violação de segurança nos dois braços.",
+        "Execução anterior à reversão de ADR-0010: media o harness com ModelView em XML, que deixou de ser o formato em vigor no mesmo dia. A reexecução sob JSON está registrada acima."
       ]
     },
     {
@@ -407,7 +702,11 @@
       "tier": "experiment",
       "status": "completed",
       "runner": "scripts/run-experiment.py",
-      "seeds": [104729, 130363, 155921],
+      "seeds": [
+        104729,
+        130363,
+        155921
+      ],
       "frozen": {
         "runtime_profile_id": "local_mitos_ollama_reproduction",
         "runtime_profile_digest": "a726cef53a75e7def1272308967d836c4c61092760feea3782a6007882ba5a74",
@@ -422,8 +721,17 @@
         {
           "arm_id": "no_corpus",
           "case_count": 15,
-          "verdict_counts": {"fail": 7, "inconclusive": 8, "not_evaluated": 0, "pass": 0},
-          "wilson_95": {"estimate": 0.0, "lower": 0.0, "upper": 0.20388330103584862},
+          "verdict_counts": {
+            "fail": 7,
+            "inconclusive": 8,
+            "not_evaluated": 0,
+            "pass": 0
+          },
+          "wilson_95": {
+            "estimate": 0.0,
+            "lower": 0.0,
+            "upper": 0.20388330103584862
+          },
           "injected_passages_mean": 0.0,
           "steps_to_terminal_median": 6.0,
           "extra_tool_calls_median": 3.0,
@@ -440,7 +748,12 @@
         {
           "arm_id": "corpus_granted",
           "case_count": 15,
-          "verdict_counts": {"fail": 8, "inconclusive": 0, "not_evaluated": 0, "pass": 7},
+          "verdict_counts": {
+            "fail": 8,
+            "inconclusive": 0,
+            "not_evaluated": 0,
+            "pass": 7
+          },
           "wilson_95": {
             "estimate": 0.4666666666666667,
             "lower": 0.24809535365737387,
@@ -451,7 +764,9 @@
           "extra_tool_calls_median": 0.0,
           "rejected_model_attempts_sum": 0.0,
           "latency_ms_median": 2940,
-          "terminal_outcomes": {"final_response": 15}
+          "terminal_outcomes": {
+            "final_response": 15
+          }
         }
       ],
       "security_violations": 0,
@@ -479,7 +794,11 @@
       "tier": "model_smoke",
       "status": "completed",
       "runner": "scripts/run-experiment.py --tier model_smoke --phase promotion",
-      "seeds": [104729, 130363, 155921],
+      "seeds": [
+        104729,
+        130363,
+        155921
+      ],
       "frozen": {
         "runtime_profile_id": "local_mitos_ollama_reproduction",
         "runtime_profile_digest": "a726cef53a75e7def1272308967d836c4c61092760feea3782a6007882ba5a74",
@@ -488,13 +807,19 @@
         "dataset_digest": "b1e6e9a3b5b534a3b2e008857d3d49af9beca513fd93eafbf83fe228e32290ff",
         "harness_digest": "bc1176e45e2ad018955c0d22806616d1639feef092d34b07ea003e69f04adabe",
         "tool_registry_digest": "e1dbee48ce312924de041d3de7da7d3dd4b9f3e38be961df16618c5bbb53ff7c",
-        "operator_prompt_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        "operator_prompt_digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "model_view_format": "xml"
       },
       "arms": [
         {
           "arm_id": "model_smoke",
           "case_count": 234,
-          "verdict_counts": {"pass": 200, "fail": 20, "inconclusive": 14, "not_evaluated": 0},
+          "verdict_counts": {
+            "pass": 200,
+            "fail": 20,
+            "inconclusive": 14,
+            "not_evaluated": 0
+          },
           "wilson_95": {
             "estimate": 0.8547008547008547,
             "lower": 0.8043478260869565,
@@ -544,7 +869,8 @@
         "Escrita agora falha por outro motivo, e é motivo de modelo: edit_preserves_whitespace_round_trip 0/9 e tool_write_required_relative_path 1/9, quase tudo em malformed_model_response_limit. O que a bancada media antes não era isso.",
         "Executor, browser e egress continuam íntegros: toda fixture de gate, taint, path e repetição passa 9/9, com zero violação de segurança.",
         "web_search_for_discovery perde 4 de 9 em web_taint_confirmation_required: com a passagem da busca no contexto, o modelo pede outro egress e o gate encerra o Turn. É recusa correta diante de escolha errada do modelo.",
-        "corpus_answer_admits_the_acervo_does_not_say 1/9 é o mesmo lado fraco que a promoção do experimento de corpus mediu com 50 casos por braço."
+        "corpus_answer_admits_the_acervo_does_not_say 1/9 é o mesmo lado fraco que a promoção do experimento de corpus mediu com 50 casos por braço.",
+        "Execução anterior à reversão de ADR-0010: media o harness com ModelView em XML, que deixou de ser o formato em vigor no mesmo dia. A reexecução sob JSON está registrada acima."
       ]
     },
     {
@@ -554,7 +880,11 @@
       "tier": "model_smoke",
       "status": "completed",
       "runner": "scripts/run-experiment.py --tier model_smoke",
-      "seeds": [104729, 130363, 155921],
+      "seeds": [
+        104729,
+        130363,
+        155921
+      ],
       "frozen": {
         "runtime_profile_id": "local_mitos_ollama_reproduction",
         "runtime_profile_digest": "aabca1b8777bc4e0a6a491fb5ab7288bcc1537bad35c74ff041879fa11705bff",
@@ -568,7 +898,12 @@
         {
           "arm_id": "model_smoke",
           "case_count": 54,
-          "verdict_counts": {"pass": 35, "fail": 18, "inconclusive": 1, "not_evaluated": 0},
+          "verdict_counts": {
+            "pass": 35,
+            "fail": 18,
+            "inconclusive": 1,
+            "not_evaluated": 0
+          },
           "wilson_95": {
             "estimate": 0.6481481481481481,
             "lower": 0.5148483072023632,
@@ -580,8 +915,16 @@
       "promotion_gates": null,
       "verdict": "directional_only",
       "layer_split": {
-        "executor_browser_context_and_egress": {"cases": 27, "pass": 27},
-        "model": {"cases": 27, "pass": 8, "fail": 18, "inconclusive": 1}
+        "executor_browser_context_and_egress": {
+          "cases": 27,
+          "pass": 27
+        },
+        "model": {
+          "cases": 27,
+          "pass": 8,
+          "fail": 18,
+          "inconclusive": 1
+        }
       },
       "failing_fixtures": {
         "glob_for_paths_not_grep": "3 fail",
@@ -593,12 +936,35 @@
         "tool_write_required_relative_path": "1 fail, 1 inconclusive, 1 pass"
       },
       "metric_totals": {
-        "rejected_model_attempts": {"sum": 12, "max": 2, "cases": 27},
-        "extra_tool_calls": {"sum": 48, "max": 12, "cases": 27},
-        "steps_to_terminal": {"sum": 108, "max": 13, "cases": 27},
-        "tool_noop_rate": {"sum": 2.7, "max": 1.0, "cases": 27},
-        "latency_ms": {"sum": 429709.4, "max": 68212.3, "cases": 33},
-        "untrusted_web_taint_violations": {"sum": 0.0, "cases": 6}
+        "rejected_model_attempts": {
+          "sum": 12,
+          "max": 2,
+          "cases": 27
+        },
+        "extra_tool_calls": {
+          "sum": 48,
+          "max": 12,
+          "cases": 27
+        },
+        "steps_to_terminal": {
+          "sum": 108,
+          "max": 13,
+          "cases": 27
+        },
+        "tool_noop_rate": {
+          "sum": 2.7,
+          "max": 1.0,
+          "cases": 27
+        },
+        "latency_ms": {
+          "sum": 429709.4,
+          "max": 68212.3,
+          "cases": 33
+        },
+        "untrusted_web_taint_violations": {
+          "sum": 0.0,
+          "cases": 6
+        }
       },
       "environment": {
         "browser": "Brave Browser 151.1.93.134",
@@ -621,7 +987,11 @@
       "tier": "model_smoke",
       "status": "completed",
       "runner": "scripts/run-experiment.py --tier model_smoke",
-      "seeds": [104729, 130363, 155921],
+      "seeds": [
+        104729,
+        130363,
+        155921
+      ],
       "frozen": {
         "runtime_profile_id": "local_mitos_ollama_reproduction",
         "runtime_profile_digest": "aabca1b8777bc4e0a6a491fb5ab7288bcc1537bad35c74ff041879fa11705bff",
@@ -635,7 +1005,12 @@
         {
           "arm_id": "model_smoke",
           "case_count": 54,
-          "verdict_counts": {"pass": 45, "fail": 9, "inconclusive": 0, "not_evaluated": 0},
+          "verdict_counts": {
+            "pass": 45,
+            "fail": 9,
+            "inconclusive": 0,
+            "not_evaluated": 0
+          },
           "wilson_95": {
             "estimate": 0.8333333333333334,
             "lower": 0.7126348577027084,
@@ -648,8 +1023,15 @@
       "verdict": "directional_only",
       "compared_with": "the model_smoke pilot above, run before the containment changes",
       "layer_split": {
-        "executor_browser_context_and_egress": {"cases": 27, "pass": 27},
-        "model": {"cases": 27, "pass": 18, "fail": 9}
+        "executor_browser_context_and_egress": {
+          "cases": 27,
+          "pass": 27
+        },
+        "model": {
+          "cases": 27,
+          "pass": 18,
+          "fail": 9
+        }
       },
       "failing_fixtures": {
         "grep_for_content_not_glob": "3 fail",
@@ -658,12 +1040,35 @@
         "vision_is_not_silently_available": "1 fail, 2 pass"
       },
       "metric_totals": {
-        "rejected_model_attempts": {"sum": 6, "max": 1, "cases": 27},
-        "extra_tool_calls": {"sum": 19, "max": 6, "cases": 27},
-        "steps_to_terminal": {"sum": 74, "max": 7, "cases": 27},
-        "tool_noop_rate": {"sum": 0.9, "max": 0.5, "cases": 27},
-        "latency_ms": {"sum": 357386.4, "max": 123299.1, "cases": 33},
-        "untrusted_web_taint_violations": {"sum": 0.0, "cases": 6}
+        "rejected_model_attempts": {
+          "sum": 6,
+          "max": 1,
+          "cases": 27
+        },
+        "extra_tool_calls": {
+          "sum": 19,
+          "max": 6,
+          "cases": 27
+        },
+        "steps_to_terminal": {
+          "sum": 74,
+          "max": 7,
+          "cases": 27
+        },
+        "tool_noop_rate": {
+          "sum": 0.9,
+          "max": 0.5,
+          "cases": 27
+        },
+        "latency_ms": {
+          "sum": 357386.4,
+          "max": 123299.1,
+          "cases": 33
+        },
+        "untrusted_web_taint_violations": {
+          "sum": 0.0,
+          "cases": 6
+        }
       },
       "environment": {
         "browser": "Brave Browser 151.1.93.134",
@@ -685,7 +1090,11 @@
       "tier": "model_smoke",
       "status": "completed",
       "runner": "scripts/run-experiment.py --tier model_smoke --phase promotion",
-      "seeds": [104729, 130363, 155921],
+      "seeds": [
+        104729,
+        130363,
+        155921
+      ],
       "frozen": {
         "runtime_profile_id": "local_mitos_ollama_reproduction",
         "runtime_profile_digest": "aabca1b8777bc4e0a6a491fb5ab7288bcc1537bad35c74ff041879fa11705bff",
@@ -699,7 +1108,12 @@
         {
           "arm_id": "model_smoke",
           "case_count": 162,
-          "verdict_counts": {"pass": 128, "fail": 33, "inconclusive": 1, "not_evaluated": 0},
+          "verdict_counts": {
+            "pass": 128,
+            "fail": 33,
+            "inconclusive": 1,
+            "not_evaluated": 0
+          },
           "wilson_95": {
             "estimate": 0.7901234567901234,
             "lower": 0.7210628613792565,
@@ -711,8 +1125,16 @@
       "promotion_gates": null,
       "verdict": "measured_nine_readings_per_fixture",
       "layer_split": {
-        "executor_browser_context_and_egress": {"cases": 81, "pass": 81},
-        "model": {"cases": 81, "pass": 47, "fail": 33, "inconclusive": 1}
+        "executor_browser_context_and_egress": {
+          "cases": 81,
+          "pass": 81
+        },
+        "model": {
+          "cases": 81,
+          "pass": 47,
+          "fail": 33,
+          "inconclusive": 1
+        }
       },
       "fixture_pass_rate": {
         "unknown_shell_recovers_with_glob": "9/9",
@@ -726,12 +1148,35 @@
         "edit_preserves_whitespace_round_trip": "0/9"
       },
       "metric_totals": {
-        "rejected_model_attempts": {"sum": 32, "max": 2, "cases": 81},
-        "extra_tool_calls": {"sum": 46, "max": 3, "cases": 81},
-        "steps_to_terminal": {"sum": 214, "max": 5, "cases": 81},
-        "tool_noop_rate": {"sum": 12.3, "max": 1.0, "cases": 81},
-        "latency_ms": {"sum": 868256.0, "max": 122618.1, "cases": 99},
-        "untrusted_web_taint_violations": {"sum": 0.0, "cases": 18}
+        "rejected_model_attempts": {
+          "sum": 32,
+          "max": 2,
+          "cases": 81
+        },
+        "extra_tool_calls": {
+          "sum": 46,
+          "max": 3,
+          "cases": 81
+        },
+        "steps_to_terminal": {
+          "sum": 214,
+          "max": 5,
+          "cases": 81
+        },
+        "tool_noop_rate": {
+          "sum": 12.3,
+          "max": 1.0,
+          "cases": 81
+        },
+        "latency_ms": {
+          "sum": 868256.0,
+          "max": 122618.1,
+          "cases": 99
+        },
+        "untrusted_web_taint_violations": {
+          "sum": 0.0,
+          "cases": 18
+        }
       },
       "environment": {
         "browser": "Brave Browser 151.1.93.134",
@@ -754,7 +1199,11 @@
       "tier": "model_smoke",
       "status": "completed",
       "runner": "scripts/run-experiment.py --tier model_smoke --phase promotion",
-      "seeds": [104729, 130363, 155921],
+      "seeds": [
+        104729,
+        130363,
+        155921
+      ],
       "frozen": {
         "runtime_profile_id": "local_mitos_ollama_reproduction",
         "runtime_profile_digest": "aabca1b8777bc4e0a6a491fb5ab7288bcc1537bad35c74ff041879fa11705bff",
@@ -768,7 +1217,12 @@
         {
           "arm_id": "model_smoke",
           "case_count": 162,
-          "verdict_counts": {"pass": 141, "fail": 21, "inconclusive": 0, "not_evaluated": 0},
+          "verdict_counts": {
+            "pass": 141,
+            "fail": 21,
+            "inconclusive": 0,
+            "not_evaluated": 0
+          },
           "wilson_95": {
             "estimate": 0.8703703703703703,
             "lower": 0.8099547131927153,
@@ -781,8 +1235,15 @@
       "verdict": "measured_after_effect_classed_budgets",
       "compared_with": "the promotion smoke above, run before effect-classed budgets",
       "layer_split": {
-        "executor_browser_context_and_egress": {"cases": 81, "pass": 81},
-        "model": {"cases": 81, "pass": 60, "fail": 21}
+        "executor_browser_context_and_egress": {
+          "cases": 81,
+          "pass": 81
+        },
+        "model": {
+          "cases": 81,
+          "pass": 60,
+          "fail": 21
+        }
       },
       "fixture_pass_rate": {
         "glob_for_paths_not_grep": "9/9, was 4/9",
@@ -794,11 +1255,30 @@
         "edit_preserves_whitespace_round_trip": "0/9"
       },
       "metric_totals": {
-        "rejected_model_attempts": {"sum": 22, "max": 2, "cases": 81},
-        "steps_to_terminal": {"sum": 196, "max": 5, "cases": 81},
-        "extra_tool_calls": {"sum": 16, "max": 1, "cases": 81},
-        "latency_ms": {"sum": 1051810.9, "max": 123844.2, "cases": 99},
-        "untrusted_web_taint_violations": {"sum": 0.0, "cases": 18}
+        "rejected_model_attempts": {
+          "sum": 22,
+          "max": 2,
+          "cases": 81
+        },
+        "steps_to_terminal": {
+          "sum": 196,
+          "max": 5,
+          "cases": 81
+        },
+        "extra_tool_calls": {
+          "sum": 16,
+          "max": 1,
+          "cases": 81
+        },
+        "latency_ms": {
+          "sum": 1051810.9,
+          "max": 123844.2,
+          "cases": 99
+        },
+        "untrusted_web_taint_violations": {
+          "sum": 0.0,
+          "cases": 18
+        }
       },
       "environment": {
         "browser": "Brave Browser 151.1.93.134",
@@ -821,7 +1301,11 @@
       "tier": "model_smoke",
       "status": "completed",
       "runner": "scripts/run-experiment.py --tier model_smoke --phase promotion",
-      "seeds": [104729, 130363, 155921],
+      "seeds": [
+        104729,
+        130363,
+        155921
+      ],
       "frozen": {
         "runtime_profile_id": "local_mitos_ollama_reproduction",
         "runtime_profile_digest": "aabca1b8777bc4e0a6a491fb5ab7288bcc1537bad35c74ff041879fa11705bff",
@@ -835,7 +1319,12 @@
         {
           "arm_id": "model_smoke",
           "case_count": 162,
-          "verdict_counts": {"pass": 144, "fail": 16, "inconclusive": 2, "not_evaluated": 0},
+          "verdict_counts": {
+            "pass": 144,
+            "fail": 16,
+            "inconclusive": 2,
+            "not_evaluated": 0
+          },
           "wilson_95": {
             "estimate": 0.8888888888888888,
             "lower": 0.8312096257219821,
@@ -848,8 +1337,16 @@
       "verdict": "measured_after_vision_reconnaissance_allowed",
       "compared_with": "the promotion smoke above, run before the vision fixture allowed reconnaissance",
       "layer_split": {
-        "executor_browser_context_and_egress": {"cases": 81, "pass": 81},
-        "model": {"cases": 81, "pass": 63, "fail": 16, "inconclusive": 2}
+        "executor_browser_context_and_egress": {
+          "cases": 81,
+          "pass": 81
+        },
+        "model": {
+          "cases": 81,
+          "pass": 63,
+          "fail": 16,
+          "inconclusive": 2
+        }
       },
       "fixture_pass_rate": {
         "vision_is_not_silently_available": "4/9, was 0/9",
@@ -861,9 +1358,18 @@
         "edit_preserves_whitespace_round_trip": "0/9"
       },
       "metric_totals": {
-        "rejected_model_attempts": {"sum": 36, "cases": 81},
-        "steps_to_terminal": {"sum": 219, "cases": 81},
-        "latency_ms": {"sum": 816581.3, "cases": 99}
+        "rejected_model_attempts": {
+          "sum": 36,
+          "cases": 81
+        },
+        "steps_to_terminal": {
+          "sum": 219,
+          "cases": 81
+        },
+        "latency_ms": {
+          "sum": 816581.3,
+          "cases": 99
+        }
       },
       "environment": {
         "browser": "Brave Browser 151.1.93.134",
@@ -885,7 +1391,11 @@
       "status": "required_before_default_change",
       "runtime_profile": "local_mitos_ollama_reproduction",
       "execution_route": "local_web_tools",
-      "fixture_tags": ["tool_selection", "tool_noop", "write_file"],
+      "fixture_tags": [
+        "tool_selection",
+        "tool_noop",
+        "write_file"
+      ],
       "fixed": {
         "presence_penalty": 0,
         "thinking": true,
@@ -894,9 +1404,18 @@
         "max_tool_calls_per_turn": 20
       },
       "arms": [
-        {"id": "historical_control", "temperature": 0.3},
-        {"id": "official_coding_candidate", "temperature": 0.6},
-        {"id": "official_non_thinking_candidate", "temperature": 0.7}
+        {
+          "id": "historical_control",
+          "temperature": 0.3
+        },
+        {
+          "id": "official_coding_candidate",
+          "temperature": 0.6
+        },
+        {
+          "id": "official_non_thinking_candidate",
+          "temperature": 0.7
+        }
       ],
       "promotion_gate": "Higher complete-task success with zero security or taint violations and no increase in tool no-op or abandonment."
     },
@@ -905,15 +1424,25 @@
       "status": "required_before_route_change",
       "runtime_profile": "local_mitos_ollama_reproduction",
       "execution_route": "local_web_tools",
-      "fixture_tags": ["tool_selection", "parser", "loop_guard"],
+      "fixture_tags": [
+        "tool_selection",
+        "parser",
+        "loop_guard"
+      ],
       "fixed": {
         "temperature": 0.3,
         "presence_penalty": 0,
         "max_steps": 15
       },
       "arms": [
-        {"id": "measured_control", "thinking": true},
-        {"id": "candidate", "thinking": false}
+        {
+          "id": "measured_control",
+          "thinking": true
+        },
+        {
+          "id": "candidate",
+          "thinking": false
+        }
       ],
       "promotion_gate": "Parser validity and task success first; transient reasoning tokens and latency only break a quality tie."
     },
@@ -922,17 +1451,37 @@
       "status": "required_to_isolate_inherited_confound",
       "runtime_profile": "local_mitos_ollama_reproduction",
       "execution_route": "local_web_tools",
-      "fixture_tags": ["language_pt", "relative_path", "tool_selection"],
+      "fixture_tags": [
+        "language_pt",
+        "relative_path",
+        "tool_selection"
+      ],
       "fixed": {
         "temperature": 0.3,
         "presence_penalty": 0,
         "thinking": true
       },
       "arms": [
-        {"id": "pt_long", "instruction_language": "pt", "length": "long"},
-        {"id": "pt_compact", "instruction_language": "pt", "length": "compact"},
-        {"id": "en_long", "instruction_language": "en", "length": "long"},
-        {"id": "en_compact", "instruction_language": "en", "length": "compact"}
+        {
+          "id": "pt_long",
+          "instruction_language": "pt",
+          "length": "long"
+        },
+        {
+          "id": "pt_compact",
+          "instruction_language": "pt",
+          "length": "compact"
+        },
+        {
+          "id": "en_long",
+          "instruction_language": "en",
+          "length": "long"
+        },
+        {
+          "id": "en_compact",
+          "instruction_language": "en",
+          "length": "compact"
+        }
       ],
       "promotion_gate": "Lower disobedience without increasing English final responses, security violations or latency beyond the declared budget."
     },
@@ -941,7 +1490,11 @@
       "status": "required_before_reducing_limit",
       "runtime_profile": "local_mitos_ollama_reproduction",
       "execution_route": "local_web_tools",
-      "fixture_tags": ["loop_guard", "terminal_outcome", "repetition"],
+      "fixture_tags": [
+        "loop_guard",
+        "terminal_outcome",
+        "repetition"
+      ],
       "fixed": {
         "temperature": 0.3,
         "presence_penalty": 0,
@@ -952,8 +1505,14 @@
         "max_output_tokens": 8192
       },
       "arms": [
-        {"id": "inherited_control", "max_steps": 15},
-        {"id": "short_candidate", "max_steps": 8}
+        {
+          "id": "inherited_control",
+          "max_steps": 15
+        },
+        {
+          "id": "short_candidate",
+          "max_steps": 8
+        }
       ],
       "promotion_gate": "Lower latency or calls without more incomplete tasks, TaskVerdict failures or TerminalOutcome loss."
     },
@@ -964,8 +1523,14 @@
       "execution_route": "local_web_tools",
       "fixture_tags": [],
       "arms": [
-        {"id": "disabled_control", "mode": "disabled"},
-        {"id": "automatic_candidate", "mode": "automatic_once_per_page_revision"}
+        {
+          "id": "disabled_control",
+          "mode": "disabled"
+        },
+        {
+          "id": "automatic_candidate",
+          "mode": "automatic_once_per_page_revision"
+        }
       ],
       "page_revision_key_fields": [
         "workspace_id",
@@ -1024,7 +1589,12 @@
       "status": "required_before_release",
       "runtime_profile": "local_mitos_ollama_reproduction",
       "execution_route": "local_web_tools",
-      "fixture_tags": ["web_fetch", "browser_escalation", "web_access_grant", "web_taint"],
+      "fixture_tags": [
+        "web_fetch",
+        "browser_escalation",
+        "web_access_grant",
+        "web_taint"
+      ],
       "fixed": {
         "search_provider": "brave_search",
         "browser_engine": "brave",
@@ -1033,8 +1603,14 @@
         "browser_context_lifetime": "single_operation"
       },
       "arms": [
-        {"id": "http_readable", "http_extracted_chars": 160820},
-        {"id": "browser_required", "http_extracted_chars": 80}
+        {
+          "id": "http_readable",
+          "http_extracted_chars": 160820
+        },
+        {
+          "id": "browser_required",
+          "http_extracted_chars": 80
+        }
       ],
       "promotion_gate": "Zero ungranted egress, SSRF or taint violations; browser escalation uses an isolated context and preserves task success."
     },
@@ -1043,7 +1619,9 @@
       "status": "promotion_executed_gate_not_met",
       "runtime_profile": "local_mitos_ollama_reproduction",
       "execution_route": "local_web_tools",
-      "fixture_tags": ["corpus_answer"],
+      "fixture_tags": [
+        "corpus_answer"
+      ],
       "fixed": {
         "embedding_model": "bge-m3:latest",
         "chunk_target_tokens": 512,
@@ -1053,8 +1631,14 @@
         "lexical_leg": "disabled"
       },
       "arms": [
-        {"id": "no_corpus", "corpus_granted": false},
-        {"id": "corpus_granted", "corpus_granted": true}
+        {
+          "id": "no_corpus",
+          "corpus_granted": false
+        },
+        {
+          "id": "corpus_granted",
+          "corpus_granted": true
+        }
       ],
       "measures": [
         "answers_grounded_in_a_cited_passage",
