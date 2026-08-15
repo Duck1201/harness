@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from harness import (
+    BLOCKED_INSTRUCTION,
     AgentEngine,
     AgentEvent,
     AgentEventKind,
@@ -660,9 +661,7 @@ def test_blocked_preflight_finishes_without_executing_any_tool(tmp_path: Path) -
             ToolCall(id="call-1", name="fake_tool", arguments={}),
             ToolCall(id="call-2", name="fake_tool", arguments={}),
         )
-        runtime = FakeRuntime(
-            [ModelResponse(tool_calls=calls), ModelResponse(content="cannot write")]
-        )
+        runtime = FakeRuntime([ModelResponse(tool_calls=calls)])
         executor = FakeToolExecutor(
             ToolBatchPreflight(allowed=False, reason_code="write_grant_required")
         )
@@ -673,20 +672,24 @@ def test_blocked_preflight_finishes_without_executing_any_tool(tmp_path: Path) -
 
         assert executor.preflight_batches == [calls]
         assert executor.executed == []
-        assert len(runtime.requests) == 2
-        assert runtime.requests[-1].tools == ()
-        assert any(
-            "write_grant_required" in message.content for message in runtime.requests[-1].messages
-        )
+        # O bloqueio não gasta outra geração: o reason_code é fato do harness.
+        assert len(runtime.requests) == 1
         assert finished.terminal_outcome is not None
         assert finished.terminal_outcome.kind is TerminalOutcomeKind.BLOCKED
         assert finished.terminal_outcome.reason_code == "write_grant_required"
-        assert CanonicalHistoryEntryKind.TOOL_RESULT not in {
-            item.kind for item in await store.list_canonical_history(conversation_id)
-        }
-        assert (await store.list_canonical_history(conversation_id))[-1].kind is (
-            CanonicalHistoryEntryKind.FINAL_RESPONSE
-        )
+        history = await store.list_canonical_history(conversation_id)
+        assert CanonicalHistoryEntryKind.TOOL_RESULT not in {item.kind for item in history}
+        assert CanonicalHistoryEntryKind.FINAL_RESPONSE not in {item.kind for item in history}
+        # O motivo fica no histórico para o próximo Turn ler, com a instrução de
+        # que nada rodou.
+        blocked = [
+            item.payload
+            for item in history
+            if item.kind is CanonicalHistoryEntryKind.INTERNAL_AUTOMATION
+            and item.payload.get("status") == "blocked"
+        ]
+        assert [item["reason_code"] for item in blocked] == ["write_grant_required"]
+        assert blocked[0]["instruction"] == BLOCKED_INSTRUCTION
 
     asyncio.run(scenario())
 
@@ -804,7 +807,18 @@ def test_a_second_invalid_batch_ends_the_turn(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
-def test_blocked_tool_result_gets_one_final_invocation_without_tools(tmp_path: Path) -> None:
+def test_blocked_tool_result_ends_the_turn_without_asking_the_model_to_narrate_it(
+    tmp_path: Path,
+) -> None:
+    """Um Turn bloqueado termina no TerminalOutcome, sem prosa do modelo.
+
+    O passo que pedia ao modelo para redigir o bloqueio custava uma geração
+    inteira e entregava um texto que podia contradizer o fato: negada uma escrita
+    sob taint, o modelo respondeu ao Operator que o arquivo tinha sido salvo. O
+    harness já sabe o que bloqueou e por quê, e a UI monta a frase a partir do
+    `reason_code`.
+    """
+
     class BlockingExecutor(FakeToolExecutor):
         async def execute(self, call: ToolCall) -> ToolResult:
             self.executed.append(call)
@@ -820,9 +834,7 @@ def test_blocked_tool_result_gets_one_final_invocation_without_tools(tmp_path: P
     async def scenario() -> None:
         store, conversation_id = await conversation_store(tmp_path)
         call = ToolCall(id="call-1", name="fake_tool", arguments={})
-        runtime = FakeRuntime(
-            [ModelResponse(tool_calls=(call,)), ModelResponse(content="blocked final")]
-        )
+        runtime = FakeRuntime([ModelResponse(tool_calls=(call,))])
 
         finished = await engine(store, runtime, BlockingExecutor(), FakeEventSink()).run(
             conversation_id, "blocked result"
@@ -831,11 +843,10 @@ def test_blocked_tool_result_gets_one_final_invocation_without_tools(tmp_path: P
         assert finished.terminal_outcome is not None
         assert finished.terminal_outcome.kind is TerminalOutcomeKind.BLOCKED
         assert finished.terminal_outcome.reason_code == "effect_blocked"
-        assert len(runtime.requests) == 2
-        assert runtime.requests[-1].tools == ()
+        # Uma geração só: a que pediu a tool. O bloqueio não pede outra.
+        assert len(runtime.requests) == 1
         history = await store.list_canonical_history(conversation_id)
-        assert history[-1].kind is CanonicalHistoryEntryKind.FINAL_RESPONSE
-        assert history[-1].payload == {"content": "blocked final"}
+        assert CanonicalHistoryEntryKind.FINAL_RESPONSE not in [item.kind for item in history]
 
     asyncio.run(scenario())
 
@@ -871,7 +882,6 @@ def test_web_taint_blocks_write_before_executor_and_finalizes_without_tools(
             [
                 ModelResponse(tool_calls=(web_call,)),
                 ModelResponse(tool_calls=(write_call,)),
-                ModelResponse(content="confirmation is required"),
             ]
         )
         executor = WebTaintExecutor()
@@ -887,8 +897,7 @@ def test_web_taint_blocks_write_before_executor_and_finalizes_without_tools(
         # could actually run — but never executed.
         assert executor.preflight_batches == [(web_call,), (write_call,)]
         assert executor.executed == [web_call]
-        assert len(runtime.requests) == 3
-        assert runtime.requests[-1].tools == ()
+        assert len(runtime.requests) == 2
         assert "UntrustedWebTaint" in json.dumps(
             [message.content for message in runtime.requests[1].messages]
         )
@@ -1134,6 +1143,18 @@ def test_denied_web_taint_confirmation_blocks_without_writing(tmp_path: Path) ->
         assert finished.terminal_outcome.kind is TerminalOutcomeKind.BLOCKED
         assert finished.terminal_outcome.reason_code == "web_taint_confirmation_denied"
         assert [call.id for call in executor.executed] == [web_call.id]
+        # O passo que redige a resposta do bloqueio lê esta entrada, e o status
+        # sozinho não segurou: negada a escrita, o modelo respondeu ao Operator
+        # que o arquivo tinha sido salvo. A instrução diz em palavras o que a
+        # estrutura já dizia.
+        blocked = [
+            item.payload
+            for item in await store.list_canonical_history(conversation_id)
+            if item.kind is CanonicalHistoryEntryKind.INTERNAL_AUTOMATION
+            and item.payload.get("status") == "blocked"
+        ]
+        assert blocked
+        assert all(item["instruction"] == BLOCKED_INSTRUCTION for item in blocked)
 
     asyncio.run(scenario())
 

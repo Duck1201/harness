@@ -419,11 +419,8 @@ class AgentEngine:
                     )
                     await self._store.append_agent_step(turn.id, seed=step_seed, tool_calls=calls)
                     await self._emit_step_finished(turn, step_sequence)
-                    return await self._finalize_blocked(
-                        turn,
-                        step_sequence,
-                        decision.reason_code,
-                        deadline=deadline,
+                    return await self._finish(
+                        turn, TerminalOutcomeKind.BLOCKED, decision.reason_code
                     )
                 # The gate records the grant; the executor is rebuilt so it reads the
                 # policy that now exists, and the batch is judged again against it.
@@ -455,11 +452,10 @@ class AgentEngine:
                             "model_invocation_limit",
                         )
                     continue
-                return await self._finalize_blocked(
+                return await self._finish(
                     turn,
-                    step_sequence,
+                    TerminalOutcomeKind.BLOCKED,
                     reason_code,
-                    deadline=deadline,
                     detail=preflight.detail,
                 )
 
@@ -494,11 +490,8 @@ class AgentEngine:
                     )
                     await self._store.append_agent_step(turn.id, seed=step_seed, tool_calls=calls)
                     await self._emit_step_finished(turn, step_sequence)
-                    return await self._finalize_blocked(
-                        turn,
-                        step_sequence,
-                        decision.reason_code,
-                        deadline=deadline,
+                    return await self._finish(
+                        turn, TerminalOutcomeKind.BLOCKED, decision.reason_code
                     )
 
             results: list[ToolResult] = []
@@ -563,92 +556,13 @@ class AgentEngine:
                 None,
             )
             if blocked is not None:
-                return await self._finalize_blocked(
+                return await self._finish(
                     turn,
-                    step_sequence,
+                    TerminalOutcomeKind.BLOCKED,
                     _tool_error_code(blocked) or "tool_result_blocked",
-                    deadline=deadline,
                 )
 
         raise RuntimeError("agent loop exited without a terminal outcome")
-
-    async def _finalize_blocked(
-        self,
-        turn: Turn,
-        blocked_step_sequence: int,
-        reason_code: str,
-        *,
-        deadline: float,
-        detail: str | None = None,
-    ) -> Turn:
-        if (
-            blocked_step_sequence >= self._max_model_invocations
-            or self._stop_signal.stop_requested
-            or _deadline_reached(deadline)
-        ):
-            return await self._finish(turn, TerminalOutcomeKind.BLOCKED, reason_code, detail=detail)
-
-        step_sequence = blocked_step_sequence + 1
-        step_seed = turn.base_seed + step_sequence - 1
-        await self._emit(
-            AgentEvent(
-                kind=AgentEventKind.STEP_STARTED,
-                turn_id=turn.id,
-                step_sequence=step_sequence,
-                payload={"base_seed": turn.base_seed, "seed": step_seed},
-                conversation_id=turn.conversation_id,
-                request_id=turn.request_id,
-            )
-        )
-        try:
-            context = await self._build_context(turn, ())
-        except ContextBudgetExceeded:
-            await self._emit_step_finished(turn, step_sequence)
-            return await self._finish(turn, TerminalOutcomeKind.BLOCKED, reason_code, detail=detail)
-        await self._emit_context_built(turn, step_sequence, context)
-        if _deadline_reached(deadline):
-            await self._emit_step_finished(turn, step_sequence)
-            return await self._finish(turn, TerminalOutcomeKind.BLOCKED, reason_code, detail=detail)
-
-        request = ModelRequest(
-            messages=context.messages,
-            tools=(),
-            options=self._model_options,
-            seed=step_seed,
-            max_output_tokens=context.output_budget,
-            think=True,
-        )
-        try:
-            response = await self._runtime.generate(request)
-            _validate_response(response)
-        except MalformedModelResponseError as error:
-            await self._store.append_canonical_history(
-                turn.id,
-                CanonicalHistoryEntryKind.REJECTED_MODEL_ATTEMPT,
-                _malformed_payload(error),
-            )
-            await self._store.append_agent_step(turn.id, seed=step_seed)
-            await self._emit_step_finished(turn, step_sequence)
-            return await self._finish(turn, TerminalOutcomeKind.BLOCKED, reason_code, detail=detail)
-        except Exception:
-            await self._emit_step_finished(turn, step_sequence)
-            return await self._finish(turn, TerminalOutcomeKind.BLOCKED, reason_code, detail=detail)
-
-        if _deadline_reached(deadline):
-            await self._emit_step_finished(turn, step_sequence)
-            return await self._finish_time_limit(turn)
-
-        await self._emit_reasoning(turn, step_sequence, response)
-        await self._store.append_canonical_history(
-            turn.id,
-            CanonicalHistoryEntryKind.MODEL_ATTEMPT,
-            _model_attempt_payload(response),
-        )
-        await self._store.append_agent_step(turn.id, seed=step_seed, tool_calls=response.tool_calls)
-        if response.content is not None:
-            await self._append_final_response(turn, step_sequence, response.content)
-        await self._emit_step_finished(turn, step_sequence)
-        return await self._finish(turn, TerminalOutcomeKind.BLOCKED, reason_code, detail=detail)
 
     async def _finish_time_limit(self, turn: Turn) -> Turn:
         return await self._finish(
@@ -708,6 +622,7 @@ class AgentEngine:
                 "status": "blocked",
                 "reason_code": reason_code,
                 "detail": detail,
+                "instruction": BLOCKED_INSTRUCTION,
             },
         )
 
@@ -911,6 +826,19 @@ def _validate_response(response: ModelResponse) -> None:
             "model response body is a serialized tool call, not a final answer"
         )
 
+
+# The status field alone did not carry. Denied a write after reading the web, the
+# model still answered "the summary was saved to resumo-web.md" — to the very
+# Operator who had just refused it. The entry said status blocked and reason
+# web_taint_confirmation_denied, and the model read it and wrote past it. Corpus
+# retrieval had the same problem and solved it the same way, so this follows
+# `corpus_service.CITATION_INSTRUCTION`: say in words what the structure already
+# says, because words are what the model acts on.
+BLOCKED_INSTRUCTION = (
+    "The calls above did not run. Nothing was written, sent or changed by them, "
+    "and there is no result to report. Tell the Operator plainly what was stopped "
+    "and why, and never state or imply that the action happened."
+)
 
 # An answer contains at least one letter or digit; punctuation alone is a leftover
 # of the wire format, not a reply.

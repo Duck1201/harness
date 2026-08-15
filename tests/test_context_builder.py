@@ -208,31 +208,36 @@ def test_every_rendered_envelope_root_is_declared() -> None:
     tupla. Se o builder passar a envelopar uma entrada numa raiz nova e ninguém
     declarar, o modelo pode devolver essa raiz como resposta final e ela chega ao
     Operator como se fosse a resposta.
+
+    A cobertura é sobre `CanonicalHistoryEntryKind` inteiro, e não sobre uma lista
+    escrita à mão: a primeira versão deste teste enumerou os kinds de cabeça,
+    esqueceu `internal_automation` e deixou passar exatamente o furo que ele
+    existe para achar. Um kind novo sem payload aqui falha no `KeyError`, que é o
+    lembrete certo na hora certa.
     """
     turn_id = "current"
-    payloads: list[tuple[CanonicalHistoryEntryKind, Mapping[str, JsonValue]]] = [
-        (CanonicalHistoryEntryKind.USER_MESSAGE, {"content": "pergunta"}),
-        (
-            CanonicalHistoryEntryKind.MODEL_ATTEMPT,
-            {"content": None, "tool_calls": []},
-        ),
-        (
-            CanonicalHistoryEntryKind.REJECTED_MODEL_ATTEMPT,
-            {"reason_code": "malformed_model_response"},
-        ),
-        (
-            CanonicalHistoryEntryKind.TOOL_RESULT,
-            {
-                "tool_call_id": "call-1",
-                "status": "success",
-                "retryable": False,
-                "data": {"content": "resultado"},
-                "error": None,
-                "meta": {"producer": "local_filesystem", "taints": []},
-            },
-        ),
-        (CanonicalHistoryEntryKind.FINAL_RESPONSE, {"content": "resposta"}),
-    ]
+    by_kind: Mapping[CanonicalHistoryEntryKind, Mapping[str, JsonValue]] = {
+        CanonicalHistoryEntryKind.USER_MESSAGE: {"content": "pergunta"},
+        CanonicalHistoryEntryKind.MODEL_ATTEMPT: {"content": None, "tool_calls": []},
+        CanonicalHistoryEntryKind.REJECTED_MODEL_ATTEMPT: {
+            "reason_code": "malformed_model_response"
+        },
+        CanonicalHistoryEntryKind.TOOL_RESULT: {
+            "tool_call_id": "call-1",
+            "status": "success",
+            "retryable": False,
+            "data": {"content": "resultado"},
+            "error": None,
+            "meta": {"producer": "local_filesystem", "taints": []},
+        },
+        CanonicalHistoryEntryKind.FINAL_RESPONSE: {"content": "resposta"},
+        CanonicalHistoryEntryKind.INTERNAL_AUTOMATION: {
+            "automation_id": "tool_batch_blocked",
+            "status": "blocked",
+            "reason_code": "web_taint_confirmation_denied",
+        },
+    }
+    payloads = [(kind, by_kind[kind]) for kind in CanonicalHistoryEntryKind]
     current = ContextTurn(
         turn_id=turn_id,
         entries=tuple(

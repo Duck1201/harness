@@ -22,7 +22,12 @@ _XML_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
 # detecta isso tem de conhecer exatamente as raízes que este módulo emite, e uma
 # segunda lista envelheceria calada. `tests/test_context_builder.py` falha se o
 # builder passar a emitir uma raiz que não esteja aqui.
-MODEL_VIEW_ROOTS = ("model_attempt", "rejected_model_attempt", "tool_result")
+MODEL_VIEW_ROOTS = (
+    "model_attempt",
+    "rejected_model_attempt",
+    "tool_result",
+    "internal_automation",
+)
 
 type ModelViewFormat = Literal["xml", "json"]
 type PayloadRenderer = Callable[[str, JsonValue], str]

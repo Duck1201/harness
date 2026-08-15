@@ -1,4 +1,4 @@
-from .agent_engine import AgentEngine
+from .agent_engine import BLOCKED_INSTRUCTION, AgentEngine
 from .api import create_app
 from .application_service import (
     ApplicationService,
@@ -170,6 +170,7 @@ from .workspace_coordinator import WorkspaceCoordinator
 
 __all__ = [
     "ACCEPTED_EXTENSIONS",
+    "BLOCKED_INSTRUCTION",
     "MODEL_VIEW_ROOTS",
     "ActiveTurnExistsError",
     "AgentEngine",
