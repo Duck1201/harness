@@ -1,7 +1,7 @@
 # Decisões normativas do Harness 2.0
 
 > Versão: 2  
-> Data: 10 de agosto de 2026  
+> Data: 15 de agosto de 2026  
 > Estado: vigente
 
 Este documento governa a primeira release.
@@ -32,14 +32,14 @@ O vocabulário canônico está em [`CONTEXT.md`](../CONTEXT.md). Em particular:
 | Área | Decisão vigente |
 |---|---|
 | Runtime | Ollama local é o único runtime funcional; vLLM e remoto são candidatos sem rota ativa |
-| Perfil ativo | `local_mitos_ollama_reproduction`, digest `aabca1b8777bc4e0a6a491fb5ab7288bcc1537bad35c74ff041879fa11705bff` |
-| Instalação | O perfil instalado foi recriado e está coerente com o `Modelfile` de SHA-256 `fe816f3e5cc37ee82c381d6e5c6ac3cc187e1878f21c0b069f14dfba82559af9` |
+| Perfil ativo | `local_mitos_ollama_reproduction`, digest `a726cef53a75e7def1272308967d836c4c61092760feea3782a6007882ba5a74` |
+| Instalação | O perfil instalado foi recriado e está coerente com o `Modelfile` de SHA-256 `8f7f9e8e9b6d16539242c3e52ef37adfc3f0d0e00b7ac8a9a533c3c5f4deec7b` |
 | Componentes | Digest próprio ou evidência discriminada de componente embutido; ausência nunca é convertida em hash inventado |
 | Tokenizer do estimador | `HuggingFaceTokenEstimator` lê um `tokenizer.json` local ao host, fixado por `host.json#tokenizer_digest` e registrado como componente `token_estimator_tokenizer_file`. Vocabulário e merges são idênticos aos do repositório upstream; os sete tokens de áudio/TTS a mais lá não ocorrem em texto, então a contagem é equivalente e os digests não. Como o arquivo não é versionado, esse digest é registro de procedência, não gate de CI |
 | Capacidades | Cada capacidade declara `support`, `evidence` e `gate_status`; declaração de runtime não equivale a gate aprovado |
 | Plataforma | Python 3.13, Linux x86_64 |
 | ExecutionRoute | `local_web_tools`, web-first, sampling local `temperature=0.3`, `presence_penalty=0`, `think=true` |
-| Loop | 15 AgentSteps, até 4 calls por AgentStep, 20 calls por Turn, 15 minutos e 8.192 tokens de saída |
+| Loop | 15 AgentSteps, até 4 calls por AgentStep, 20 calls por Turn, 40 calls de leitura por Turn, 15 minutos de Turn, 300 segundos por geração do modelo, 2 tentativas malformadas e 8.192 tokens de saída |
 | Execução de calls | Tool loop sem streaming; calls de um mesmo AgentStep são executadas em ordem, sem paralelismo |
 | Último passo | Nenhuma tool é oferecida e o TerminalOutcome é persistido uma única vez |
 | Tools | Somente `model_tools` são model-selectable; automações internas e capacidades proibidas são coleções separadas. Qual executor recebe a call vem do efeito declarado, nunca do nome |
@@ -49,6 +49,7 @@ O vocabulário canônico está em [`CONTEXT.md`](../CONTEXT.md). Em particular:
 | Web | Busca por SearXNG declarado pelo Operator, com DuckDuckGo sem chave como fallback; navegador Chromium local; HTTP pode anteceder browser dentro do executor, nunca por escolha do modelo |
 | Isolamento | Cada operação usa contexto de navegador efêmero; web e verificação de página não compartilham estado |
 | Contexto | Deduplicação, extração única de HTML e corte por orçamento; compressão de código desligada e experimental |
+| Formato do ModelView | JSON minificado em vigor; XML segue como braço candidato em `context_builder`. É decisão medida, não estética: `model_view_format` está em `freeze_per_run`, então cada execução congela o formato que usou, e [ADR-0010](adr/0010-model-facing-messages-are-xml.md) foi revertida pelo gate que ela mesma declarou |
 | Corpus | Acervo curado pelo Operator, um store por Corpus; recuperação híbrida com piso de relevância, injetada antes do primeiro AgentStep e disponível como `corpus_search` ([ADR-0011](adr/0011-corpus-retrieval-and-corpus-grant.md)) |
 | Estado | CanonicalHistory completo em store conversacional; reasoning é transitório e nunca persistido |
 | Stores | Estado canônico e telemetria sem conteúdo em bancos separados; cada Corpus em um arquivo próprio, isolado dos dois |
@@ -97,7 +98,7 @@ Quem não quer ser perguntado a cada escrita registra uma dispensa para a Conver
 
 `blocked` significa que o harness recusou a operação por policy, grant, validação ou limite. Indisponibilidade ou recusa de provedor é `failed`, com classe em `error`; `empty` é sucesso sem itens. Nenhum deles pode virar string vazia ambígua.
 
-A mesma separação vale no TerminalOutcome do Turn: provedor indisponível e provedor que recusa têm reason code próprio, e o `detail` carrega a classe que o runtime reportou. Erro interno do harness continua sendo `engine_error` e não se disfarça de problema do provedor — quem lê o outcome precisa saber se reinicia o runtime ou abre um bug.
+A mesma separação vale no TerminalOutcome do Turn: provedor indisponível, provedor que recusa e geração cortada por timeout do harness têm cada um seu reason code, e o `detail` carrega a classe que o runtime reportou. O timeout é cláusula própria e vem antes da de provedor de propósito: quem cortou a geração foi o harness, e chamar isso de provedor indisponível mandava o Operator reiniciar um Ollama que estava no ar. Erro interno do harness continua sendo `engine_error` e não se disfarça de problema do provedor — quem lê o outcome precisa saber se reinicia o runtime ou abre um bug.
 
 ## Corpus e recuperação
 

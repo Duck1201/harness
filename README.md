@@ -3,8 +3,8 @@
 Harness de agente LLM local, web-first, com policy por efeito. O modelo é tratado
 como não confiável: seleção de tool, argumentos e resultados passam por validação,
 autorização, confirmação e sandbox do harness. Autorização é resolvida pelo efeito
-declarado (`workspace_read`, `workspace_write`, `data_egress`), nunca pelo nome da
-tool.
+declarado (`workspace_read`, `workspace_write`, `data_egress`, `corpus_read`,
+`pure_compute`), nunca pelo nome da tool.
 
 Backend FastAPI + SQLite, frontend React servido pelo próprio backend, modelo local
 via Ollama. O contrato normativo está em [`docs/DECISOES-2.0.md`](docs/DECISOES-2.0.md);
@@ -20,7 +20,7 @@ o que deliberadamente não entra na primeira release está em
 | Node.js | 22+ | Só para construir o frontend e validar contratos |
 | pnpm | 10.13.1 | Via `corepack enable` |
 | Ollama | 0.32.5 | Servindo em `http://127.0.0.1:11434` |
-| Chromium | qualquer | Opcional, só para a escalação do `web_fetch`. Declare o caminho em Configurações; sem isso o harness procura `brave-browser`, `chromium`, `chromium-browser` ou `google-chrome` no PATH |
+| Chromium | qualquer | Opcional, só para a escalação do `web_fetch`. Declare o caminho em Configurações; sem isso o harness procura `brave-browser`, `brave-browser-stable`, `brave`, `chromium`, `chromium-browser` e `google-chrome` no PATH, nessa ordem |
 | Docker ou Podman | qualquer | Opcional, só se você quiser SearXNG self-hosted para o `web_search` |
 
 ## Instalação

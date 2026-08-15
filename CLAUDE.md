@@ -43,8 +43,13 @@ esses arquivos e o validador exige coerência entre eles e os documentos.
 `node scripts/validate-contracts.mjs --write` e commite o digest junto.** Sem
 isso o job `contracts` do CI falha.
 
-O validador também checa links e âncoras de todo Markdown em `docs/` e `evals/`,
-então renomear um heading quebra o CI.
+O validador também checa links e âncoras de todo Markdown em `docs/` e `evals/`
+(mais `CONTEXT.md`), então renomear um heading quebra o CI.
+
+Ele **não** cobre `README.md` nem este `CLAUDE.md`: a lista de Markdown do
+validador é só `CONTEXT.md` + `docs/` + `evals/`. Drift nesses dois arquivos não
+derruba o CI e por isso passa despercebido — ao mexer no código, confira os dois
+à mão.
 
 ## Invariantes que não se negociam
 
@@ -53,11 +58,12 @@ exige alterar o documento, os contratos e as fixtures no mesmo commit.
 
 - **Autorização é por efeito, nunca por nome de tool**: `workspace_read` exige
   WorkspaceRootGrant; `workspace_write` exige também WriteGrant; `data_egress`
-  exige WebAccessGrant; `pure_compute` não exige nada. Adicionar um
-  `if tool_name == ...` em caminho de policy está errado por construção — o mesmo
-  vale para o roteamento tool -> executor, que também lê o efeito. O gate vive em
-  dois executores independentes (`local_tools.py` e `web_tools.py`): grant novo
-  exige tocar os dois.
+  exige WebAccessGrant; `corpus_read` exige CorpusGrant, que traz no escopo o
+  `corpus_id` que a Conversation pode ler; `pure_compute` não exige nada.
+  Adicionar um `if tool_name == ...` em caminho de policy está errado por
+  construção — o mesmo vale para o roteamento tool -> executor, que também lê o
+  efeito. O gate vive em três executores independentes (`local_tools.py`,
+  `web_tools.py` e `corpus_tools.py`): grant novo exige tocar os três.
 - **O modelo é não confiável**: seleção, argumentos e resultados passam por
   validação, autorização, confirmação e sandbox do harness. `blocked` só pode ser
   emitido pelo harness; recusa de provedor é `failed`; sucesso sem itens é `empty`.
@@ -82,6 +88,10 @@ exige alterar o documento, os contratos e as fixtures no mesmo commit.
   taint) e registra cada chamada como `waived` (ADR 0008).
 - **Medição inventada é proibida**: experimento sem execução fica com
   `result: null`.
+- **O runner ao vivo se compõe num lugar só**: `build_live_runner`
+  (`src/harness/evals/model_runner.py`), chamado pelo script de experimento e
+  pelo teste que prova que todo tipo de fixture tem runner. Duplicar essa
+  composição já deixou o script quebrado por meses sem ninguém notar.
 
 ## Arquitetura
 
@@ -97,8 +107,9 @@ Composition root em `api._default_service`, chamado por `create_app` quando nada
 | Tools | `local_tools.py`, `web_tools.py`, `composite_tools.py`, `brave_browser.py`, `page_verification.py` |
 | Estado | `conversation_store.py` (SQLite canônico), `observability_store.py` |
 | Contexto/modelo | `context_builder.py`, `system_prompt.py`, `token_estimator.py`, `ollama_runtime.py` |
+| Corpus | `corpus_tools.py` (executor do efeito), `corpus_service.py`, `corpus_store.py` (um SQLite por acervo), `corpus_ingestion.py`, `corpus_scraper.py` |
 | Config | `config.py` (contratos JSON), `host_config.py` (HostConfig do host) |
-| Evals | `evals/` (runner, oracles, statistics, store, bench) |
+| Evals | `evals/` (runner, service, model_runner, oracles, statistics, store, bench, loader, lease, models, language) |
 
 Fluxo de um Turn: `PendingRequest` -> `AgentEngine` itera AgentSteps ->
 `ModelView` reconstruída por `context_builder` a cada passo -> `ollama_runtime`
@@ -107,7 +118,7 @@ CanonicalHistory -> exatamente um `TerminalOutcome`.
 
 O `system_prompt` é **derivado dos contratos e de fatos do host** (ADR 0007), não
 escrito à mão. A data corrente é o fato do host: `build_system_prompt` a recebe
-como argumento obrigatório — produção passa o relógio em UTC, o corpus passa
+como argumento obrigatório — produção passa o relógio em UTC, a bancada passa
 `BENCH_DATE` — para que o prompt do bench não mude sozinho a cada dia. O texto do
 Operator entra pelo mesmo caminho: fica abaixo de `<!-- OPERATOR -->` em
 `SYSTEM-PROMPT.md`, é lido no composition root e chega por argumento. O resto do
@@ -121,7 +132,7 @@ quando ele fica velho.
 - Dataclasses `frozen=True, slots=True` para tipos de domínio; `Protocol` em
   `ports.py` para tudo que é substituível.
 - Testes espelham o módulo (`tests/test_<modulo>.py`), sem framework extra além
-  do pytest.
+  do pytest. Exceção: `tests/evals/` agrupa por assunto, não por módulo.
 - Frontend em `web/`: React 19 + Vite + vitest, cliente em `web/src/client/`. O
   app só compõe `FetchHarnessClient`; `MockHarnessClient` é dublê dos testes e
   não entra no bundle.

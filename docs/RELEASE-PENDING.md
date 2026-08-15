@@ -1,7 +1,7 @@
 # Pendências da primeira release
 
 > Estado: contrato de exclusão da primeira release  
-> Data: 10 de agosto de 2026
+> Data: 15 de agosto de 2026
 
 Este documento registra o que deliberadamente não entra na primeira release. Ausência aqui não autoriza implementação: qualquer entrada exige atualização conjunta de [`DECISOES-2.0.md`](DECISOES-2.0.md), contratos, fixtures e evidência de gate.
 

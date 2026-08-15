@@ -42,8 +42,10 @@ operacional deliberado e não faz parte da validação documental.
   de execução.
 - Fixar pesos, tokenizer/template, backend e parsers como uma única versão do
   sistema.
-- Respeitar o formato XML-like oficial, não presumir o
-  Hermes/JSON do Qwen3 anterior.
+- Herdar o `TEMPLATE` de chat do artefato base sem sobrescrever, em vez de
+  presumir o Hermes do Qwen3 anterior. Isso é o chat template do modelo, não o
+  formato do ModelView — esse está congelado por execução em
+  `model_view_format`.
 - No perfil local, começar com `temperature=0.3`, `presence_penalty=0`, contexto
   65.536 e o thinking já medido; toda mudança é um braço de bancada.
 - Tratar seleção, argumentos e resultados do modelo como não confiáveis;

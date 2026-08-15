@@ -1,4 +1,4 @@
-# O que vira mensagem para o modelo é XML, não JSON
+# [Revertida] O que vira mensagem para o modelo é XML, não JSON
 
 **Revertida em 15 de agosto de 2026, e o default voltou a ser JSON minificado.** A troca por XML entrou por legibilidade, sem medição, e o experimento `model_view_serialization` existe por isso. O gate declarado dele diz que o XML fica se não perder verdict PASS contra o controle e não aumentar `rejected_model_attempts`, e que perda em qualquer um dos dois reverte esta ADR. A promoção de 50 casos por braço em três seeds mediu perda nos dois: 36/50 contra 41/50 em PASS, 30 contra 22 em tentativa rejeitada. Os intervalos se sobrepõem e o XML ganha em `tool_noop_rate` e latência, mas o gate nomeia duas métricas e as duas foram contra — reverter pelo critério declarado é o que separa medir de escolher depois do resultado. O render XML continua em `context_builder` como braço candidato, e a deduplicação de `data` repetido segue decidida sobre o payload, antes do render, como sempre foi. O arquivo mantém o nome porque outros documentos apontam para ele.
 
